@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "756813986418",
+    "project_id": "appcleft2026-55337",
+    "storage_bucket": "appcleft2026-55337.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:756813986418:android:edc4e7239da11cd07620eb",
+        "android_client_info": {
+          "package_name": "com.example.homepage"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD9lgM6F2qU5oMBytqy_H-I0tXn1nIE8SY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
