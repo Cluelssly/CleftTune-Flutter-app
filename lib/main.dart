@@ -65,7 +65,7 @@ class _AppLayoutState extends State<AppLayout> {
       showPremiumLogin = false;
     });
   }
-
+ 
   void switchPage(int index) {
     setState(() {
       currentIndex = index;
