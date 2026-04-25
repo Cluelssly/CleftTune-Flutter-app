@@ -20,6 +20,7 @@ class _TranslatorScreenState extends State<TranslatorScreen> {
   bool isInitialized = false;
 
   String subtitleText = "Tap the mic to start speaking...";
+
   @override
   void initState() {
     super.initState();
@@ -27,29 +28,29 @@ class _TranslatorScreenState extends State<TranslatorScreen> {
     initSpeech();
   }
 
-  // 🔥 INIT
   Future<void> initSpeech() async {
     isInitialized = await speech.initialize(
       onStatus: (status) {
         dev.log("STATUS: $status");
 
         if (status == "done" || status == "notListening") {
-          setState(() => isListening = false);
+          if (mounted) {
+            setState(() => isListening = false);
+          }
         }
       },
       onError: (error) {
-        dev.log("ERROR MSG: ${error.errorMsg}");
+        dev.log("ERROR: ${error.errorMsg}");
       },
     );
 
     dev.log("Speech initialized: $isInitialized");
   }
 
-  // 🔥 CLEANING (CLEFT SUPPORT)
   String cleanSpeech(String input) {
     String text = input.toLowerCase();
 
-    Map<String, String> corrections = {
+    final corrections = {
       "helo": "hello",
       "hallo": "hello",
       "yoo": "you",
@@ -67,8 +68,7 @@ class _TranslatorScreenState extends State<TranslatorScreen> {
     return text;
   }
 
-  // 🔥 MIC CONTROL + FIRESTORE SAVE
-  void toggleMic() async {
+  Future<void> toggleMic() async {
     if (!isInitialized) {
       await initSpeech();
       return;
@@ -79,40 +79,42 @@ class _TranslatorScreenState extends State<TranslatorScreen> {
       await Future.delayed(const Duration(milliseconds: 300));
 
       bool available = await speech.initialize();
+      if (!available) return;
 
-      if (available) {
-        setState(() => isListening = true);
+      setState(() => isListening = true);
 
-        await speech.listen(
-          localeId: "en_US",
-          listenFor: const Duration(seconds: 20),
-          pauseFor: const Duration(seconds: 5),
-          onResult: (result) {
-            dev.log("RAW: ${result.recognizedWords}");
+      await speech.listen(
+        localeId: "en_US",
+        listenFor: const Duration(seconds: 20),
+        pauseFor: const Duration(seconds: 5),
+        onResult: (result) async {
+          final words = result.recognizedWords;
 
-            if (result.recognizedWords.isNotEmpty) {
-              String cleaned = cleanSpeech(result.recognizedWords);
+          if (words.isEmpty) return;
 
-              setState(() {
-                subtitleText = cleaned;
-              });
+          String cleaned = cleanSpeech(words);
 
-              // 🔥 SAVE ONLY FINAL RESULT
-              if (result.finalResult) {
-                final user = FirebaseAuth.instance.currentUser; // ✅ GET USER
+          if (mounted) {
+            setState(() {
+              subtitleText = cleaned;
+            });
+          }
 
-                FirebaseFirestore.instance.collection('translations').add({
-                  'text': cleaned,
-                  'time': FieldValue.serverTimestamp(),
-                  'userId': user!.uid, // 🔥 IMPORTANT LINE
-                });
+          if (result.finalResult) {
+            final user = FirebaseAuth.instance.currentUser;
 
-                dev.log("Saved to Firestore (user): $cleaned");
-              }
-            }
-          },
-        );
-      }
+            if (user == null) return;
+
+            await FirebaseFirestore.instance.collection('translations').add({
+              'text': cleaned,
+              'time': FieldValue.serverTimestamp(),
+              'userId': user.uid,
+            });
+
+            dev.log("Saved: $cleaned");
+          }
+        },
+      );
     } else {
       await speech.stop();
       setState(() => isListening = false);
@@ -142,14 +144,13 @@ class _TranslatorScreenState extends State<TranslatorScreen> {
         ],
       ),
 
+      // 🔥 FIXED CENTER LAYOUT
       body: SafeArea(
-        child: Column(
-          children: [
-            const Spacer(),
-
-            const Padding(
-              padding: EdgeInsets.only(bottom: 16),
-              child: Text(
+        child: SizedBox.expand(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Text(
                 "● LIVE",
                 style: TextStyle(
                   color: Colors.redAccent,
@@ -157,13 +158,13 @@ class _TranslatorScreenState extends State<TranslatorScreen> {
                   fontWeight: FontWeight.bold,
                 ),
               ),
-            ),
 
-            Center(
-              child: Padding(
+              const SizedBox(height: 20),
+
+              Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 24),
                 child: Container(
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
                     color: Colors.white12,
                     borderRadius: BorderRadius.circular(16),
@@ -179,14 +180,13 @@ class _TranslatorScreenState extends State<TranslatorScreen> {
                   ),
                 ),
               ),
-            ),
-
-            const SizedBox(height: 100),
-          ],
+            ],
+          ),
         ),
       ),
 
       floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
+
       floatingActionButton: FloatingActionButton(
         onPressed: toggleMic,
         backgroundColor: Colors.teal,

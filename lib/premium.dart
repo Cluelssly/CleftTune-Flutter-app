@@ -1,24 +1,108 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
-class PremiumScreen extends StatelessWidget {
-  final VoidCallback onLogin;
+class PremiumScreen extends StatefulWidget {
   final VoidCallback onBack;
+  final VoidCallback onLogin;
 
-  const PremiumScreen({super.key, required this.onLogin, required this.onBack});
+  const PremiumScreen({super.key, required this.onBack, required this.onLogin});
+
+  @override
+  State<PremiumScreen> createState() => _PremiumScreenState();
+}
+
+class _PremiumScreenState extends State<PremiumScreen> {
+  final TextEditingController emailController = TextEditingController();
+  final TextEditingController passwordController = TextEditingController();
+
+  bool isLoginMode = true;
+  bool isLoading = false;
+
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+
+  // 🔥 REAL AUTH FUNCTION
+  Future<void> handleAuth() async {
+    final email = emailController.text.trim();
+    final password = passwordController.text.trim();
+
+    // 🔥 VALIDATION
+    if (email.isEmpty || password.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Please fill all fields")));
+      return;
+    }
+
+    if (!email.contains("@")) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Enter a valid email")));
+      return;
+    }
+
+    setState(() => isLoading = true);
+
+    try {
+      if (isLoginMode) {
+        // 🔥 LOGIN
+        await _auth.signInWithEmailAndPassword(
+          email: email,
+          password: password,
+        );
+      } else {
+        // 🔥 SIGN UP
+        await _auth.createUserWithEmailAndPassword(
+          email: email,
+          password: password,
+        );
+      }
+
+      // ✅ SUCCESS → go to app
+      widget.onLogin();
+    } on FirebaseAuthException catch (e) {
+      String message = "Authentication failed";
+
+      if (e.code == 'user-not-found') {
+        message = "No account found for this email";
+      } else if (e.code == 'wrong-password') {
+        message = "Wrong password";
+      } else if (e.code == 'email-already-in-use') {
+        message = "Email already in use";
+      } else if (e.code == 'weak-password') {
+        message = "Password is too weak";
+      }
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+    } catch (e) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Something went wrong")));
+    } finally {
+      setState(() => isLoading = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    emailController.dispose();
+    passwordController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF0F172A),
 
-      // 🔥 TOP BAR (NO Navigator.pop)
       appBar: AppBar(
         backgroundColor: const Color(0xFF0F172A),
         elevation: 0,
         automaticallyImplyLeading: false,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Colors.white),
-          onPressed: onBack, // 🔥 FIXED
+          onPressed: widget.onBack,
         ),
         actions: const [
           Icon(Icons.lock, color: Colors.white),
@@ -90,9 +174,9 @@ class PremiumScreen extends StatelessWidget {
               ),
               child: Column(
                 children: [
-                  const Text(
-                    "Sign In / Sign Up",
-                    style: TextStyle(
+                  Text(
+                    isLoginMode ? "Sign In" : "Create Account",
+                    style: const TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
                       color: Colors.white,
@@ -103,6 +187,7 @@ class PremiumScreen extends StatelessWidget {
 
                   // EMAIL
                   TextField(
+                    controller: emailController,
                     style: const TextStyle(color: Colors.white),
                     decoration: InputDecoration(
                       hintText: "Email",
@@ -120,6 +205,7 @@ class PremiumScreen extends StatelessWidget {
 
                   // PASSWORD
                   TextField(
+                    controller: passwordController,
                     obscureText: true,
                     style: const TextStyle(color: Colors.white),
                     decoration: InputDecoration(
@@ -136,7 +222,7 @@ class PremiumScreen extends StatelessWidget {
 
                   const SizedBox(height: 16),
 
-                  // LOGIN BUTTON
+                  // BUTTON
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
@@ -144,8 +230,26 @@ class PremiumScreen extends StatelessWidget {
                         backgroundColor: Colors.teal,
                         padding: const EdgeInsets.all(14),
                       ),
-                      onPressed: onLogin, // 🔥 THIS GOES TO APP
-                      child: const Text("Continue to App"),
+                      onPressed: isLoading ? null : handleAuth,
+                      child: isLoading
+                          ? const CircularProgressIndicator(color: Colors.white)
+                          : Text(isLoginMode ? "Login" : "Create Account"),
+                    ),
+                  ),
+
+                  const SizedBox(height: 10),
+
+                  TextButton(
+                    onPressed: () {
+                      setState(() {
+                        isLoginMode = !isLoginMode;
+                      });
+                    },
+                    child: Text(
+                      isLoginMode
+                          ? "Don't have an account? Sign up"
+                          : "Already have an account? Login",
+                      style: const TextStyle(color: Colors.white70),
                     ),
                   ),
 
@@ -158,15 +262,12 @@ class PremiumScreen extends StatelessWidget {
                 ],
               ),
             ),
-
-            const SizedBox(height: 40),
           ],
         ),
       ),
     );
   }
 
-  // 🔥 FEATURE CARD
   Widget featureCard(String title, String subtitle) {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),

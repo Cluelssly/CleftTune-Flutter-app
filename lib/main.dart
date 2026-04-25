@@ -49,7 +49,7 @@ class _AppLayoutState extends State<AppLayout> {
   bool showLanding = true;
   bool showPremiumLogin = false;
 
-  // 🔥 STEP 1: LANDING → PREMIUM
+  // 🔥 LANDING → PREMIUM SCREEN
   void enterAppFlow() {
     setState(() {
       showLanding = false;
@@ -57,18 +57,40 @@ class _AppLayoutState extends State<AppLayout> {
     });
   }
 
-  // 🔥 STEP 2: LOGIN → APP
+  // 🔥 LOGIN → MAIN APP (FIXED FLOW)
   Future<void> completeLogin() async {
-    await FirebaseAuth.instance.signInAnonymously();
+    try {
+      await FirebaseAuth.instance.signInAnonymously();
+    } catch (e) {
+      debugPrint("Auth error: $e");
+    }
 
     setState(() {
       showPremiumLogin = false;
+      showLanding = false; // 🔥 IMPORTANT FIX
+      currentIndex = 0; // go to translator
     });
   }
- 
+
   void switchPage(int index) {
     setState(() {
       currentIndex = index;
+    });
+  }
+
+  // 🔥 OPEN PREMIUM FROM TRANSLATOR
+  void openPremium() {
+    setState(() {
+      showPremiumLogin = true;
+      showLanding = false;
+    });
+  }
+
+  // 🔥 BACK TO LANDING
+  void backToLanding() {
+    setState(() {
+      showPremiumLogin = false;
+      showLanding = true;
     });
   }
 
@@ -76,36 +98,34 @@ class _AppLayoutState extends State<AppLayout> {
   Widget build(BuildContext context) {
     Widget currentScreen;
 
-    // 🔥 1. LANDING PAGE FIRST
+    // 🔥 1. LANDING PAGE
     if (showLanding) {
       currentScreen = LandingPage(onContinue: enterAppFlow);
     }
-    // 🔥 2. PREMIUM LOGIN (FIXED HERE)
+    // 🔥 2. PREMIUM LOGIN PAGE
     else if (showPremiumLogin) {
       currentScreen = PremiumScreen(
         onLogin: completeLogin,
-        onBack: () {
-          setState(() {
-            showPremiumLogin = false;
-            showLanding = true; // back to landing page
-          });
-        },
+        onBack: backToLanding,
       );
     }
     // 🔥 3. MAIN APP
     else {
       switch (currentIndex) {
         case 0:
-          currentScreen = TranslatorScreen(goToPremium: () {});
+          currentScreen = TranslatorScreen(goToPremium: openPremium);
           break;
+
         case 1:
           currentScreen = const HistoryScreen();
           break;
+
         case 2:
           currentScreen = const SettingsScreen();
           break;
+
         default:
-          currentScreen = TranslatorScreen(goToPremium: () {});
+          currentScreen = TranslatorScreen(goToPremium: openPremium);
       }
     }
 
@@ -116,7 +136,7 @@ class _AppLayoutState extends State<AppLayout> {
 
           return Row(
             children: [
-              // 🔥 NAV ONLY AFTER LOGIN
+              // 🔥 DESKTOP NAVIGATION
               if (!isSmall && !showLanding && !showPremiumLogin)
                 NavigationRail(
                   backgroundColor: Colors.black,
@@ -145,7 +165,7 @@ class _AppLayoutState extends State<AppLayout> {
                 child: Scaffold(
                   body: currentScreen,
 
-                  // 🔥 MOBILE NAV ONLY AFTER LOGIN
+                  // 🔥 MOBILE NAVIGATION
                   bottomNavigationBar:
                       isSmall && !showLanding && !showPremiumLogin
                       ? BottomNavigationBar(
@@ -282,14 +302,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
                         const SizedBox(height: 30),
 
-                        const Text(
-                          "TODAY",
-                          style: TextStyle(color: Colors.white54),
-                        ),
-
-                        const SizedBox(height: 10),
-
-                        // 🔥 FIRESTORE HISTORY WITH USER FILTER
+                        // 🔥 FIRESTORE HISTORY
                         Expanded(
                           child: user == null
                               ? const Center(
@@ -334,25 +347,91 @@ class _HistoryScreenState extends State<HistoryScreen> {
                                       );
                                     }
 
-                                    return ListView.builder(
-                                      itemCount: filteredDocs.length,
-                                      itemBuilder: (context, index) {
-                                        final data =
-                                            filteredDocs[index].data()
-                                                as Map<String, dynamic>;
+                                    // GROUPING
+                                    Map<String, List<QueryDocumentSnapshot>>
+                                    grouped = {"Today": [], "Yesterday": []};
 
-                                        final text = data['text'] ?? '';
-                                        final timestamp = data['time'];
+                                    DateTime now = DateTime.now();
+                                    DateTime today = DateTime(
+                                      now.year,
+                                      now.month,
+                                      now.day,
+                                    );
+                                    DateTime yesterday = today.subtract(
+                                      const Duration(days: 1),
+                                    );
 
-                                        String timeString = "";
-                                        if (timestamp != null) {
-                                          final date = timestamp.toDate();
-                                          timeString =
-                                              "${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}";
-                                        }
+                                    for (var doc in filteredDocs) {
+                                      final data =
+                                          doc.data() as Map<String, dynamic>;
+                                      final timestamp = data['time'];
 
-                                        return chatBubble(text, timeString);
-                                      },
+                                      if (timestamp == null) continue;
+
+                                      DateTime date = timestamp.toDate();
+                                      DateTime dateOnly = DateTime(
+                                        date.year,
+                                        date.month,
+                                        date.day,
+                                      );
+
+                                      if (dateOnly == today) {
+                                        grouped["Today"]!.add(doc);
+                                      } else if (dateOnly == yesterday) {
+                                        grouped["Yesterday"]!.add(doc);
+                                      }
+                                    }
+
+                                    return ListView(
+                                      children: [
+                                        // TODAY
+                                        if (grouped["Today"]!.isNotEmpty) ...[
+                                          const Text(
+                                            "TODAY",
+                                            style: TextStyle(
+                                              color: Colors.white54,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 10),
+                                          ...grouped["Today"]!.map((doc) {
+                                            final data =
+                                                doc.data()
+                                                    as Map<String, dynamic>;
+                                            final text = data['text'] ?? '';
+                                            final date = data['time'].toDate();
+
+                                            final timeString =
+                                                "${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}";
+
+                                            return chatBubble(text, timeString);
+                                          }),
+                                          const SizedBox(height: 20),
+                                        ],
+
+                                        // YESTERDAY
+                                        if (grouped["Yesterday"]!
+                                            .isNotEmpty) ...[
+                                          const Text(
+                                            "YESTERDAY",
+                                            style: TextStyle(
+                                              color: Colors.white54,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 10),
+                                          ...grouped["Yesterday"]!.map((doc) {
+                                            final data =
+                                                doc.data()
+                                                    as Map<String, dynamic>;
+                                            final text = data['text'] ?? '';
+                                            final date = data['time'].toDate();
+
+                                            final timeString =
+                                                "${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}";
+
+                                            return chatBubble(text, timeString);
+                                          }),
+                                        ],
+                                      ],
                                     );
                                   },
                                 ),
