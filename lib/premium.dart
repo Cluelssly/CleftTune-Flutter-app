@@ -1,3 +1,5 @@
+import 'package:flutter/material.dart';
+
 class PremiumScreen extends StatelessWidget {
   final VoidCallback onLogin;
   final VoidCallback onBack;

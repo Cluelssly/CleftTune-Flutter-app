@@ -2,8 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 
 import 'firebase_options.dart';
-
-import 'profile.dart';
+import 'premium.dart';
 import 'phonetic.dart';
 import 'cloud.dart';
 import 'notifications.dart';
@@ -81,9 +80,17 @@ class _AppLayoutState extends State<AppLayout> {
     if (showLanding) {
       currentScreen = LandingPage(onContinue: enterAppFlow);
     }
-    // 🔥 2. PREMIUM LOGIN
+    // 🔥 2. PREMIUM LOGIN (FIXED HERE)
     else if (showPremiumLogin) {
-      currentScreen = PremiumScreen(onLogin: completeLogin);
+      currentScreen = PremiumScreen(
+        onLogin: completeLogin,
+        onBack: () {
+          setState(() {
+            showPremiumLogin = false;
+            showLanding = true; // back to landing page
+          });
+        },
+      );
     }
     // 🔥 3. MAIN APP
     else {
