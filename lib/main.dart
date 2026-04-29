@@ -3,6 +3,7 @@ import 'package:firebase_core/firebase_core.dart';
 
 import 'firebase_options.dart';
 import 'premium.dart';
+import 'profile.dart';
 import 'phonetic.dart';
 import 'cloud.dart';
 import 'notifications.dart';
@@ -201,7 +202,6 @@ class _AppLayoutState extends State<AppLayout> {
 }
 
 /// 📜 HISTORY SCREEN
-
 class HistoryScreen extends StatefulWidget {
   const HistoryScreen({super.key});
 
@@ -236,25 +236,42 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // HEADER
+                        // 🔥 HEADER (UPDATED)
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: const [
-                            Text(
+                          children: [
+                            const Text(
                               "CleftTune",
                               style: TextStyle(
                                 color: Colors.teal,
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
-                            CircleAvatar(
-                              backgroundColor: Color.fromARGB(
-                                31,
-                                255,
-                                255,
-                                255,
+
+                            // ✅ CLICKABLE PROFILE ICON
+                            InkWell(
+                              borderRadius: BorderRadius.circular(30),
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) =>
+                                        const ProfileScreen(),
+                                  ),
+                                );
+                              },
+                              child: const CircleAvatar(
+                                backgroundColor: Color.fromARGB(
+                                  31,
+                                  255,
+                                  255,
+                                  255,
+                                ),
+                                child: Icon(
+                                  Icons.person,
+                                  color: Colors.white,
+                                ),
                               ),
-                              child: Icon(Icons.person, color: Colors.white),
                             ),
                           ],
                         ),
@@ -326,7 +343,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
                                     final docs = snapshot.data!.docs;
 
-                                    // SEARCH FILTER
                                     final filteredDocs = docs.where((doc) {
                                       final data =
                                           doc.data() as Map<String, dynamic>;
@@ -347,7 +363,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
                                       );
                                     }
 
-                                    // GROUPING
                                     Map<String, List<QueryDocumentSnapshot>>
                                     grouped = {"Today": [], "Yesterday": []};
 
@@ -384,7 +399,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
                                     return ListView(
                                       children: [
-                                        // TODAY
                                         if (grouped["Today"]!.isNotEmpty) ...[
                                           const Text(
                                             "TODAY",
@@ -403,12 +417,14 @@ class _HistoryScreenState extends State<HistoryScreen> {
                                             final timeString =
                                                 "${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}";
 
-                                            return chatBubble(text, timeString);
+                                            return chatBubble(
+                                              text,
+                                              timeString,
+                                            );
                                           }),
                                           const SizedBox(height: 20),
                                         ],
 
-                                        // YESTERDAY
                                         if (grouped["Yesterday"]!
                                             .isNotEmpty) ...[
                                           const Text(
@@ -428,7 +444,10 @@ class _HistoryScreenState extends State<HistoryScreen> {
                                             final timeString =
                                                 "${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}";
 
-                                            return chatBubble(text, timeString);
+                                            return chatBubble(
+                                              text,
+                                              timeString,
+                                            );
                                           }),
                                         ],
                                       ],
@@ -477,7 +496,10 @@ class _HistoryScreenState extends State<HistoryScreen> {
                   alignment: Alignment.bottomRight,
                   child: Text(
                     time,
-                    style: const TextStyle(color: Colors.white54, fontSize: 12),
+                    style: const TextStyle(
+                      color: Colors.white54,
+                      fontSize: 12,
+                    ),
                   ),
                 ),
               ],
