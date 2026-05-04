@@ -3,6 +3,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'profile.dart';
 import 'firebase_options.dart';
 import 'premium.dart';
+import 'profile.dart';
 import 'phonetic.dart';
 import 'cloud.dart';
 import 'notifications.dart';
@@ -238,7 +239,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // HEADER
+                        // 🔥 HEADER (UPDATED)
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
@@ -250,8 +251,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
                               ),
                             ),
 
-                            // 🔥 UPDATED PROFILE ICON (CLICKABLE)
-                            GestureDetector(
+                            // ✅ CLICKABLE PROFILE ICON
+                            InkWell(
+                              borderRadius: BorderRadius.circular(30),
                               onTap: () {
                                 Navigator.push(
                                   context,
@@ -418,7 +420,10 @@ class _HistoryScreenState extends State<HistoryScreen> {
                                             final timeString =
                                                 "${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}";
 
-                                            return chatBubble(text, timeString);
+                                            return chatBubble(
+                                              text,
+                                              timeString,
+                                            );
                                           }),
                                           const SizedBox(height: 20),
                                         ],
@@ -442,7 +447,10 @@ class _HistoryScreenState extends State<HistoryScreen> {
                                             final timeString =
                                                 "${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}";
 
-                                            return chatBubble(text, timeString);
+                                            return chatBubble(
+                                              text,
+                                              timeString,
+                                            );
                                           }),
                                         ],
                                       ],
@@ -491,7 +499,10 @@ class _HistoryScreenState extends State<HistoryScreen> {
                   alignment: Alignment.bottomRight,
                   child: Text(
                     time,
-                    style: const TextStyle(color: Colors.white54, fontSize: 12),
+                    style: const TextStyle(
+                      color: Colors.white54,
+                      fontSize: 12,
+                    ),
                   ),
                 ),
               ],
