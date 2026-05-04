@@ -25,14 +25,14 @@ class _PremiumScreenState extends State<PremiumScreen> {
   static const _bg = Color(0xFF0D2B2B);
   static const _bgMid = Color(0xFF0E2233);
   static const _bgDark = Color(0xFF0B1A28);
-  static const _card = Color(0x0AFFFFFF); // 4% white
+  static const _card = Color(0x0AFFFFFF);
   static const _teal = Color(0xFF1D9E75);
-  static const _tealDim = Color(0x261D9E75); // 15% teal
-  static const _tealBorder = Color(0x401D9E75); // 25% teal
+  static const _tealDim = Color(0x261D9E75);
+  static const _tealBorder = Color(0x401D9E75);
   static const _white70 = Color(0xB3FFFFFF);
   static const _white40 = Color(0x66FFFFFF);
   static const _white30 = Color(0x4DFFFFFF);
-  static const _fieldBg = Color(0x12FFFFFF); // 7% white
+  static const _fieldBg = Color(0x12FFFFFF);
 
   Future<void> handleAuth() async {
     final email = emailController.text.trim();
@@ -77,13 +77,33 @@ class _PremiumScreenState extends State<PremiumScreen> {
     }
   }
 
+  // ✅ UPDATED SNACKBAR (VISIBLE + STYLED)
   void _snack(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(msg),
-        backgroundColor: const Color(0xFF1E3A3A),
+        content: Row(
+          children: [
+            const Icon(Icons.error_outline, color: Colors.white, size: 18),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                msg,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 14,
+                ),
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: Colors.redAccent, // 👈 HIGH CONTRAST
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+        ),
+        margin: const EdgeInsets.all(12),
+        duration: const Duration(seconds: 3),
       ),
     );
   }
@@ -132,7 +152,6 @@ class _PremiumScreenState extends State<PremiumScreen> {
     );
   }
 
-  // ── MOBILE ─────────────────────────────────────────────────────────────────
   Widget _buildMobile() {
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
@@ -148,7 +167,6 @@ class _PremiumScreenState extends State<PremiumScreen> {
     );
   }
 
-  // ── DESKTOP ────────────────────────────────────────────────────────────────
   Widget _buildDesktop() {
     return Row(
       children: [

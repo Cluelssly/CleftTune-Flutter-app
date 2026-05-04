@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
-
+import 'profile.dart';
 import 'firebase_options.dart';
 import 'premium.dart';
 import 'phonetic.dart';
@@ -202,6 +202,8 @@ class _AppLayoutState extends State<AppLayout> {
 
 /// 📜 HISTORY SCREEN
 
+/// 📜 HISTORY SCREEN
+
 class HistoryScreen extends StatefulWidget {
   const HistoryScreen({super.key});
 
@@ -239,22 +241,38 @@ class _HistoryScreenState extends State<HistoryScreen> {
                         // HEADER
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: const [
-                            Text(
+                          children: [
+                            const Text(
                               "CleftTune",
                               style: TextStyle(
                                 color: Colors.teal,
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
-                            CircleAvatar(
-                              backgroundColor: Color.fromARGB(
-                                31,
-                                255,
-                                255,
-                                255,
+
+                            // 🔥 UPDATED PROFILE ICON (CLICKABLE)
+                            GestureDetector(
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) =>
+                                        const ProfileScreen(),
+                                  ),
+                                );
+                              },
+                              child: const CircleAvatar(
+                                backgroundColor: Color.fromARGB(
+                                  31,
+                                  255,
+                                  255,
+                                  255,
+                                ),
+                                child: Icon(
+                                  Icons.person,
+                                  color: Colors.white,
+                                ),
                               ),
-                              child: Icon(Icons.person, color: Colors.white),
                             ),
                           ],
                         ),
@@ -326,7 +344,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
                                     final docs = snapshot.data!.docs;
 
-                                    // SEARCH FILTER
                                     final filteredDocs = docs.where((doc) {
                                       final data =
                                           doc.data() as Map<String, dynamic>;
@@ -347,7 +364,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
                                       );
                                     }
 
-                                    // GROUPING
                                     Map<String, List<QueryDocumentSnapshot>>
                                     grouped = {"Today": [], "Yesterday": []};
 
@@ -384,7 +400,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
                                     return ListView(
                                       children: [
-                                        // TODAY
                                         if (grouped["Today"]!.isNotEmpty) ...[
                                           const Text(
                                             "TODAY",
@@ -408,7 +423,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
                                           const SizedBox(height: 20),
                                         ],
 
-                                        // YESTERDAY
                                         if (grouped["Yesterday"]!
                                             .isNotEmpty) ...[
                                           const Text(
