@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'dart:developer' as dev;
+import 'nlp_service.dart'; // adjust import path to match your project structure
 
 class TranslatorScreen extends StatefulWidget {
   final VoidCallback goToPremium;
@@ -15,26 +16,31 @@ class TranslatorScreen extends StatefulWidget {
 
 class _TranslatorScreenState extends State<TranslatorScreen> {
   late stt.SpeechToText _speech;
+  final NlpService _nlp = NlpService();
 
   bool _isListening = false;
   bool _isInitialized = false;
-  bool _userStopped = false; // tracks if user manually stopped
+  bool _userStopped = false;
+  bool _isCorrecting = false; // true while NLP Claude call is in progress
 
   static const int _maxWords = 30;
 
-  // Holds the last N words shown on screen
   List<String> _displayWords = [];
-
-  // Accumulates the full sentence until a final result
   String _pendingText = '';
-
   String _subtitleText = 'Tap the mic to start speaking...';
 
   @override
   void initState() {
     super.initState();
     _speech = stt.SpeechToText();
-    _initSpeech();
+    _initServices();
+  }
+
+  /// Initializes NLP (loads persisted learned patterns) then speech engine.
+  Future<void> _initServices() async {
+    await _nlp.init();
+    dev.log('NLP ready — ${_nlp.patternCount} learned pattern(s) loaded');
+    await _initSpeech();
   }
 
   Future<void> _initSpeech() async {
@@ -52,32 +58,15 @@ class _TranslatorScreenState extends State<TranslatorScreen> {
       onError: (error) {
         dev.log('ERROR: ${error.errorMsg}');
         if (_isListening && !_userStopped) {
-          Future.delayed(const Duration(milliseconds: 100), _restartListening);
+          Future.delayed(
+              const Duration(milliseconds: 100), _restartListening);
         }
       },
     );
     dev.log('Speech initialized: $_isInitialized');
   }
 
-  String _cleanSpeech(String input) {
-    String text = input.toLowerCase();
-    final corrections = {
-      'helo': 'hello',
-      'hallo': 'hello',
-      'yoo': 'you',
-      'yu': 'you',
-      'im': 'i am',
-      'i m': 'i am',
-      'tnx': 'thanks',
-      'yoo en ay': 'you and i',
-    };
-    corrections.forEach((wrong, correct) {
-      text = text.replaceAll(wrong, correct);
-    });
-    return text;
-  }
-
-  /// Keeps only the last [_maxWords] words and updates the display
+  /// Keeps only the last [_maxWords] words and refreshes the subtitle box.
   void _updateDisplay(String newText) {
     final allWords = newText.trim().split(RegExp(r'\s+'));
     final trimmed = allWords.length > _maxWords
@@ -107,30 +96,45 @@ class _TranslatorScreenState extends State<TranslatorScreen> {
         final words = result.recognizedWords;
         if (words.isEmpty) return;
 
-        final cleaned = _cleanSpeech(words);
-
-        // Show rolling last 15 words in real time
-        _updateDisplay(cleaned);
-
         if (result.finalResult) {
-          _pendingText = cleaned;
+          // ── Final result: run full NLP pipeline (local patterns + Claude AI) ──
+          setState(() => _isCorrecting = true);
 
-          // Save to Firestore
-          final user = FirebaseAuth.instance.currentUser;
-          if (user != null) {
-            await FirebaseFirestore.instance.collection('translations').add({
-              'text': cleaned,
-              'time': FieldValue.serverTimestamp(),
-              'userId': user.uid,
-            });
-            dev.log('Saved: $cleaned');
+          try {
+            final corrected = await _nlp.correct(words);
+            _pendingText = corrected;
+            _updateDisplay(corrected);
+
+            // Persist corrected utterance to Firestore
+            final user = FirebaseAuth.instance.currentUser;
+            if (user != null) {
+              await FirebaseFirestore.instance
+                  .collection('translations')
+                  .add({
+                'text': corrected,       // NLP-corrected version
+                'rawText': words,        // original STT output for debugging
+                'time': FieldValue.serverTimestamp(),
+                'userId': user.uid,
+              });
+              dev.log('Saved → corrected: "$corrected"  |  raw: "$words"');
+            }
+          } catch (e) {
+            dev.log('NLP correction failed: $e');
+            // Graceful fallback: show whatever the STT heard
+            _updateDisplay(words);
+          } finally {
+            if (mounted) setState(() => _isCorrecting = false);
           }
+        } else {
+          // ── Partial result: display raw text immediately for real-time feel ──
+          // NLP is only called on final results to avoid hammering the API.
+          _updateDisplay(words);
         }
       },
     );
   }
 
-  /// Seamlessly restarts the mic without user interaction
+  /// Seamlessly restarts the mic without user interaction.
   Future<void> _restartListening() async {
     if (!_isListening || _userStopped) return;
     await _startListening();
@@ -191,7 +195,7 @@ class _TranslatorScreenState extends State<TranslatorScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // Live indicator
+              // ── LIVE indicator ──────────────────────────────────────────
               AnimatedOpacity(
                 opacity: _isListening ? 1.0 : 0.3,
                 duration: const Duration(milliseconds: 400),
@@ -222,7 +226,7 @@ class _TranslatorScreenState extends State<TranslatorScreen> {
 
               const SizedBox(height: 28),
 
-              // Subtitle box
+              // ── Subtitle / corrected text box ───────────────────────────
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 24),
                 child: AnimatedContainer(
@@ -233,22 +237,27 @@ class _TranslatorScreenState extends State<TranslatorScreen> {
                     color: Colors.white.withOpacity(0.07),
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(
-                      color: _isListening
-                          ? Colors.teal.withOpacity(0.5)
-                          : Colors.white12,
+                      color: _isCorrecting
+                          ? Colors.amber.withOpacity(0.5)
+                          : _isListening
+                              ? Colors.teal.withOpacity(0.5)
+                              : Colors.white12,
                       width: 1,
                     ),
                   ),
                   child: AnimatedSwitcher(
                     duration: const Duration(milliseconds: 200),
                     child: Text(
-                      _subtitleText,
-                      key: ValueKey(_subtitleText),
+                      _isCorrecting ? 'Correcting...' : _subtitleText,
+                      key: ValueKey(
+                          _isCorrecting ? 'correcting' : _subtitleText),
                       textAlign: TextAlign.center,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 26,
                         fontWeight: FontWeight.w600,
-                        color: Colors.white,
+                        color: _isCorrecting
+                            ? Colors.amber.withOpacity(0.7)
+                            : Colors.white,
                         height: 1.4,
                       ),
                     ),
@@ -258,19 +267,44 @@ class _TranslatorScreenState extends State<TranslatorScreen> {
 
               const SizedBox(height: 20),
 
-              // Word count hint
+              // ── Status footer: word count + learned pattern count ───────
               if (_isListening)
-                Text(
-                  '${_displayWords.length}/$_maxWords words',
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.35),
-                    fontSize: 12,
-                  ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      '${_displayWords.length}/$_maxWords words',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.35),
+                        fontSize: 12,
+                      ),
+                    ),
+                    if (_nlp.patternCount > 0) ...[
+                      const SizedBox(width: 12),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.teal.withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          '${_nlp.patternCount} pattern${_nlp.patternCount == 1 ? '' : 's'} learned',
+                          style: TextStyle(
+                            color: Colors.teal.withOpacity(0.7),
+                            fontSize: 11,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
             ],
           ),
         ),
       ),
+
+      // ── Mic FAB ─────────────────────────────────────────────────────────
       floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
       floatingActionButton: GestureDetector(
         onTap: _toggleMic,

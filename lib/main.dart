@@ -687,7 +687,7 @@ class SettingsScreen extends StatelessWidget {
         if (title == "Trained Voice") {
           Navigator.push(
             context,
-            MaterialPageRoute(builder: (_) => const Phonetic()),
+            MaterialPageRoute(builder: (_) => const TrainedVoiceApp()),
           );
         } else if (title == "Cloud Based") {
           Navigator.push(

@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'premium.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -9,105 +11,222 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
-  String _name = 'Alex Rivera';
-  String _email = 'alex.rivera@example.com';
-  String _plan = 'Free Plan';
+  // ── Live data (pulled from Firestore) ──────────────────────────────────────
+  String _name        = '';
+  String _email       = '';
+  String _plan        = 'Free Plan';
+  String _memberSince = '';
+  bool   _isLoading   = true;
 
   // ── Theme constants ────────────────────────────────────────────────────────
-  static const _bg     = Color(0xFF0D2B2B);
-  static const _bgMid  = Color(0xFF0E2233);
-  static const _bgDark = Color(0xFF0B1A28);
-  static const _card   = Color(0x0AFFFFFF);
-  static const _teal   = Color(0xFF1D9E75);
+  static const _bg         = Color(0xFF0D2B2B);
+  static const _bgMid      = Color(0xFF0E2233);
+  static const _bgDark     = Color(0xFF0B1A28);
+  static const _card       = Color(0x0AFFFFFF);
+  static const _teal       = Color(0xFF1D9E75);
   static const _tealDim    = Color(0x261D9E75);
   static const _tealBorder = Color(0x401D9E75);
-  static const _white70 = Color(0xB3FFFFFF);
-  static const _white40 = Color(0x66FFFFFF);
-  static const _white20 = Color(0x33FFFFFF);
-  static const _fieldBg = Color(0xFF0D2020);
+  static const _white70    = Color(0xB3FFFFFF);
+  static const _white40    = Color(0x66FFFFFF);
+  static const _white20    = Color(0x33FFFFFF);
+  static const _fieldBg    = Color(0xFF0D2020);
 
+  @override
+  void initState() {
+    super.initState();
+    _loadProfile();
+  }
+
+  // ── Load profile from Firestore ────────────────────────────────────────────
+  Future<void> _loadProfile() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+
+      final data = doc.data();
+
+      // Format member since date
+      String memberSince = '';
+      if (data?['createdAt'] != null) {
+        final ts = (data!['createdAt'] as Timestamp).toDate();
+        memberSince =
+            '${_monthName(ts.month)} ${ts.year}';
+      } else if (user.metadata.creationTime != null) {
+        final ts = user.metadata.creationTime!;
+        memberSince = '${_monthName(ts.month)} ${ts.year}';
+      }
+
+      setState(() {
+        _name        = data?['name']  ?? user.displayName ?? 'User';
+        _email       = data?['email'] ?? user.email       ?? '';
+        _plan        = data?['plan']  ?? 'Free Plan';
+        _memberSince = memberSince;
+        _isLoading   = false;
+      });
+    } catch (e) {
+      // Fallback to Auth data if Firestore read fails
+      setState(() {
+        _name      = user.displayName ?? 'User';
+        _email     = user.email       ?? '';
+        _isLoading = false;
+      });
+    }
+  }
+
+  String _monthName(int month) {
+    const months = [
+      '', 'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December'
+    ];
+    return months[month];
+  }
+
+  // ── Save edited profile to Firestore + Auth ────────────────────────────────
+  Future<void> _saveProfile(String name, String email) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    // Update Firestore document
+    await FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .set({
+      'name':      name,
+      'email':     email,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+
+    // Also update Firebase Auth display name
+    await user.updateDisplayName(name);
+
+    // Update email in Auth if changed
+    if (email != user.email && email.isNotEmpty) {
+      await user.verifyBeforeUpdateEmail(email);
+    }
+
+    setState(() {
+      _name  = name;
+      _email = email;
+    });
+  }
+
+  // ── Edit bottom sheet ──────────────────────────────────────────────────────
   void _showEditSheet() {
     final nameController  = TextEditingController(text: _name);
     final emailController = TextEditingController(text: _email);
+    bool isSaving = false;
 
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => Padding(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.of(context).viewInsets.bottom,
-        ),
-        child: Container(
-          decoration: const BoxDecoration(
-            color: Color(0xFF112828),
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setSheetState) => Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom,
           ),
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 36, height: 4,
-                  decoration: BoxDecoration(
-                    color: _white20,
-                    borderRadius: BorderRadius.circular(2),
+          child: Container(
+            decoration: const BoxDecoration(
+              color: Color(0xFF112828),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36, height: 4,
+                    decoration: BoxDecoration(
+                      color: _white20,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 20),
-              const Text('Edit Profile',
-                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: Colors.white)),
-              const SizedBox(height: 20),
-              _sheetLabel('FULL NAME'),
-              const SizedBox(height: 6),
-              _sheetField(nameController, hint: 'Your name'),
-              const SizedBox(height: 14),
-              _sheetLabel('EMAIL'),
-              const SizedBox(height: 6),
-              _sheetField(emailController, hint: 'you@example.com',
-                  type: TextInputType.emailAddress),
-              const SizedBox(height: 24),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      style: OutlinedButton.styleFrom(
-                        side: const BorderSide(color: _white20),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
+                const SizedBox(height: 20),
+                const Text('Edit Profile',
+                    style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white)),
+                const SizedBox(height: 20),
+                _sheetLabel('FULL NAME'),
+                const SizedBox(height: 6),
+                _sheetField(nameController, hint: 'Your name'),
+                const SizedBox(height: 14),
+                _sheetLabel('EMAIL'),
+                const SizedBox(height: 6),
+                _sheetField(emailController,
+                    hint: 'you@example.com',
+                    type: TextInputType.emailAddress),
+                const SizedBox(height: 24),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        style: OutlinedButton.styleFrom(
+                          side: const BorderSide(color: _white20),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                        ),
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('Cancel',
+                            style: TextStyle(color: _white70)),
                       ),
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('Cancel',
-                          style: TextStyle(color: _white70)),
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _teal,
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _teal,
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                        ),
+                        onPressed: isSaving
+                            ? null
+                            : () async {
+                                setSheetState(() => isSaving = true);
+                                try {
+                                  await _saveProfile(
+                                    nameController.text.trim(),
+                                    emailController.text.trim(),
+                                  );
+                                  if (context.mounted) Navigator.pop(context);
+                                } catch (e) {
+                                  if (context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                          content: Text('Save failed: $e'),
+                                          backgroundColor: Colors.red),
+                                    );
+                                  }
+                                } finally {
+                                  setSheetState(() => isSaving = false);
+                                }
+                              },
+                        child: isSaving
+                            ? const SizedBox(
+                                width: 18, height: 18,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: Colors.white))
+                            : const Text('Save Changes',
+                                style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold)),
                       ),
-                      onPressed: () {
-                        setState(() {
-                          _name  = nameController.text.trim();
-                          _email = emailController.text.trim();
-                        });
-                        Navigator.pop(context);
-                      },
-                      child: const Text('Save Changes',
-                          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                     ),
-                  ),
-                ],
-              ),
-            ],
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -116,6 +235,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const Scaffold(
+        backgroundColor: _bg,
+        body: Center(
+          child: CircularProgressIndicator(color: _teal),
+        ),
+      );
+    }
+
     final screenWidth = MediaQuery.of(context).size.width;
     final isWide = screenWidth >= 700;
 
@@ -177,7 +305,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Left column: avatar + stats
           SizedBox(
             width: 260,
             child: Column(
@@ -189,7 +316,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
           ),
           const SizedBox(width: 32),
-          // Right column: account info + session actions
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -251,8 +377,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   // ── AVATAR SECTION ─────────────────────────────────────────────────────────
   Widget _buildAvatarSection({bool centered = true}) {
     final initials = _name.isNotEmpty
-        ? _name.trim().split(' ').map((w) => w[0]).take(2).join()
-        : 'A';
+        ? _name.trim().split(' ').map((w) => w[0]).take(2).join().toUpperCase()
+        : 'U';
+
     return Column(
       crossAxisAlignment:
           centered ? CrossAxisAlignment.center : CrossAxisAlignment.start,
@@ -379,7 +506,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
           Divider(color: Colors.white.withOpacity(0.07), height: 20),
           _infoRow(Icons.email_outlined, 'Email', _email),
           Divider(color: Colors.white.withOpacity(0.07), height: 20),
-          _infoRow(Icons.calendar_today_outlined, 'Member Since', 'April 2025'),
+          _infoRow(Icons.calendar_today_outlined, 'Member Since',
+              _memberSince.isEmpty ? '—' : _memberSince),
         ],
       ),
     );
@@ -426,8 +554,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           builder: (_) => PremiumScreen(
             onBack: () => Navigator.pop(context),
             onLogin: () => ScaffoldMessenger.of(context)
-                .showSnackBar(const SnackBar(
-                    content: Text('Login clicked'))),
+                .showSnackBar(const SnackBar(content: Text('Login clicked'))),
           ),
         ),
       ),
@@ -458,9 +585,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           fontSize: 14)),
                   SizedBox(height: 2),
                   Text('Unlock all features — ₱99/month',
-                      style: TextStyle(
-                          color: _teal,
-                          fontSize: 12)),
+                      style: TextStyle(color: _teal, fontSize: 12)),
                 ],
               ),
             ),
@@ -474,7 +599,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   // ── LOGOUT BUTTON ──────────────────────────────────────────────────────────
   Widget _buildLogoutButton() {
     return GestureDetector(
-      onTap: () => _confirmLogout(),
+      onTap: _confirmLogout,
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
@@ -515,8 +640,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
         backgroundColor: const Color(0xFF112828),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: const Text('Log out?',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-        content: const Text('You will be signed out of your CleftTune account.',
+            style: TextStyle(
+                color: Colors.white, fontWeight: FontWeight.bold)),
+        content: const Text(
+            'You will be signed out of your CleftTune account.',
             style: TextStyle(color: _white40, fontSize: 13)),
         actions: [
           TextButton(
@@ -529,12 +656,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(10)),
             ),
-            onPressed: () {
+            onPressed: () async {
               Navigator.pop(context);
-              // TODO: call FirebaseAuth.instance.signOut()
+              await FirebaseAuth.instance.signOut();
+              // Navigate back to login — adjust route name to match your app
+              if (context.mounted) {
+                Navigator.of(context)
+                    .pushNamedAndRemoveUntil('/login', (_) => false);
+              }
             },
             child: const Text('Logout',
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                style: TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.bold)),
           ),
         ],
       ),
