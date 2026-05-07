@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'dart:developer' as dev;
-import 'nlp_service.dart'; // adjust import path to match your project structure
+import 'nlp_service.dart';
 
 class TranslatorScreen extends StatefulWidget {
   final VoidCallback goToPremium;
@@ -14,32 +15,87 @@ class TranslatorScreen extends StatefulWidget {
   State<TranslatorScreen> createState() => _TranslatorScreenState();
 }
 
-class _TranslatorScreenState extends State<TranslatorScreen> {
+class _TranslatorScreenState extends State<TranslatorScreen>
+    with TickerProviderStateMixin {
   late stt.SpeechToText _speech;
   final NlpService _nlp = NlpService();
 
-  bool _isListening = false;
+  bool _isListening   = false;
   bool _isInitialized = false;
-  bool _userStopped = false;
-  bool _isCorrecting = false; // true while NLP Claude call is in progress
+  bool _userStopped   = false;
+  bool _showCorrections = false;
+
+  // ── Real-time display state ───────────────────────────────────────────────
+  /// The stable, AI-corrected text (updated after each debounced Claude call).
+  String _correctedText = '';
+
+  /// Raw partial currently being spoken (shown optimistically while Claude processes).
+  String _rawPartial = '';
+
+  /// True while a debounced Claude call is in-flight for partials.
+  bool _isCorrectingPartial = false;
 
   static const int _maxWords = 30;
 
-  List<String> _displayWords = [];
-  String _pendingText = '';
-  String _subtitleText = 'Tap the mic to start speaking...';
+  // ── Theme ─────────────────────────────────────────────────────────────────
+  static const _bg         = Color(0xFF0D2B2B);
+  static const _bgMid      = Color(0xFF0E2233);
+  static const _bgDark     = Color(0xFF0B1A28);
+  static const _teal       = Color(0xFF1D9E75);
+  static const _tealDim    = Color(0x261D9E75);
+  static const _tealBorder = Color(0x401D9E75);
+  static const _card       = Color(0x0AFFFFFF);
+  static const _white40    = Color(0x66FFFFFF);
+  static const _white20    = Color(0x33FFFFFF);
+
+  // ── Animation ────────────────────────────────────────────────────────────
+  late AnimationController _pulseController;
+  late Animation<double>   _pulseAnim;
+
+  // ── Correcting indicator dot animation ───────────────────────────────────
+  late AnimationController _dotController;
+  late Animation<double>   _dotAnim;
 
   @override
   void initState() {
     super.initState();
     _speech = stt.SpeechToText();
+
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat(reverse: true);
+
+    _pulseAnim = Tween<double>(begin: 1.0, end: 1.12).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
+
+    _dotController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 600),
+    )..repeat(reverse: true);
+
+    _dotAnim = Tween<double>(begin: 0.3, end: 1.0).animate(
+      CurvedAnimation(parent: _dotController, curve: Curves.easeInOut),
+    );
+
     _initServices();
   }
 
-  /// Initializes NLP (loads persisted learned patterns) then speech engine.
   Future<void> _initServices() async {
     await _nlp.init();
-    dev.log('NLP ready — ${_nlp.patternCount} learned pattern(s) loaded');
+    dev.log('NLP ready — ${_nlp.patternCount} pattern(s) loaded');
+
+    // Wire up real-time correction callback
+    _nlp.onRealtimeCorrection = (corrected) {
+      if (!mounted) return;
+      setState(() {
+        _correctedText        = corrected;
+        _rawPartial           = '';
+        _isCorrectingPartial  = false;
+      });
+    };
+
     await _initSpeech();
   }
 
@@ -58,26 +114,13 @@ class _TranslatorScreenState extends State<TranslatorScreen> {
       onError: (error) {
         dev.log('ERROR: ${error.errorMsg}');
         if (_isListening && !_userStopped) {
-          Future.delayed(
-              const Duration(milliseconds: 100), _restartListening);
+          Future.delayed(const Duration(milliseconds: 100), _restartListening);
         }
       },
     );
-    dev.log('Speech initialized: $_isInitialized');
   }
 
-  /// Keeps only the last [_maxWords] words and refreshes the subtitle box.
-  void _updateDisplay(String newText) {
-    final allWords = newText.trim().split(RegExp(r'\s+'));
-    final trimmed = allWords.length > _maxWords
-        ? allWords.sublist(allWords.length - _maxWords)
-        : allWords;
-
-    setState(() {
-      _displayWords = trimmed;
-      _subtitleText = trimmed.join(' ');
-    });
-  }
+  // ── Speech listening ─────────────────────────────────────────────────────
 
   Future<void> _startListening() async {
     if (!_isInitialized) {
@@ -97,44 +140,55 @@ class _TranslatorScreenState extends State<TranslatorScreen> {
         if (words.isEmpty) return;
 
         if (result.finalResult) {
-          // ── Final result: run full NLP pipeline (local patterns + Claude AI) ──
-          setState(() => _isCorrecting = true);
+          // ── FINAL: full correction + Firestore save ──────────────────────
+          _nlp.beginSession();
+          setState(() {
+            _rawPartial          = '';
+            _isCorrectingPartial = false;
+            // Show local-pattern result instantly while Claude works
+            _correctedText = _nlp.patterns.isNotEmpty
+                ? words
+                : _correctedText;
+          });
 
           try {
             final corrected = await _nlp.correct(words);
-            _pendingText = corrected;
-            _updateDisplay(corrected);
+            if (mounted) {
+              setState(() => _correctedText = corrected);
+            }
 
-            // Persist corrected utterance to Firestore
             final user = FirebaseAuth.instance.currentUser;
             if (user != null) {
               await FirebaseFirestore.instance
                   .collection('translations')
                   .add({
-                'text': corrected,       // NLP-corrected version
-                'rawText': words,        // original STT output for debugging
-                'time': FieldValue.serverTimestamp(),
-                'userId': user.uid,
+                'text':      corrected,
+                'rawText':   words,
+                'time':      FieldValue.serverTimestamp(),
+                'userId':    user.uid,
               });
-              dev.log('Saved → corrected: "$corrected"  |  raw: "$words"');
             }
           } catch (e) {
-            dev.log('NLP correction failed: $e');
-            // Graceful fallback: show whatever the STT heard
-            _updateDisplay(words);
-          } finally {
-            if (mounted) setState(() => _isCorrecting = false);
+            dev.log('Final NLP correction failed: $e');
           }
+
+          await _nlp.endSession();
         } else {
-          // ── Partial result: display raw text immediately for real-time feel ──
-          // NLP is only called on final results to avoid hammering the API.
-          _updateDisplay(words);
+          // ── PARTIAL: apply local patterns instantly, schedule Claude ──────
+          final localCorrected = _nlp.correctPartialSync(words);
+
+          setState(() {
+            // If Claude hasn't corrected yet, show local result
+            // Once Claude responds, _correctedText is updated via callback
+            _correctedText       = localCorrected;
+            _rawPartial          = '';          // hide raw overlay
+            _isCorrectingPartial = true;        // show processing indicator
+          });
         }
       },
     );
   }
 
-  /// Seamlessly restarts the mic without user interaction.
   Future<void> _restartListening() async {
     if (!_isListening || _userStopped) return;
     await _startListening();
@@ -142,184 +196,751 @@ class _TranslatorScreenState extends State<TranslatorScreen> {
 
   Future<void> _toggleMic() async {
     if (_isListening) {
-      // User manually stops
       _userStopped = true;
       await _speech.stop();
       setState(() {
-        _isListening = false;
-        _subtitleText = _displayWords.isEmpty
-            ? 'Tap the mic to start speaking...'
-            : _subtitleText;
+        _isListening         = false;
+        _isCorrectingPartial = false;
+        _rawPartial          = '';
       });
     } else {
-      // User starts
-      _userStopped = false;
+      _userStopped   = false;
+      _correctedText = '';
+      _rawPartial    = '';
       setState(() {
-        _isListening = true;
-        _displayWords = [];
-        _subtitleText = 'Listening...';
+        _isListening         = true;
+        _isCorrectingPartial = false;
       });
+      _nlp.beginSession();
       await _startListening();
     }
   }
 
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  String get _displayText {
+    if (_correctedText.isNotEmpty) return _correctedText;
+    if (_rawPartial.isNotEmpty)    return _rawPartial;
+    if (_isListening)              return '';
+    return '';
+  }
+
+  String get _subtitleHint {
+    if (!_isListening && _correctedText.isEmpty) {
+      return 'Tap the mic to start speaking...';
+    }
+    if (_isListening && _correctedText.isEmpty && _rawPartial.isEmpty) {
+      return 'Listening...';
+    }
+    return '';
+  }
+
+  int get _wordCount =>
+      _displayText.trim().isEmpty ? 0 : _displayText.trim().split(RegExp(r'\s+')).length;
+
+  // ── Teach correction dialog ───────────────────────────────────────────────
+  void _showAddCorrectionDialog() {
+    final wrongController   = TextEditingController();
+    final correctController = TextEditingController();
+
+    if (_correctedText.isNotEmpty) {
+      wrongController.text = _correctedText;
+    }
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => Padding(
+        padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom),
+        child: Container(
+          decoration: const BoxDecoration(
+            color: Color(0xFF112828),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 36, height: 4,
+                  decoration: BoxDecoration(
+                    color: _white20,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              const Text('Teach a Correction',
+                  style: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white)),
+              const SizedBox(height: 6),
+              const Text(
+                'Tell CleftTune what word was heard wrong and what it should be.',
+                style: TextStyle(fontSize: 12, color: _white40),
+              ),
+              const SizedBox(height: 20),
+              _sheetLabel('WHAT WAS HEARD (WRONG)'),
+              const SizedBox(height: 6),
+              _sheetField(wrongController,
+                  hint: 'e.g. "kea"', icon: Icons.hearing_outlined),
+              const SizedBox(height: 14),
+              _sheetLabel('WHAT IT SHOULD BE (CORRECT)'),
+              const SizedBox(height: 6),
+              _sheetField(correctController,
+                  hint: 'e.g. "tea"', icon: Icons.check_circle_outline),
+              const SizedBox(height: 24),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: _white20),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Cancel',
+                          style: TextStyle(color: _white40)),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _teal,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                      onPressed: () async {
+                        final wrong   = wrongController.text.trim();
+                        final correct = correctController.text.trim();
+                        if (wrong.isEmpty || correct.isEmpty) return;
+
+                        await _nlp.learnPattern(wrong, correct);
+                        if (mounted) {
+                          Navigator.pop(context);
+                          setState(() {});
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('"$wrong" → "$correct" saved!'),
+                              backgroundColor: const Color(0xFF1E3A3A),
+                              behavior: SnackBarBehavior.floating,
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10)),
+                            ),
+                          );
+                        }
+                      },
+                      child: const Text('Save',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   void dispose() {
+    _nlp.onRealtimeCorrection = null;
     _speech.stop();
+    _pulseController.dispose();
+    _dotController.dispose();
     super.dispose();
   }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // BUILD
+  // ══════════════════════════════════════════════════════════════════════════
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        title: Text(
-          'CleftTune',
-          style: TextStyle(
-            color: Colors.teal[300],
-            fontWeight: FontWeight.bold,
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [_bg, _bgMid, _bgDark],
           ),
         ),
-        backgroundColor: Colors.black.withOpacity(0.7),
-        elevation: 0,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.star, color: Colors.white),
-            onPressed: widget.goToPremium,
+        child: SafeArea(
+          child: Column(
+            children: [
+              _buildAppBar(),
+              Expanded(
+                child: _showCorrections
+                    ? _buildCorrectionsPanel()
+                    : _buildTranslatorBody(),
+              ),
+            ],
+          ),
+        ),
+      ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
+      floatingActionButton: _showCorrections ? null : _buildMicFab(),
+    );
+  }
+
+  // ── APP BAR ───────────────────────────────────────────────────────────────
+  Widget _buildAppBar() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      child: Row(
+        children: [
+          RichText(
+            text: const TextSpan(
+              children: [
+                TextSpan(
+                    text: 'Cleft',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 18)),
+                TextSpan(
+                    text: 'Tune',
+                    style: TextStyle(
+                        color: _teal,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 18)),
+              ],
+            ),
+          ),
+          const Spacer(),
+          _appBarBtn(
+            icon: _showCorrections
+                ? Icons.close_rounded
+                : Icons.format_list_bulleted_rounded,
+            tooltip: 'Corrections',
+            onTap: () =>
+                setState(() => _showCorrections = !_showCorrections),
+            active: _showCorrections,
+          ),
+          const SizedBox(width: 8),
+          _appBarBtn(
+            icon: Icons.add_rounded,
+            tooltip: 'Teach correction',
+            onTap: _showAddCorrectionDialog,
+          ),
+          const SizedBox(width: 8),
+          _appBarBtn(
+            icon: Icons.star_rounded,
+            tooltip: 'Premium',
+            onTap: widget.goToPremium,
+            gold: true,
           ),
         ],
       ),
-      body: SafeArea(
-        child: SizedBox.expand(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              // ── LIVE indicator ──────────────────────────────────────────
-              AnimatedOpacity(
-                opacity: _isListening ? 1.0 : 0.3,
-                duration: const Duration(milliseconds: 400),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Container(
-                      width: 8,
-                      height: 8,
-                      decoration: const BoxDecoration(
-                        color: Colors.redAccent,
-                        shape: BoxShape.circle,
-                      ),
+    );
+  }
+
+  Widget _appBarBtn({
+    required IconData icon,
+    required VoidCallback onTap,
+    String? tooltip,
+    bool active = false,
+    bool gold   = false,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 36, height: 36,
+        decoration: BoxDecoration(
+          color: active
+              ? _tealDim
+              : gold
+                  ? Colors.amber.withOpacity(0.15)
+                  : _card,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: active
+                ? _tealBorder
+                : gold
+                    ? Colors.amber.withOpacity(0.3)
+                    : _white20,
+          ),
+        ),
+        child: Icon(icon, size: 18,
+          color: active ? _teal : gold ? Colors.amber : Colors.white70),
+      ),
+    );
+  }
+
+  // ── TRANSLATOR BODY ───────────────────────────────────────────────────────
+  Widget _buildTranslatorBody() {
+    final hint    = _subtitleHint;
+    final display = _displayText;
+    final hasText = display.isNotEmpty;
+
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        // LIVE + correction indicator row
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            // LIVE dot
+            AnimatedOpacity(
+              opacity: _isListening ? 1.0 : 0.3,
+              duration: const Duration(milliseconds: 400),
+              child: Row(
+                children: [
+                  Container(
+                    width: 8, height: 8,
+                    decoration: const BoxDecoration(
+                      color: Colors.redAccent,
+                      shape: BoxShape.circle,
                     ),
-                    const SizedBox(width: 6),
-                    const Text(
-                      'LIVE',
+                  ),
+                  const SizedBox(width: 6),
+                  const Text('LIVE',
                       style: TextStyle(
                         color: Colors.redAccent,
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
                         letterSpacing: 1.5,
-                      ),
-                    ),
-                  ],
-                ),
+                      )),
+                ],
               ),
+            ),
 
-              const SizedBox(height: 28),
-
-              // ── Subtitle / corrected text box ───────────────────────────
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  padding: const EdgeInsets.all(24),
-                  constraints: const BoxConstraints(minHeight: 120),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.07),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                      color: _isCorrecting
-                          ? Colors.amber.withOpacity(0.5)
-                          : _isListening
-                              ? Colors.teal.withOpacity(0.5)
-                              : Colors.white12,
-                      width: 1,
-                    ),
-                  ),
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 200),
-                    child: Text(
-                      _isCorrecting ? 'Correcting...' : _subtitleText,
-                      key: ValueKey(
-                          _isCorrecting ? 'correcting' : _subtitleText),
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 26,
-                        fontWeight: FontWeight.w600,
-                        color: _isCorrecting
-                            ? Colors.amber.withOpacity(0.7)
-                            : Colors.white,
-                        height: 1.4,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-
-              const SizedBox(height: 20),
-
-              // ── Status footer: word count + learned pattern count ───────
-              if (_isListening)
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      '${_displayWords.length}/$_maxWords words',
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.35),
-                        fontSize: 12,
-                      ),
-                    ),
-                    if (_nlp.patternCount > 0) ...[
-                      const SizedBox(width: 12),
+            // Correcting indicator (shown while debounce is pending)
+            if (_isListening && _isCorrectingPartial) ...[
+              const SizedBox(width: 16),
+              AnimatedBuilder(
+                animation: _dotAnim,
+                builder: (_, __) => Opacity(
+                  opacity: _dotAnim.value,
+                  child: Row(
+                    children: [
                       Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.teal.withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Text(
-                          '${_nlp.patternCount} pattern${_nlp.patternCount == 1 ? '' : 's'} learned',
-                          style: TextStyle(
-                            color: Colors.teal.withOpacity(0.7),
-                            fontSize: 11,
-                          ),
+                        width: 6, height: 6,
+                        decoration: const BoxDecoration(
+                          color: _teal,
+                          shape: BoxShape.circle,
                         ),
                       ),
+                      const SizedBox(width: 5),
+                      const Text('correcting',
+                          style: TextStyle(
+                              color: _teal,
+                              fontSize: 11,
+                              letterSpacing: 0.5)),
                     ],
-                  ],
+                  ),
                 ),
+              ),
+            ],
+          ],
+        ),
+
+        const SizedBox(height: 28),
+
+        // ── Main subtitle box ─────────────────────────────────────────────
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            padding: const EdgeInsets.all(24),
+            constraints: const BoxConstraints(minHeight: 140),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.05),
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(
+                color: _isListening
+                    ? _teal.withOpacity(0.5)
+                    : _white20,
+                width: 1,
+              ),
+              boxShadow: _isListening
+                  ? [
+                      BoxShadow(
+                        color: _teal.withOpacity(0.08),
+                        blurRadius: 24,
+                        spreadRadius: 2,
+                      )
+                    ]
+                  : [],
+            ),
+            child: Column(
+              children: [
+                // Hint text (tap to start / listening)
+                if (hint.isNotEmpty)
+                  Text(
+                    hint,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      color: _white40,
+                      height: 1.5,
+                    ),
+                  ),
+
+                // Corrected text — shown as the single source of truth
+                if (hasText)
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 180),
+                    child: Text(
+                      display,
+                      key: ValueKey(display),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white,
+                        height: 1.45,
+                      ),
+                    ),
+                  ),
+
+                // Action buttons (copy / correct)
+                if (hasText) ...[
+                  const SizedBox(height: 14),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      _textAction(Icons.content_copy_rounded, 'Copy', () {
+                        Clipboard.setData(ClipboardData(text: display));
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                              content: Text('Copied to clipboard')),
+                        );
+                      }),
+                      const SizedBox(width: 8),
+                      _textAction(Icons.edit_note_rounded, 'Correct',
+                          _showAddCorrectionDialog),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+
+        const SizedBox(height: 20),
+
+        // Status footer
+        if (_isListening)
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                '$_wordCount/$_maxWords words',
+                style: const TextStyle(color: _white40, fontSize: 12),
+              ),
+              if (_nlp.patternCount > 0) ...[
+                const SizedBox(width: 12),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: _tealDim,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: _tealBorder),
+                  ),
+                  child: Text(
+                    '${_nlp.patternCount} pattern${_nlp.patternCount == 1 ? '' : 's'} active',
+                    style:
+                        const TextStyle(color: _teal, fontSize: 11),
+                  ),
+                ),
+              ],
+            ],
+          ),
+
+        const SizedBox(height: 100),
+      ],
+    );
+  }
+
+  Widget _textAction(IconData icon, String label, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: _tealDim,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: _tealBorder),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 13, color: _teal),
+            const SizedBox(width: 4),
+            Text(label, style: const TextStyle(color: _teal, fontSize: 11)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── CORRECTIONS PANEL ─────────────────────────────────────────────────────
+  Widget _buildCorrectionsPanel() {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+          child: Row(
+            children: [
+              const Icon(Icons.format_list_bulleted_rounded,
+                  color: _teal, size: 18),
+              const SizedBox(width: 8),
+              const Text('Learned Corrections',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 16)),
+              const Spacer(),
+              GestureDetector(
+                onTap: _showAddCorrectionDialog,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: _tealDim,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: _tealBorder),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.add_rounded, color: _teal, size: 14),
+                      SizedBox(width: 4),
+                      Text('Add',
+                          style: TextStyle(
+                              color: _teal,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600)),
+                    ],
+                  ),
+                ),
+              ),
             ],
           ),
         ),
-      ),
+        Expanded(
+          child: uid == null
+              ? const Center(
+                  child: Text('Not signed in',
+                      style: TextStyle(color: _white40)))
+              : StreamBuilder<QuerySnapshot>(
+                  stream: FirebaseFirestore.instance
+                      .collection('users')
+                      .doc(uid)
+                      .collection('corrections')
+                      .orderBy('updatedAt', descending: true)
+                      .snapshots(),
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState ==
+                        ConnectionState.waiting) {
+                      return const Center(
+                        child: CircularProgressIndicator(
+                            color: _teal, strokeWidth: 2),
+                      );
+                    }
 
-      // ── Mic FAB ─────────────────────────────────────────────────────────
-      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
-      floatingActionButton: GestureDetector(
+                    final docs = snapshot.data?.docs ?? [];
+
+                    if (docs.isEmpty) {
+                      return Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(20),
+                              decoration: const BoxDecoration(
+                                  color: _tealDim, shape: BoxShape.circle),
+                              child: const Icon(Icons.auto_fix_high_rounded,
+                                  color: _teal, size: 32),
+                            ),
+                            const SizedBox(height: 16),
+                            const Text('No corrections yet',
+                                style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 15)),
+                            const SizedBox(height: 6),
+                            const Text(
+                              'Use the mic, then tap "Correct"\nto teach CleftTune your patterns.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                  color: _white40,
+                                  fontSize: 12,
+                                  height: 1.6),
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+
+                    return ListView.separated(
+                      padding:
+                          const EdgeInsets.fromLTRB(20, 0, 20, 100),
+                      itemCount: docs.length,
+                      separatorBuilder: (_, __) =>
+                          const SizedBox(height: 8),
+                      itemBuilder: (context, i) {
+                        final data =
+                            docs[i].data() as Map<String, dynamic>;
+                        final wrong   = data['wrong']   as String? ?? '';
+                        final correct = data['correct'] as String? ?? '';
+                        final source  = data['source']  as String? ?? 'ai';
+
+                        return _correctionTile(
+                          wrong: wrong,
+                          correct: correct,
+                          source: source,
+                          docId: docs[i].id,
+                          uid: uid,
+                        );
+                      },
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
+  Widget _correctionTile({
+    required String wrong,
+    required String correct,
+    required String source,
+    required String docId,
+    required String uid,
+  }) {
+    final isUser = source == 'user';
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: _card,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: isUser ? _tealBorder : _white20),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 34, height: 34,
+            decoration: BoxDecoration(
+              color: isUser
+                  ? _tealDim
+                  : Colors.white.withOpacity(0.05),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(
+              isUser ? Icons.person_rounded : Icons.auto_fix_high_rounded,
+              color: isUser ? _teal : Colors.white38,
+              size: 16,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Row(
+              children: [
+                Flexible(
+                  child: Text('"$wrong"',
+                      style: const TextStyle(
+                          color: Colors.redAccent,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500),
+                      overflow: TextOverflow.ellipsis),
+                ),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 8),
+                  child: Icon(Icons.arrow_forward_rounded,
+                      color: _white40, size: 14),
+                ),
+                Flexible(
+                  child: Text('"$correct"',
+                      style: const TextStyle(
+                          color: _teal,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600),
+                      overflow: TextOverflow.ellipsis),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 7, vertical: 2),
+                decoration: BoxDecoration(
+                  color: isUser
+                      ? _tealDim
+                      : Colors.white.withOpacity(0.05),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  isUser ? 'You' : 'AI',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                    color: isUser ? _teal : Colors.white38,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 6),
+              GestureDetector(
+                onTap: () async {
+                  await FirebaseFirestore.instance
+                      .collection('users')
+                      .doc(uid)
+                      .collection('corrections')
+                      .doc(docId)
+                      .delete();
+                },
+                child: const Icon(Icons.delete_outline_rounded,
+                    size: 16, color: Colors.redAccent),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── MIC FAB ───────────────────────────────────────────────────────────────
+  Widget _buildMicFab() {
+    return AnimatedBuilder(
+      animation: _pulseAnim,
+      builder: (context, child) => Transform.scale(
+        scale: _isListening ? _pulseAnim.value : 1.0,
+        child: child,
+      ),
+      child: GestureDetector(
         onTap: _toggleMic,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 300),
-          width: 72,
-          height: 72,
+          width: 72, height: 72,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: _isListening ? Colors.redAccent : Colors.teal,
+            color: _isListening ? Colors.redAccent : _teal,
             boxShadow: [
               BoxShadow(
-                color: (_isListening ? Colors.redAccent : Colors.teal)
-                    .withOpacity(0.4),
-                blurRadius: 20,
+                color: (_isListening ? Colors.redAccent : _teal)
+                    .withOpacity(0.45),
+                blurRadius: 24,
                 spreadRadius: 4,
               ),
             ],
@@ -329,6 +950,48 @@ class _TranslatorScreenState extends State<TranslatorScreen> {
             color: Colors.white,
             size: 34,
           ),
+        ),
+      ),
+    );
+  }
+
+  // ── Sheet helpers ─────────────────────────────────────────────────────────
+  Widget _sheetLabel(String label) {
+    return Text(label,
+        style: const TextStyle(
+            fontSize: 11,
+            color: _white40,
+            letterSpacing: 0.8,
+            fontWeight: FontWeight.w500));
+  }
+
+  Widget _sheetField(
+    TextEditingController controller, {
+    required String hint,
+    required IconData icon,
+  }) {
+    return TextField(
+      controller: controller,
+      style: const TextStyle(color: Colors.white, fontSize: 14),
+      decoration: InputDecoration(
+        hintText: hint,
+        hintStyle: const TextStyle(color: _white40, fontSize: 13),
+        prefixIcon: Icon(icon, color: _white40, size: 18),
+        filled: true,
+        fillColor: const Color(0xFF0D2020),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(color: _white20),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(color: _white20),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(color: _teal, width: 1.2),
         ),
       ),
     );
