@@ -3,7 +3,6 @@ import 'package:firebase_core/firebase_core.dart';
 import 'profile.dart';
 import 'firebase_options.dart';
 import 'premium.dart';
-import 'profile.dart';
 import 'phonetic.dart';
 import 'cloud.dart';
 import 'notifications.dart';
@@ -12,11 +11,10 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'translator_screen.dart';
 import 'landing_page.dart';
 
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-
   runApp(const CleftTuneApp());
 }
 
@@ -37,6 +35,10 @@ class CleftTuneApp extends StatelessWidget {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// APP LAYOUT
+// ─────────────────────────────────────────────────────────────────────────────
+
 class AppLayout extends StatefulWidget {
   const AppLayout({super.key});
 
@@ -46,11 +48,9 @@ class AppLayout extends StatefulWidget {
 
 class _AppLayoutState extends State<AppLayout> {
   int currentIndex = 0;
-
   bool showLanding = true;
   bool showPremiumLogin = false;
 
-  // 🔥 LANDING → PREMIUM SCREEN
   void enterAppFlow() {
     setState(() {
       showLanding = false;
@@ -58,18 +58,16 @@ class _AppLayoutState extends State<AppLayout> {
     });
   }
 
-  // 🔥 LOGIN → MAIN APP (FIXED FLOW)
   Future<void> completeLogin() async {
     try {
       await FirebaseAuth.instance.signInAnonymously();
     } catch (e) {
       debugPrint("Auth error: $e");
     }
-
     setState(() {
       showPremiumLogin = false;
-      showLanding = false; // 🔥 IMPORTANT FIX
-      currentIndex = 0; // go to translator
+      showLanding = false;
+      currentIndex = 0;
     });
   }
 
@@ -79,7 +77,6 @@ class _AppLayoutState extends State<AppLayout> {
     });
   }
 
-  // 🔥 OPEN PREMIUM FROM TRANSLATOR
   void openPremium() {
     setState(() {
       showPremiumLogin = true;
@@ -87,7 +84,6 @@ class _AppLayoutState extends State<AppLayout> {
     });
   }
 
-  // 🔥 BACK TO LANDING
   void backToLanding() {
     setState(() {
       showPremiumLogin = false;
@@ -99,32 +95,24 @@ class _AppLayoutState extends State<AppLayout> {
   Widget build(BuildContext context) {
     Widget currentScreen;
 
-    // 🔥 1. LANDING PAGE
     if (showLanding) {
       currentScreen = LandingPage(onContinue: enterAppFlow);
-    }
-    // 🔥 2. PREMIUM LOGIN PAGE
-    else if (showPremiumLogin) {
+    } else if (showPremiumLogin) {
       currentScreen = PremiumScreen(
         onLogin: completeLogin,
         onBack: backToLanding,
       );
-    }
-    // 🔥 3. MAIN APP
-    else {
+    } else {
       switch (currentIndex) {
         case 0:
           currentScreen = TranslatorScreen(goToPremium: openPremium);
           break;
-
         case 1:
           currentScreen = const HistoryScreen();
           break;
-
         case 2:
           currentScreen = const SettingsScreen();
           break;
-
         default:
           currentScreen = TranslatorScreen(goToPremium: openPremium);
       }
@@ -137,7 +125,6 @@ class _AppLayoutState extends State<AppLayout> {
 
           return Row(
             children: [
-              // 🔥 DESKTOP NAVIGATION
               if (!isSmall && !showLanding && !showPremiumLogin)
                 NavigationRail(
                   backgroundColor: Colors.black,
@@ -161,12 +148,9 @@ class _AppLayoutState extends State<AppLayout> {
                     ),
                   ],
                 ),
-
               Expanded(
                 child: Scaffold(
                   body: currentScreen,
-
-                  // 🔥 MOBILE NAVIGATION
                   bottomNavigationBar:
                       isSmall && !showLanding && !showPremiumLogin
                       ? BottomNavigationBar(
@@ -201,9 +185,9 @@ class _AppLayoutState extends State<AppLayout> {
   }
 }
 
-/// 📜 HISTORY SCREEN
-
-/// 📜 HISTORY SCREEN
+// ─────────────────────────────────────────────────────────────────────────────
+// HISTORY SCREEN
+// ─────────────────────────────────────────────────────────────────────────────
 
 class HistoryScreen extends StatefulWidget {
   const HistoryScreen({super.key});
@@ -220,11 +204,10 @@ class _HistoryScreenState extends State<HistoryScreen> {
     final user = FirebaseAuth.instance.currentUser;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F5F5),
+      backgroundColor: const Color(0xFF0F172A),
       body: Stack(
         children: [
           Positioned.fill(child: Container(color: const Color(0xFF0F172A))),
-
           SafeArea(
             child: LayoutBuilder(
               builder: (context, constraints) {
@@ -239,7 +222,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // 🔥 HEADER (UPDATED)
+                        // HEADER
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
@@ -250,30 +233,19 @@ class _HistoryScreenState extends State<HistoryScreen> {
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
-
-                            // ✅ CLICKABLE PROFILE ICON
                             InkWell(
                               borderRadius: BorderRadius.circular(30),
                               onTap: () {
                                 Navigator.push(
                                   context,
                                   MaterialPageRoute(
-                                    builder: (context) =>
-                                        const ProfileScreen(),
+                                    builder: (context) => const ProfileScreen(),
                                   ),
                                 );
                               },
                               child: const CircleAvatar(
-                                backgroundColor: Color.fromARGB(
-                                  31,
-                                  255,
-                                  255,
-                                  255,
-                                ),
-                                child: Icon(
-                                  Icons.person,
-                                  color: Colors.white,
-                                ),
+                                backgroundColor: Color.fromARGB(31, 255, 255, 255),
+                                child: Icon(Icons.person, color: Colors.white),
                               ),
                             ),
                           ],
@@ -307,14 +279,16 @@ class _HistoryScreenState extends State<HistoryScreen> {
                             borderRadius: BorderRadius.circular(30),
                           ),
                           child: TextField(
+                            style: const TextStyle(color: Colors.black),
                             onChanged: (value) {
                               setState(() {
                                 searchQuery = value.toLowerCase();
                               });
                             },
                             decoration: const InputDecoration(
-                              icon: Icon(Icons.search),
+                              icon: Icon(Icons.search, color: Colors.black54),
                               hintText: "Search history...",
+                              hintStyle: TextStyle(color: Colors.black38),
                               border: InputBorder.none,
                             ),
                           ),
@@ -322,7 +296,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
                         const SizedBox(height: 30),
 
-                        // 🔥 FIRESTORE HISTORY
+                        // FIRESTORE LIST
                         Expanded(
                           child: user == null
                               ? const Center(
@@ -340,15 +314,15 @@ class _HistoryScreenState extends State<HistoryScreen> {
                                   builder: (context, snapshot) {
                                     if (!snapshot.hasData) {
                                       return const Center(
-                                        child: CircularProgressIndicator(),
+                                        child: CircularProgressIndicator(
+                                          color: Colors.teal,
+                                        ),
                                       );
                                     }
 
                                     final docs = snapshot.data!.docs;
-
                                     final filteredDocs = docs.where((doc) {
-                                      final data =
-                                          doc.data() as Map<String, dynamic>;
+                                      final data = doc.data() as Map<String, dynamic>;
                                       final text = (data['text'] ?? "")
                                           .toString()
                                           .toLowerCase();
@@ -359,40 +333,26 @@ class _HistoryScreenState extends State<HistoryScreen> {
                                       return const Center(
                                         child: Text(
                                           "No history found",
-                                          style: TextStyle(
-                                            color: Colors.white70,
-                                          ),
+                                          style: TextStyle(color: Colors.white70),
                                         ),
                                       );
                                     }
 
-                                    Map<String, List<QueryDocumentSnapshot>>
-                                    grouped = {"Today": [], "Yesterday": []};
+                                    Map<String, List<QueryDocumentSnapshot>> grouped = {
+                                      "Today": [],
+                                      "Yesterday": [],
+                                    };
 
                                     DateTime now = DateTime.now();
-                                    DateTime today = DateTime(
-                                      now.year,
-                                      now.month,
-                                      now.day,
-                                    );
-                                    DateTime yesterday = today.subtract(
-                                      const Duration(days: 1),
-                                    );
+                                    DateTime today = DateTime(now.year, now.month, now.day);
+                                    DateTime yesterday = today.subtract(const Duration(days: 1));
 
                                     for (var doc in filteredDocs) {
-                                      final data =
-                                          doc.data() as Map<String, dynamic>;
+                                      final data = doc.data() as Map<String, dynamic>;
                                       final timestamp = data['time'];
-
                                       if (timestamp == null) continue;
-
                                       DateTime date = timestamp.toDate();
-                                      DateTime dateOnly = DateTime(
-                                        date.year,
-                                        date.month,
-                                        date.day,
-                                      );
-
+                                      DateTime dateOnly = DateTime(date.year, date.month, date.day);
                                       if (dateOnly == today) {
                                         grouped["Today"]!.add(doc);
                                       } else if (dateOnly == yesterday) {
@@ -405,52 +365,32 @@ class _HistoryScreenState extends State<HistoryScreen> {
                                         if (grouped["Today"]!.isNotEmpty) ...[
                                           const Text(
                                             "TODAY",
-                                            style: TextStyle(
-                                              color: Colors.white54,
-                                            ),
+                                            style: TextStyle(color: Colors.white54),
                                           ),
                                           const SizedBox(height: 10),
                                           ...grouped["Today"]!.map((doc) {
-                                            final data =
-                                                doc.data()
-                                                    as Map<String, dynamic>;
+                                            final data = doc.data() as Map<String, dynamic>;
                                             final text = data['text'] ?? '';
                                             final date = data['time'].toDate();
-
                                             final timeString =
                                                 "${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}";
-
-                                            return chatBubble(
-                                              text,
-                                              timeString,
-                                            );
+                                            return chatBubble(text, timeString);
                                           }),
                                           const SizedBox(height: 20),
                                         ],
-
-                                        if (grouped["Yesterday"]!
-                                            .isNotEmpty) ...[
+                                        if (grouped["Yesterday"]!.isNotEmpty) ...[
                                           const Text(
                                             "YESTERDAY",
-                                            style: TextStyle(
-                                              color: Colors.white54,
-                                            ),
+                                            style: TextStyle(color: Colors.white54),
                                           ),
                                           const SizedBox(height: 10),
                                           ...grouped["Yesterday"]!.map((doc) {
-                                            final data =
-                                                doc.data()
-                                                    as Map<String, dynamic>;
+                                            final data = doc.data() as Map<String, dynamic>;
                                             final text = data['text'] ?? '';
                                             final date = data['time'].toDate();
-
                                             final timeString =
                                                 "${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}";
-
-                                            return chatBubble(
-                                              text,
-                                              timeString,
-                                            );
+                                            return chatBubble(text, timeString);
                                           }),
                                         ],
                                       ],
@@ -481,7 +421,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.translate, color: Colors.white70),
+          const Icon(Icons.translate, color: Colors.teal),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -499,10 +439,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                   alignment: Alignment.bottomRight,
                   child: Text(
                     time,
-                    style: const TextStyle(
-                      color: Colors.white54,
-                      fontSize: 12,
-                    ),
+                    style: const TextStyle(color: Colors.white54, fontSize: 12),
                   ),
                 ),
               ],
@@ -514,7 +451,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
   }
 }
 
-/// settings
+// ─────────────────────────────────────────────────────────────────────────────
+// SETTINGS SCREEN
+// ─────────────────────────────────────────────────────────────────────────────
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -527,7 +466,6 @@ class SettingsScreen extends StatelessWidget {
         child: LayoutBuilder(
           builder: (context, constraints) {
             double width = constraints.maxWidth;
-
             double padding = width < 800 ? 16 : 40;
             double contentWidth = width < 1000 ? width : 900;
 
@@ -565,73 +503,115 @@ class SettingsScreen extends StatelessWidget {
                     const SizedBox(height: 20),
 
                     /// PREMIUM CARD
-                    Container(
-                      padding: const EdgeInsets.all(20),
-                      decoration: BoxDecoration(
-                        color: Colors.teal,
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: const Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            "PREMIUM",
-                            style: TextStyle(color: Colors.white70),
-                          ),
-                          SizedBox(height: 10),
-                          Text(
-                            "Upgrade to\nPremium",
-                            style: TextStyle(
-                              fontSize: 26,
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
+                    GestureDetector(
+                      onTap: () {
+                        showDialog(
+                          context: context,
+                          builder: (context) => AlertDialog(
+                            backgroundColor: const Color(0xFF1E293B),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(20),
                             ),
-                          ),
-                          SizedBox(height: 10),
-                          Text(
-                            "Unlimited offline translations\nand ad-free experience.",
-                            style: TextStyle(color: Colors.white70),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    const SizedBox(height: 20),
-
-                    /// FONT SIZE
-                    card(
-                      child: Column(
-                        children: [
-                          const Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                "Font Size",
-                                style: TextStyle(color: Colors.white),
+                            title: const Text(
+                              "Upgrade to Premium",
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
                               ),
-                              Text(
-                                "18px",
-                                style: TextStyle(color: Colors.teal),
+                            ),
+                            content: const Text(
+                              "Enjoy unlimited offline translations and an ad-free experience.",
+                              style: TextStyle(color: Colors.white70, fontSize: 16),
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(context),
+                                child: const Text(
+                                  "Maybe Later",
+                                  style: TextStyle(color: Colors.white54),
+                                ),
+                              ),
+                              ElevatedButton(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.teal,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                ),
+                                onPressed: () {
+                                  Navigator.pop(context);
+                                  // TODO: handle purchase logic
+                                },
+                                child: const Text(
+                                  "Upgrade Now",
+                                  style: TextStyle(color: Colors.white),
+                                ),
                               ),
                             ],
                           ),
-                          Slider(
-                            value: 18,
-                            min: 12,
-                            max: 30,
-                            onChanged: (value) {},
-                            activeColor: Colors.teal,
-                          ),
-                        ],
+                        );
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.all(20),
+                        decoration: BoxDecoration(
+                          color: Colors.teal,
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              "PREMIUM",
+                              style: TextStyle(color: Colors.white70),
+                            ),
+                            const SizedBox(height: 10),
+                            const Text(
+                              "Upgrade to\nPremium",
+                              style: TextStyle(
+                                fontSize: 26,
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            const Text(
+                              "Unlimited offline translations\nand ad-free experience.",
+                              style: TextStyle(color: Colors.white70),
+                            ),
+                            const SizedBox(height: 16),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 20,
+                                  vertical: 10,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(30),
+                                ),
+                                child: const Text(
+                                  "Upgrade Now →",
+                                  style: TextStyle(
+                                    color: Colors.teal,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
 
                     const SizedBox(height: 20),
 
                     /// OPTIONS
-                    optionTile(context, "Trained Voice"),
-                    optionTile(context, "Cloud Based"),
-                    optionTile(context, "Notifications"),
+                    _optionTile(context, "Trained Voice"),
+                    _optionTile(context, "Cloud Based"),
+                    _optionTile(context, "Notifications"),
 
                     const SizedBox(height: 20),
 
@@ -643,7 +623,7 @@ class SettingsScreen extends StatelessWidget {
 
                     const SizedBox(height: 10),
 
-                    card(
+                    _card(
                       child: const Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
@@ -668,8 +648,7 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
-  /// 🔥 reusable card
-  Widget card({required Widget child}) {
+  Widget _card({required Widget child}) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -680,14 +659,16 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
-  /// 🔥 option tile (FIXED STRUCTURE)
-  Widget optionTile(BuildContext context, String title) {
+  Widget _optionTile(BuildContext context, String title) {
     return InkWell(
       onTap: () {
         if (title == "Trained Voice") {
+          // ✅ FIX: Navigate to TrainedVoiceScreen (the Scaffold),
+          //         NOT TrainedVoiceApp (which nests a new MaterialApp
+          //         and causes a blank screen).
           Navigator.push(
             context,
-            MaterialPageRoute(builder: (_) => const TrainedVoiceApp()),
+            MaterialPageRoute(builder: (_) => const TrainedVoiceScreen()),
           );
         } else if (title == "Cloud Based") {
           Navigator.push(

@@ -77,7 +77,6 @@ class _PremiumScreenState extends State<PremiumScreen> {
     }
   }
 
-  // ✅ UPDATED SNACKBAR (VISIBLE + STYLED)
   void _snack(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -97,7 +96,7 @@ class _PremiumScreenState extends State<PremiumScreen> {
             ),
           ],
         ),
-        backgroundColor: Colors.redAccent, // 👈 HIGH CONTRAST
+        backgroundColor: Colors.redAccent,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(10),
@@ -119,19 +118,6 @@ class _PremiumScreenState extends State<PremiumScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _bg,
-      extendBodyBehindAppBar: true,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(
-            Icons.arrow_back_ios_new,
-            color: Colors.white,
-            size: 18,
-          ),
-          onPressed: widget.onBack,
-        ),
-      ),
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
@@ -197,7 +183,6 @@ class _PremiumScreenState extends State<PremiumScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Badge
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
           decoration: BoxDecoration(
@@ -281,7 +266,6 @@ class _PremiumScreenState extends State<PremiumScreen> {
 
         const SizedBox(height: 24),
 
-        // Pricing card
         Container(
           width: double.infinity,
           padding: const EdgeInsets.all(20),
@@ -337,7 +321,6 @@ class _PremiumScreenState extends State<PremiumScreen> {
   Widget _buildLoginCard() {
     return Column(
       children: [
-        // Icon + title
         Container(
           width: 52,
           height: 52,
@@ -365,7 +348,6 @@ class _PremiumScreenState extends State<PremiumScreen> {
 
         const SizedBox(height: 28),
 
-        // Email field
         _buildFieldLabel("Email address"),
         const SizedBox(height: 6),
         _buildTextField(
@@ -376,7 +358,6 @@ class _PremiumScreenState extends State<PremiumScreen> {
 
         const SizedBox(height: 14),
 
-        // Password field
         _buildFieldLabel("Password"),
         const SizedBox(height: 6),
         _buildTextField(
@@ -409,7 +390,6 @@ class _PremiumScreenState extends State<PremiumScreen> {
 
         const SizedBox(height: 22),
 
-        // Primary button
         SizedBox(
           width: double.infinity,
           height: 50,
@@ -456,7 +436,6 @@ class _PremiumScreenState extends State<PremiumScreen> {
 
         const SizedBox(height: 16),
 
-        // Divider
         Row(
           children: [
             Expanded(child: Divider(color: Colors.white.withOpacity(0.08))),
@@ -476,7 +455,6 @@ class _PremiumScreenState extends State<PremiumScreen> {
 
         const SizedBox(height: 16),
 
-        // Toggle mode button
         SizedBox(
           width: double.infinity,
           height: 48,
@@ -499,7 +477,6 @@ class _PremiumScreenState extends State<PremiumScreen> {
 
         const SizedBox(height: 20),
 
-        // Privacy note
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: const [

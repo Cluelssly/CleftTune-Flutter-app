@@ -18,6 +18,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
   String _memberSince = '';
   bool   _isLoading   = true;
 
+  // ── Real stats from Firestore (same source as TrainedVoiceScreen) ──────────
+  int    _sessionCount      = 0;
+  double _trainingProgress  = 0.0;
+  double _trainedHours      = 0.0;
+
   // ── Theme constants ────────────────────────────────────────────────────────
   static const _bg         = Color(0xFF0D2B2B);
   static const _bgMid      = Color(0xFF0E2233);
@@ -37,7 +42,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _loadProfile();
   }
 
-  // ── Load profile from Firestore ────────────────────────────────────────────
+  // ── Load profile + real stats from Firestore ───────────────────────────────
   Future<void> _loadProfile() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
@@ -50,26 +55,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
       final data = doc.data();
 
-      // Format member since date
       String memberSince = '';
       if (data?['createdAt'] != null) {
         final ts = (data!['createdAt'] as Timestamp).toDate();
-        memberSince =
-            '${_monthName(ts.month)} ${ts.year}';
+        memberSince = '${_monthName(ts.month)} ${ts.year}';
       } else if (user.metadata.creationTime != null) {
         final ts = user.metadata.creationTime!;
         memberSince = '${_monthName(ts.month)} ${ts.year}';
       }
 
       setState(() {
-        _name        = data?['name']  ?? user.displayName ?? 'User';
-        _email       = data?['email'] ?? user.email       ?? '';
-        _plan        = data?['plan']  ?? 'Free Plan';
-        _memberSince = memberSince;
-        _isLoading   = false;
+        _name             = data?['name']  ?? user.displayName ?? 'User';
+        _email            = data?['email'] ?? user.email       ?? '';
+        _plan             = data?['plan']  ?? 'Free Plan';
+        _memberSince      = memberSince;
+        _sessionCount     = (data?['sessionCount']     ?? 0) as int;
+        _trainingProgress = (data?['trainingProgress'] ?? 0.0).toDouble().clamp(0.0, 1.0);
+        _trainedHours     = (data?['trainedHours']     ?? 0.0).toDouble();
+        _isLoading = false;
       });
     } catch (e) {
-      // Fallback to Auth data if Firestore read fails
       setState(() {
         _name      = user.displayName ?? 'User';
         _email     = user.email       ?? '';
@@ -91,7 +96,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
 
-    // Update Firestore document
     await FirebaseFirestore.instance
         .collection('users')
         .doc(user.uid)
@@ -101,10 +105,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
 
-    // Also update Firebase Auth display name
     await user.updateDisplayName(name);
 
-    // Update email in Auth if changed
     if (email != user.email && email.isNotEmpty) {
       await user.verifyBeforeUpdateEmail(email);
     }
@@ -289,9 +291,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           const SizedBox(height: 24),
           _buildSectionLabel('SESSION'),
           const SizedBox(height: 10),
-          _buildUpgradeButton(),
-          const SizedBox(height: 8),
-          _buildLogoutButton(),
+          _buildLogoutButton(),           // ← upgrade button removed
           const SizedBox(height: 32),
         ],
       ),
@@ -326,9 +326,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 const SizedBox(height: 24),
                 _buildSectionLabel('SESSION'),
                 const SizedBox(height: 10),
-                _buildUpgradeButton(),
-                const SizedBox(height: 8),
-                _buildLogoutButton(),
+                _buildLogoutButton(),     // ← upgrade button removed
               ],
             ),
           ),
@@ -455,13 +453,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   // ── STATS ROW ──────────────────────────────────────────────────────────────
   Widget _buildStatsRow() {
+    final accuracyLabel = '${(_trainingProgress * 100).toStringAsFixed(0)}%';
+    final hoursLabel    = '${_trainedHours.toStringAsFixed(1)}h';
+
     return Row(
       children: [
-        _statChip('24', 'Sessions'),
+        _statChip('$_sessionCount', 'Sessions'),
         const SizedBox(width: 10),
-        _statChip('92%', 'Accuracy'),
+        _statChip(accuracyLabel, 'Accuracy'),
         const SizedBox(width: 10),
-        _statChip('3.2h', 'Trained'),
+        _statChip(hoursLabel, 'Trained'),
       ],
     );
   }
@@ -545,8 +546,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  // ── UPGRADE BUTTON ─────────────────────────────────────────────────────────
-  Widget _buildUpgradeButton() {
+  // ── SECTION LABEL ──────────────────────────────────────────────────────────
+  Widget _buildSectionLabel(String label) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Text(label,
+          style: const TextStyle(
+              color: _white40, fontSize: 11, letterSpacing: 0.8)),
+    );
+  }
+
+  // ── LOGOUT BUTTON ──────────────────────────────────────────────────────────
+  Widget _buildLogoutButton() {
     return GestureDetector(
       onTap: () => Navigator.push(
         context,
@@ -558,48 +569,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
         ),
       ),
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [
-              _teal.withOpacity(0.25),
-              _teal.withOpacity(0.10),
-            ],
-          ),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: _tealBorder),
-        ),
-        child: const Row(
-          children: [
-            Icon(Icons.star_rounded, color: _teal, size: 20),
-            SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Upgrade to Premium',
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 14)),
-                  SizedBox(height: 2),
-                  Text('Unlock all features — ₱99/month',
-                      style: TextStyle(color: _teal, fontSize: 12)),
-                ],
-              ),
-            ),
-            Icon(Icons.arrow_forward_ios, size: 14, color: _teal),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ── LOGOUT BUTTON ──────────────────────────────────────────────────────────
-  Widget _buildLogoutButton() {
-    return GestureDetector(
-      onTap: _confirmLogout,
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
@@ -618,58 +587,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     fontWeight: FontWeight.w500)),
           ],
         ),
-      ),
-    );
-  }
-
-  // ── SECTION LABEL ──────────────────────────────────────────────────────────
-  Widget _buildSectionLabel(String label) {
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Text(label,
-          style: const TextStyle(
-              color: _white40, fontSize: 11, letterSpacing: 0.8)),
-    );
-  }
-
-  // ── LOGOUT CONFIRM ─────────────────────────────────────────────────────────
-  void _confirmLogout() {
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: const Color(0xFF112828),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('Log out?',
-            style: TextStyle(
-                color: Colors.white, fontWeight: FontWeight.bold)),
-        content: const Text(
-            'You will be signed out of your CleftTune account.',
-            style: TextStyle(color: _white40, fontSize: 13)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel', style: TextStyle(color: _white40)),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red.shade700,
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10)),
-            ),
-            onPressed: () async {
-              Navigator.pop(context);
-              await FirebaseAuth.instance.signOut();
-              // Navigate back to login — adjust route name to match your app
-              if (context.mounted) {
-                Navigator.of(context)
-                    .pushNamedAndRemoveUntil('/login', (_) => false);
-              }
-            },
-            child: const Text('Logout',
-                style: TextStyle(
-                    color: Colors.white, fontWeight: FontWeight.bold)),
-          ),
-        ],
       ),
     );
   }

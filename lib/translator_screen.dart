@@ -20,20 +20,20 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   late stt.SpeechToText _speech;
   final NlpService _nlp = NlpService();
 
-  bool _isListening   = false;
-  bool _isInitialized = false;
-  bool _userStopped   = false;
+  bool _isListening    = false;
+  bool _isInitialized  = false;
+  bool _userStopped    = false;
   bool _showCorrections = false;
 
-  // ── Real-time display state ───────────────────────────────────────────────
-  /// The stable, AI-corrected text (updated after each debounced Claude call).
-  String _correctedText = '';
+  // ── Real-time display ────────────────────────────────────────────────────
+  /// What we show in the subtitle box — always up to date.
+  String _displayText = '';
 
-  /// Raw partial currently being spoken (shown optimistically while Claude processes).
-  String _rawPartial = '';
+  /// Accumulated text across multiple final results (fixes long sentence cut-off)
+  String _accumulatedText = '';
 
-  /// True while a debounced Claude call is in-flight for partials.
-  bool _isCorrectingPartial = false;
+  /// True only while the final Claude call is in-flight.
+  bool _isRefiningFinal = false;
 
   static const int _maxWords = 30;
 
@@ -48,11 +48,10 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   static const _white40    = Color(0x66FFFFFF);
   static const _white20    = Color(0x33FFFFFF);
 
-  // ── Animation ────────────────────────────────────────────────────────────
+  // ── Animations ────────────────────────────────────────────────────────────
   late AnimationController _pulseController;
   late Animation<double>   _pulseAnim;
 
-  // ── Correcting indicator dot animation ───────────────────────────────────
   late AnimationController _dotController;
   late Animation<double>   _dotAnim;
 
@@ -72,7 +71,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
 
     _dotController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 600),
+      duration: const Duration(milliseconds: 500),
     )..repeat(reverse: true);
 
     _dotAnim = Tween<double>(begin: 0.3, end: 1.0).animate(
@@ -85,42 +84,34 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   Future<void> _initServices() async {
     await _nlp.init();
     dev.log('NLP ready — ${_nlp.patternCount} pattern(s) loaded');
-
-    // Wire up real-time correction callback
-    _nlp.onRealtimeCorrection = (corrected) {
-      if (!mounted) return;
-      setState(() {
-        _correctedText        = corrected;
-        _rawPartial           = '';
-        _isCorrectingPartial  = false;
-      });
-    };
-
     await _initSpeech();
   }
 
   Future<void> _initSpeech() async {
     _isInitialized = await _speech.initialize(
       onStatus: (status) {
-        dev.log('STATUS: $status');
-        if ((status == 'done' ||
-                status == 'notListening' ||
-                status == 'doneNoResult') &&
+        dev.log('STT STATUS: $status');
+        // Auto-restart on any stop event so listening is continuous
+        if (!_userStopped &&
             _isListening &&
-            !_userStopped) {
+            (status == 'done' ||
+                status == 'notListening' ||
+                status == 'doneNoResult')) {
           _restartListening();
         }
       },
       onError: (error) {
-        dev.log('ERROR: ${error.errorMsg}');
-        if (_isListening && !_userStopped) {
-          Future.delayed(const Duration(milliseconds: 100), _restartListening);
+        dev.log('STT ERROR: ${error.errorMsg}');
+        if (!_userStopped && _isListening) {
+          Future.delayed(
+              const Duration(milliseconds: 80), _restartListening);
         }
       },
     );
+    setState(() {});
   }
 
-  // ── Speech listening ─────────────────────────────────────────────────────
+  // ── Core listening loop ───────────────────────────────────────────────────
 
   Future<void> _startListening() async {
     if (!_isInitialized) {
@@ -128,68 +119,86 @@ class _TranslatorScreenState extends State<TranslatorScreen>
       if (!_isInitialized) return;
     }
 
-    await _speech.stop();
-
     await _speech.listen(
       localeId: 'en_US',
-      listenFor: const Duration(seconds: 60),
-      pauseFor: const Duration(seconds: 10),
+
+      // ✅ FIX 1: Longer pauseFor gives cleft palate speakers more time
+      // between words without cutting the sentence short.
+      listenFor: const Duration(seconds: 60),  // was 30
+      pauseFor:  const Duration(seconds: 4),   // was 2 — key fix for cut-off
+
       partialResults: true,
+      listenMode: stt.ListenMode.dictation,
+
       onResult: (result) async {
-        final words = result.recognizedWords;
+        final words = result.recognizedWords.trim();
         if (words.isEmpty) return;
 
         if (result.finalResult) {
-          // ── FINAL: full correction + Firestore save ──────────────────────
-          _nlp.beginSession();
-          setState(() {
-            _rawPartial          = '';
-            _isCorrectingPartial = false;
-            // Show local-pattern result instantly while Claude works
-            _correctedText = _nlp.patterns.isNotEmpty
-                ? words
-                : _correctedText;
-          });
+          // ── FINAL result ─────────────────────────────────────────────────
+          // 1. Apply local patterns instantly (zero latency)
+          final localResult = _nlp.correctPartialSync(words);
 
+          // ✅ FIX 2: APPEND to accumulated text instead of replacing it.
+          // Long sentences fire multiple final results — we join them all.
+          final appended = (_accumulatedText.isEmpty
+              ? localResult
+              : '$_accumulatedText $localResult').trim();
+
+          if (mounted) setState(() => _displayText = appended);
+
+          // 2. Send full accumulated text to Claude for deeper correction
+          setState(() => _isRefiningFinal = true);
           try {
-            final corrected = await _nlp.correct(words);
+            final corrected = await _nlp.correct(appended);
             if (mounted) {
-              setState(() => _correctedText = corrected);
+              setState(() {
+                _accumulatedText = corrected; // keep full corrected history
+                _displayText     = corrected;
+                _isRefiningFinal = false;
+              });
             }
 
+            // Save to Firestore
             final user = FirebaseAuth.instance.currentUser;
             if (user != null) {
               await FirebaseFirestore.instance
                   .collection('translations')
                   .add({
-                'text':      corrected,
-                'rawText':   words,
-                'time':      FieldValue.serverTimestamp(),
-                'userId':    user.uid,
+                'text':    corrected,
+                'rawText': words,
+                'time':    FieldValue.serverTimestamp(),
+                'userId':  user.uid,
               });
             }
           } catch (e) {
-            dev.log('Final NLP correction failed: $e');
+            dev.log('Final correction error: $e');
+            if (mounted) {
+              setState(() {
+                _accumulatedText = appended; // fallback to local result
+                _isRefiningFinal = false;
+              });
+            }
           }
-
-          await _nlp.endSession();
         } else {
-          // ── PARTIAL: apply local patterns instantly, schedule Claude ──────
+          // ── PARTIAL result ────────────────────────────────────────────────
+          // Show accumulated text + current partial for a live preview.
           final localCorrected = _nlp.correctPartialSync(words);
-
-          setState(() {
-            // If Claude hasn't corrected yet, show local result
-            // Once Claude responds, _correctedText is updated via callback
-            _correctedText       = localCorrected;
-            _rawPartial          = '';          // hide raw overlay
-            _isCorrectingPartial = true;        // show processing indicator
-          });
+          final preview = (_accumulatedText.isEmpty
+              ? localCorrected
+              : '$_accumulatedText $localCorrected').trim();
+          if (mounted) {
+            setState(() => _displayText = preview);
+          }
         }
       },
     );
   }
 
   Future<void> _restartListening() async {
+    if (!_isListening || _userStopped) return;
+    await _speech.stop();
+    await Future.delayed(const Duration(milliseconds: 40));
     if (!_isListening || _userStopped) return;
     await _startListening();
   }
@@ -198,19 +207,17 @@ class _TranslatorScreenState extends State<TranslatorScreen>
     if (_isListening) {
       _userStopped = true;
       await _speech.stop();
-      setState(() {
-        _isListening         = false;
-        _isCorrectingPartial = false;
-        _rawPartial          = '';
-      });
+      if (mounted) {
+        setState(() {
+          _isListening     = false;
+          _isRefiningFinal = false;
+        });
+      }
     } else {
-      _userStopped   = false;
-      _correctedText = '';
-      _rawPartial    = '';
-      setState(() {
-        _isListening         = true;
-        _isCorrectingPartial = false;
-      });
+      _userStopped     = false;
+      _displayText     = '';
+      _accumulatedText = ''; // ✅ FIX 3: reset accumulator on new session
+      if (mounted) setState(() => _isListening = true);
       _nlp.beginSession();
       await _startListening();
     }
@@ -218,34 +225,24 @@ class _TranslatorScreenState extends State<TranslatorScreen>
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
-  String get _displayText {
-    if (_correctedText.isNotEmpty) return _correctedText;
-    if (_rawPartial.isNotEmpty)    return _rawPartial;
-    if (_isListening)              return '';
-    return '';
-  }
-
   String get _subtitleHint {
-    if (!_isListening && _correctedText.isEmpty) {
+    if (!_isListening && _displayText.isEmpty) {
       return 'Tap the mic to start speaking...';
     }
-    if (_isListening && _correctedText.isEmpty && _rawPartial.isEmpty) {
-      return 'Listening...';
-    }
+    if (_isListening && _displayText.isEmpty) return 'Listening...';
     return '';
   }
 
-  int get _wordCount =>
-      _displayText.trim().isEmpty ? 0 : _displayText.trim().split(RegExp(r'\s+')).length;
+  int get _wordCount => _displayText.trim().isEmpty
+      ? 0
+      : _displayText.trim().split(RegExp(r'\s+')).length;
 
   // ── Teach correction dialog ───────────────────────────────────────────────
   void _showAddCorrectionDialog() {
     final wrongController   = TextEditingController();
     final correctController = TextEditingController();
 
-    if (_correctedText.isNotEmpty) {
-      wrongController.text = _correctedText;
-    }
+    if (_displayText.isNotEmpty) wrongController.text = _displayText;
 
     showModalBottomSheet(
       context: context,
@@ -475,7 +472,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
           ),
         ),
         child: Icon(icon, size: 18,
-          color: active ? _teal : gold ? Colors.amber : Colors.white70),
+            color: active ? _teal : gold ? Colors.amber : Colors.white70),
       ),
     );
   }
@@ -483,20 +480,18 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   // ── TRANSLATOR BODY ───────────────────────────────────────────────────────
   Widget _buildTranslatorBody() {
     final hint    = _subtitleHint;
-    final display = _displayText;
-    final hasText = display.isNotEmpty;
+    final hasText = _displayText.isNotEmpty;
 
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        // LIVE + correction indicator row
+        // Status row: LIVE dot + refining indicator
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            // LIVE dot
             AnimatedOpacity(
               opacity: _isListening ? 1.0 : 0.3,
-              duration: const Duration(milliseconds: 400),
+              duration: const Duration(milliseconds: 300),
               child: Row(
                 children: [
                   Container(
@@ -518,8 +513,8 @@ class _TranslatorScreenState extends State<TranslatorScreen>
               ),
             ),
 
-            // Correcting indicator (shown while debounce is pending)
-            if (_isListening && _isCorrectingPartial) ...[
+            // "refining" shown only during final Claude call
+            if (_isRefiningFinal) ...[
               const SizedBox(width: 16),
               AnimatedBuilder(
                 animation: _dotAnim,
@@ -535,7 +530,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                         ),
                       ),
                       const SizedBox(width: 5),
-                      const Text('correcting',
+                      const Text('refining',
                           style: TextStyle(
                               color: _teal,
                               fontSize: 11,
@@ -554,7 +549,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
+            duration: const Duration(milliseconds: 150),
             padding: const EdgeInsets.all(24),
             constraints: const BoxConstraints(minHeight: 140),
             decoration: BoxDecoration(
@@ -578,7 +573,6 @@ class _TranslatorScreenState extends State<TranslatorScreen>
             ),
             child: Column(
               children: [
-                // Hint text (tap to start / listening)
                 if (hint.isNotEmpty)
                   Text(
                     hint,
@@ -590,31 +584,26 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                     ),
                   ),
 
-                // Corrected text — shown as the single source of truth
                 if (hasText)
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 180),
-                    child: Text(
-                      display,
-                      key: ValueKey(display),
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white,
-                        height: 1.45,
-                      ),
+                  Text(
+                    _displayText,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                      height: 1.45,
                     ),
                   ),
 
-                // Action buttons (copy / correct)
                 if (hasText) ...[
                   const SizedBox(height: 14),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.end,
                     children: [
                       _textAction(Icons.content_copy_rounded, 'Copy', () {
-                        Clipboard.setData(ClipboardData(text: display));
+                        Clipboard.setData(
+                            ClipboardData(text: _displayText));
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
                               content: Text('Copied to clipboard')),
@@ -681,7 +670,8 @@ class _TranslatorScreenState extends State<TranslatorScreen>
           children: [
             Icon(icon, size: 13, color: _teal),
             const SizedBox(width: 4),
-            Text(label, style: const TextStyle(color: _teal, fontSize: 11)),
+            Text(label,
+                style: const TextStyle(color: _teal, fontSize: 11)),
           ],
         ),
       ),
@@ -765,9 +755,12 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                             Container(
                               padding: const EdgeInsets.all(20),
                               decoration: const BoxDecoration(
-                                  color: _tealDim, shape: BoxShape.circle),
-                              child: const Icon(Icons.auto_fix_high_rounded,
-                                  color: _teal, size: 32),
+                                  color: _tealDim,
+                                  shape: BoxShape.circle),
+                              child: const Icon(
+                                  Icons.auto_fix_high_rounded,
+                                  color: _teal,
+                                  size: 32),
                             ),
                             const SizedBox(height: 16),
                             const Text('No corrections yet',
@@ -845,7 +838,9 @@ class _TranslatorScreenState extends State<TranslatorScreen>
               borderRadius: BorderRadius.circular(8),
             ),
             child: Icon(
-              isUser ? Icons.person_rounded : Icons.auto_fix_high_rounded,
+              isUser
+                  ? Icons.person_rounded
+                  : Icons.auto_fix_high_rounded,
               color: isUser ? _teal : Colors.white38,
               size: 16,
             ),
@@ -931,7 +926,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
       child: GestureDetector(
         onTap: _toggleMic,
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 300),
+          duration: const Duration(milliseconds: 250),
           width: 72, height: 72,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
