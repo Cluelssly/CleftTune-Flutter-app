@@ -11,7 +11,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'translator_screen.dart';
 import 'landing_page.dart';
-
+import 'package:url_launcher/url_launcher.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
@@ -633,13 +633,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _isPremium   = false;
   bool _isLoading   = true;
   bool _isUpgrading = false;
+  bool _isCancelling = false;
 
   static const _teal       = Color(0xFF1D9E75);
   static const _tealDim    = Color(0x261D9E75);
   static const _tealBorder = Color(0x401D9E75);
   static const _cardColor  = Color(0x0DFFFFFF);
   static const _white40    = Color(0x66FFFFFF);
-  static const _white20    = Color(0x33FFFFFF);
+
+  // ── Payment method URLs ────────────────────────────────────────────────────
+  // Replace these with your actual payment links / deep links
+  static const _gcashUrl =
+    'https://raw.githubusercontent.com/Cluelssly/CleftTune-Flutter-app/main/QR.jpg';      // your GCash payment link
+  static const _paypalUrl  = 'https://paypal.me/yourlink'; // your PayPal.me link
+  static const _gotymUrl   = 'https://gotyme.com';         // your GoTyme link
 
   @override
   void initState() {
@@ -667,9 +674,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _upgradeToPremium() async {
+  // ── UPGRADE ────────────────────────────────────────────────────────────────
+  Future<void> _upgradeToPremium(String method) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
+
+    // 1. Launch the payment URL first
+    String url;
+    switch (method) {
+      case 'gcash':
+        url = _gcashUrl;
+        break;
+      case 'paypal':
+        url = _paypalUrl;
+        break;
+      case 'gotyme':
+        url = _gotymUrl;
+        break;
+      default:
+        return;
+    }
+
+    final uri = Uri.parse(url);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+
+    // 2. Mark premium in Firestore after launching payment
     setState(() => _isUpgrading = true);
     try {
       await FirebaseFirestore.instance
@@ -677,12 +708,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
           .doc(user.uid)
           .set({
         'plan': 'premium',
+        'paymentMethod': method,
         'upgradedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
+
       setState(() {
         _isPremium   = true;
         _isUpgrading = false;
       });
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: const Row(children: [
@@ -707,29 +741,147 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  void _showUpgradeDialog() {
+  // ── CANCEL PREMIUM ─────────────────────────────────────────────────────────
+  Future<void> _cancelPremium() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    setState(() => _isCancelling = true);
+    try {
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .set({
+        'plan': 'free',
+        'cancelledAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      setState(() {
+        _isPremium    = false;
+        _isCancelling = false;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: const Row(children: [
+            Icon(Icons.cancel_outlined, color: Colors.white, size: 18),
+            SizedBox(width: 8),
+            Text('Premium subscription cancelled.'),
+          ]),
+          backgroundColor: Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12)),
+        ));
+      }
+    } catch (e) {
+      setState(() => _isCancelling = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Cancellation failed: $e'),
+          backgroundColor: Colors.red,
+        ));
+      }
+    }
+  }
+
+  // ── DIALOGS ────────────────────────────────────────────────────────────────
+
+  /// Step 1 — pick payment method
+  void _showPaymentMethodDialog() {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
         backgroundColor: const Color(0xFF0A2020),
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Row(children: [
-          Icon(Icons.star_rounded, color: _teal, size: 22),
+          Icon(Icons.payment_rounded, color: _teal, size: 22),
           SizedBox(width: 8),
-          Text('Upgrade to Premium',
+          Text('Choose Payment Method',
               style: TextStyle(
                   color: Colors.white,
-                  fontSize: 18,
+                  fontSize: 17,
+                  fontWeight: FontWeight.bold)),
+        ]),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Select how you\'d like to pay for Premium:',
+                style: TextStyle(color: _white40, fontSize: 13)),
+            const SizedBox(height: 20),
+
+            // ── GCash ──────────────────────────────────────────────────────
+            _paymentMethodTile(
+              label: 'GCash',
+              subtitle: 'Pay via GCash e-wallet',
+              icon: Icons.account_balance_wallet_rounded,
+              iconColor: const Color(0xFF007DFF),
+              onTap: () {
+                Navigator.pop(context);
+                _confirmPayment('gcash', 'GCash');
+              },
+            ),
+
+            const SizedBox(height: 10),
+
+            // ── PayPal ─────────────────────────────────────────────────────
+            _paymentMethodTile(
+              label: 'PayPal',
+              subtitle: 'Pay via PayPal',
+              icon: Icons.paypal_rounded,
+              iconColor: const Color(0xFF003087),
+              onTap: () {
+                Navigator.pop(context);
+                _confirmPayment('paypal', 'PayPal');
+              },
+            ),
+
+            const SizedBox(height: 10),
+
+            // ── GoTyme ─────────────────────────────────────────────────────
+            _paymentMethodTile(
+              label: 'GoTyme',
+              subtitle: 'Pay via GoTyme Bank',
+              icon: Icons.account_balance_rounded,
+              iconColor: const Color(0xFFE63946),
+              onTap: () {
+                Navigator.pop(context);
+                _confirmPayment('gotyme', 'GoTyme');
+              },
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel',
+                style: TextStyle(color: _white40)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Step 2 — confirm and launch
+  void _confirmPayment(String method, String label) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: const Color(0xFF0A2020),
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(children: [
+          const Icon(Icons.star_rounded, color: _teal, size: 22),
+          const SizedBox(width: 8),
+          Text('Pay with $label',
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 17,
                   fontWeight: FontWeight.bold)),
         ]),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Unlock the full CleftTune experience:',
-                style: TextStyle(color: _white40, fontSize: 13)),
-            const SizedBox(height: 14),
             _dialogFeature('Unlimited real-time subtitles'),
             _dialogFeature('Voice calibration & training'),
             _dialogFeature('Conversation history'),
@@ -753,12 +905,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     style: TextStyle(color: _white40, fontSize: 11)),
               ]),
             ),
+            const SizedBox(height: 12),
+            Text(
+              'You will be redirected to $label to complete your payment.',
+              style: const TextStyle(color: _white40, fontSize: 12),
+            ),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Maybe Later',
+            child: const Text('Back',
                 style: TextStyle(color: _white40)),
           ),
           ElevatedButton(
@@ -771,14 +928,157 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             onPressed: () async {
               Navigator.pop(context);
-              await _upgradeToPremium();
+              await _upgradeToPremium(method);
             },
-            child: const Text('Upgrade Now →',
-                style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold)),
+            child: Text('Pay with $label →',
+                style: const TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.bold)),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Cancel premium warning dialog
+  void _showCancelWarningDialog() {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: const Color(0xFF1A0A0A),
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(children: [
+          Icon(Icons.warning_amber_rounded,
+              color: Colors.orangeAccent, size: 24),
+          SizedBox(width: 8),
+          Text('Cancel Premium?',
+              style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 17,
+                  fontWeight: FontWeight.bold)),
+        ]),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Are you sure you want to cancel your Premium subscription?',
+              style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.5),
+            ),
+            const SizedBox(height: 14),
+            _lossItem('Unlimited real-time subtitles'),
+            _lossItem('Voice calibration & training'),
+            _lossItem('Full conversation history'),
+            _lossItem('Ad-free experience'),
+            const SizedBox(height: 14),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.red.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.red.withOpacity(0.25)),
+              ),
+              child: const Row(children: [
+                Icon(Icons.info_outline_rounded,
+                    color: Colors.redAccent, size: 16),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'You will lose access to all Premium features immediately after cancellation.',
+                    style: TextStyle(
+                        color: Colors.redAccent,
+                        fontSize: 11,
+                        height: 1.4),
+                  ),
+                ),
+              ]),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Keep Premium',
+                style: TextStyle(
+                    color: _teal, fontWeight: FontWeight.bold)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.redAccent,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 20, vertical: 12),
+            ),
+            onPressed: () async {
+              Navigator.pop(context);
+              await _cancelPremium();
+            },
+            child: const Text('Yes, Cancel',
+                style: TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _lossItem(String text) => Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Row(children: [
+          const Icon(Icons.remove_circle_outline_rounded,
+              color: Colors.redAccent, size: 15),
+          const SizedBox(width: 8),
+          Text(text,
+              style: const TextStyle(color: Colors.white60, fontSize: 12)),
+        ]),
+      );
+
+  Widget _paymentMethodTile({
+    required String label,
+    required String subtitle,
+    required IconData icon,
+    required Color iconColor,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: const Color(0x1AFFFFFF),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: _tealBorder),
+        ),
+        child: Row(children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: iconColor.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, color: iconColor, size: 20),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label,
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600)),
+                Text(subtitle,
+                    style: const TextStyle(
+                        color: _white40, fontSize: 11)),
+              ],
+            ),
+          ),
+          const Icon(Icons.arrow_forward_ios_rounded,
+              color: _white40, size: 13),
+        ]),
       ),
     );
   }
@@ -794,6 +1094,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ]),
       );
 
+  // ── BUILD ──────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -829,8 +1130,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                     decoration: BoxDecoration(
                                       color: _tealDim,
                                       shape: BoxShape.circle,
-                                      border:
-                                          Border.all(color: _tealBorder),
+                                      border: Border.all(
+                                          color: _tealBorder),
                                     ),
                                     child: const Icon(
                                         Icons.arrow_back_ios_new,
@@ -880,7 +1181,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                           const SizedBox(height: 28),
 
-                          // ── ABOUT ────────────────────────────────────────
+                          // ── ABOUT ─────────────────────────────────────────
                           _sectionLabel('ABOUT'),
                           const SizedBox(height: 10),
                           _card(
@@ -894,7 +1195,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                   height: 32,
                                   decoration: BoxDecoration(
                                     color: _tealDim,
-                                    borderRadius: BorderRadius.circular(8),
+                                    borderRadius:
+                                        BorderRadius.circular(8),
                                   ),
                                   child: const Icon(
                                       Icons.info_outline_rounded,
@@ -946,8 +1248,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         children: [
           Row(children: [
             Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 10, vertical: 4),
               decoration: BoxDecoration(
                 color: Colors.white.withOpacity(0.2),
                 borderRadius: BorderRadius.circular(20),
@@ -967,19 +1269,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
             const Icon(Icons.verified_rounded,
                 color: Colors.white, size: 22),
           ]),
+
           const SizedBox(height: 16),
+
           const Text("You're a Premium\nMember! 🎉",
               style: TextStyle(
                   fontSize: 22,
                   color: Colors.white,
                   fontWeight: FontWeight.bold,
                   height: 1.25)),
+
           const SizedBox(height: 10),
+
           const Text(
               'Enjoy unlimited subtitles, voice calibration,\nand an ad-free experience.',
               style: TextStyle(
                   color: Colors.white70, fontSize: 13, height: 1.5)),
+
           const SizedBox(height: 16),
+
           Wrap(
             spacing: 8,
             runSpacing: 8,
@@ -990,14 +1298,56 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _premiumChip('History'),
             ],
           ),
+
           const SizedBox(height: 16),
+
           const Row(children: [
             Icon(Icons.check_circle_rounded,
                 color: Colors.white70, size: 14),
             SizedBox(width: 6),
             Text('₱99 / month · Cancel anytime',
-                style: TextStyle(color: Colors.white70, fontSize: 12)),
+                style:
+                    TextStyle(color: Colors.white70, fontSize: 12)),
           ]),
+
+          const SizedBox(height: 18),
+
+          // ── CANCEL BUTTON ─────────────────────────────────────────────
+          GestureDetector(
+            onTap: _showCancelWarningDialog,
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 11),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                    color: Colors.redAccent.withOpacity(0.5)),
+              ),
+              child: _isCancelling
+                  ? const Center(
+                      child: SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                            color: Colors.redAccent, strokeWidth: 2),
+                      ),
+                    )
+                  : const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.cancel_outlined,
+                            color: Colors.redAccent, size: 16),
+                        SizedBox(width: 6),
+                        Text('Cancel Subscription',
+                            style: TextStyle(
+                                color: Colors.redAccent,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600)),
+                      ],
+                    ),
+            ),
+          ),
         ],
       ),
     );
@@ -1021,7 +1371,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // ── UPGRADE CARD ──────────────────────────────────────────────────────────
   Widget _buildUpgradeCard() {
     return GestureDetector(
-      onTap: _showUpgradeDialog,
+      onTap: _showPaymentMethodDialog,
       child: Container(
         padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
@@ -1033,8 +1383,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 10, vertical: 4),
               decoration: BoxDecoration(
                 color: _tealDim,
                 borderRadius: BorderRadius.circular(20),
@@ -1060,6 +1410,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 style: TextStyle(
                     color: _white40, fontSize: 13, height: 1.5)),
             const SizedBox(height: 16),
+
+            // Payment method icons row
+            Row(children: [
+              _miniPayBadge(Icons.account_balance_wallet_rounded,
+                  const Color(0xFF007DFF), 'GCash'),
+              const SizedBox(width: 8),
+              _miniPayBadge(Icons.paypal_rounded,
+                  const Color(0xFF003087), 'PayPal'),
+              const SizedBox(width: 8),
+              _miniPayBadge(Icons.account_balance_rounded,
+                  const Color(0xFFE63946), 'GoTyme'),
+            ]),
+
+            const SizedBox(height: 16),
+
             Align(
               alignment: Alignment.centerRight,
               child: _isUpgrading
@@ -1087,6 +1452,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
   }
+
+  Widget _miniPayBadge(IconData icon, Color color, String label) =>
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.12),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: color.withOpacity(0.3)),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon, color: color, size: 13),
+          const SizedBox(width: 4),
+          Text(label,
+              style: TextStyle(
+                  color: color,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600)),
+        ]),
+      );
 
   // ── HELPERS ───────────────────────────────────────────────────────────────
 
