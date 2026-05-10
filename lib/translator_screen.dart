@@ -20,24 +20,18 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   late stt.SpeechToText _speech;
   final NlpService _nlp = NlpService();
 
-  bool _isListening    = false;
-  bool _isInitialized  = false;
-  bool _userStopped    = false;
+  bool _isListening     = false;
+  bool _isInitialized   = false;
+  bool _userStopped     = false;
   bool _showCorrections = false;
 
-  // ── Real-time display ────────────────────────────────────────────────────
-  /// What we show in the subtitle box — always up to date.
-  String _displayText = '';
-
-  /// Accumulated text across multiple final results (fixes long sentence cut-off)
+  String _displayText     = '';
   String _accumulatedText = '';
-
-  /// True only while the final Claude call is in-flight.
-  bool _isRefiningFinal = false;
+  bool   _isRefiningFinal = false;
 
   static const int _maxWords = 30;
 
-  // ── Theme ─────────────────────────────────────────────────────────────────
+  // ── Theme ──────────────────────────────────────────────────────────────────
   static const _bg         = Color(0xFF0D2B2B);
   static const _bgMid      = Color(0xFF0E2233);
   static const _bgDark     = Color(0xFF0B1A28);
@@ -48,7 +42,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   static const _white40    = Color(0x66FFFFFF);
   static const _white20    = Color(0x33FFFFFF);
 
-  // ── Animations ────────────────────────────────────────────────────────────
+  // ── Animations ─────────────────────────────────────────────────────────────
   late AnimationController _pulseController;
   late Animation<double>   _pulseAnim;
 
@@ -91,7 +85,6 @@ class _TranslatorScreenState extends State<TranslatorScreen>
     _isInitialized = await _speech.initialize(
       onStatus: (status) {
         dev.log('STT STATUS: $status');
-        // Auto-restart on any stop event so listening is continuous
         if (!_userStopped &&
             _isListening &&
             (status == 'done' ||
@@ -111,7 +104,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
     setState(() {});
   }
 
-  // ── Core listening loop ───────────────────────────────────────────────────
+  // ── Core listening loop ────────────────────────────────────────────────────
 
   Future<void> _startListening() async {
     if (!_isInitialized) {
@@ -121,39 +114,32 @@ class _TranslatorScreenState extends State<TranslatorScreen>
 
     await _speech.listen(
       localeId: 'en_US',
-
-      // ✅ FIX 1: Longer pauseFor gives cleft palate speakers more time
-      // between words without cutting the sentence short.
-      listenFor: const Duration(seconds: 60),  // was 30
-      pauseFor:  const Duration(seconds: 4),   // was 2 — key fix for cut-off
-
+      listenFor: const Duration(seconds: 60),
+      pauseFor:  const Duration(seconds: 4),
       partialResults: true,
       listenMode: stt.ListenMode.dictation,
-
       onResult: (result) async {
         final words = result.recognizedWords.trim();
         if (words.isEmpty) return;
 
         if (result.finalResult) {
-          // ── FINAL result ─────────────────────────────────────────────────
-          // 1. Apply local patterns instantly (zero latency)
+          // 1. Apply local patterns instantly
           final localResult = _nlp.correctPartialSync(words);
 
-          // ✅ FIX 2: APPEND to accumulated text instead of replacing it.
-          // Long sentences fire multiple final results — we join them all.
+          // 2. Append to accumulated text
           final appended = (_accumulatedText.isEmpty
               ? localResult
               : '$_accumulatedText $localResult').trim();
 
           if (mounted) setState(() => _displayText = appended);
 
-          // 2. Send full accumulated text to Claude for deeper correction
+          // 3. Send full text to Claude for deeper correction
           setState(() => _isRefiningFinal = true);
           try {
             final corrected = await _nlp.correct(appended);
             if (mounted) {
               setState(() {
-                _accumulatedText = corrected; // keep full corrected history
+                _accumulatedText = corrected;
                 _displayText     = corrected;
                 _isRefiningFinal = false;
               });
@@ -175,21 +161,18 @@ class _TranslatorScreenState extends State<TranslatorScreen>
             dev.log('Final correction error: $e');
             if (mounted) {
               setState(() {
-                _accumulatedText = appended; // fallback to local result
+                _accumulatedText = appended;
                 _isRefiningFinal = false;
               });
             }
           }
         } else {
-          // ── PARTIAL result ────────────────────────────────────────────────
-          // Show accumulated text + current partial for a live preview.
+          // Partial: show live preview with local patterns applied
           final localCorrected = _nlp.correctPartialSync(words);
           final preview = (_accumulatedText.isEmpty
               ? localCorrected
               : '$_accumulatedText $localCorrected').trim();
-          if (mounted) {
-            setState(() => _displayText = preview);
-          }
+          if (mounted) setState(() => _displayText = preview);
         }
       },
     );
@@ -216,20 +199,18 @@ class _TranslatorScreenState extends State<TranslatorScreen>
     } else {
       _userStopped     = false;
       _displayText     = '';
-      _accumulatedText = ''; // ✅ FIX 3: reset accumulator on new session
+      _accumulatedText = '';
       if (mounted) setState(() => _isListening = true);
       _nlp.beginSession();
       await _startListening();
     }
   }
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
+  // ── Helpers ────────────────────────────────────────────────────────────────
 
   String get _subtitleHint {
-    if (!_isListening && _displayText.isEmpty) {
-      return 'Tap the mic to start speaking...';
-    }
-    if (_isListening && _displayText.isEmpty) return 'Listening...';
+    if (!_isListening && _displayText.isEmpty) return 'Tap the mic to start speaking...';
+    if (_isListening  && _displayText.isEmpty) return 'Listening...';
     return '';
   }
 
@@ -237,7 +218,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
       ? 0
       : _displayText.trim().split(RegExp(r'\s+')).length;
 
-  // ── Teach correction dialog ───────────────────────────────────────────────
+  // ── Teach correction dialog ────────────────────────────────────────────────
   void _showAddCorrectionDialog() {
     final wrongController   = TextEditingController();
     final correctController = TextEditingController();
@@ -393,7 +374,8 @@ class _TranslatorScreenState extends State<TranslatorScreen>
     );
   }
 
-  // ── APP BAR ───────────────────────────────────────────────────────────────
+  // ── APP BAR ────────────────────────────────────────────────────────────────
+  // ⚠ Star/premium button removed — only corrections toggle and add button remain
   Widget _buildAppBar() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
@@ -422,7 +404,6 @@ class _TranslatorScreenState extends State<TranslatorScreen>
             icon: _showCorrections
                 ? Icons.close_rounded
                 : Icons.format_list_bulleted_rounded,
-            tooltip: 'Corrections',
             onTap: () =>
                 setState(() => _showCorrections = !_showCorrections),
             active: _showCorrections,
@@ -430,15 +411,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
           const SizedBox(width: 8),
           _appBarBtn(
             icon: Icons.add_rounded,
-            tooltip: 'Teach correction',
             onTap: _showAddCorrectionDialog,
-          ),
-          const SizedBox(width: 8),
-          _appBarBtn(
-            icon: Icons.star_rounded,
-            tooltip: 'Premium',
-            onTap: widget.goToPremium,
-            gold: true,
           ),
         ],
       ),
@@ -448,36 +421,24 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   Widget _appBarBtn({
     required IconData icon,
     required VoidCallback onTap,
-    String? tooltip,
     bool active = false,
-    bool gold   = false,
   }) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
         width: 36, height: 36,
         decoration: BoxDecoration(
-          color: active
-              ? _tealDim
-              : gold
-                  ? Colors.amber.withOpacity(0.15)
-                  : _card,
+          color: active ? _tealDim : _card,
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: active
-                ? _tealBorder
-                : gold
-                    ? Colors.amber.withOpacity(0.3)
-                    : _white20,
-          ),
+          border: Border.all(color: active ? _tealBorder : _white20),
         ),
         child: Icon(icon, size: 18,
-            color: active ? _teal : gold ? Colors.amber : Colors.white70),
+            color: active ? _teal : Colors.white70),
       ),
     );
   }
 
-  // ── TRANSLATOR BODY ───────────────────────────────────────────────────────
+  // ── TRANSLATOR BODY ────────────────────────────────────────────────────────
   Widget _buildTranslatorBody() {
     final hint    = _subtitleHint;
     final hasText = _displayText.isNotEmpty;
@@ -485,7 +446,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        // Status row: LIVE dot + refining indicator
+        // LIVE + refining status row
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -512,8 +473,6 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                 ],
               ),
             ),
-
-            // "refining" shown only during final Claude call
             if (_isRefiningFinal) ...[
               const SizedBox(width: 16),
               AnimatedBuilder(
@@ -545,7 +504,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
 
         const SizedBox(height: 28),
 
-        // ── Main subtitle box ─────────────────────────────────────────────
+        // Main subtitle box
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
           child: AnimatedContainer(
@@ -556,9 +515,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
               color: Colors.white.withOpacity(0.05),
               borderRadius: BorderRadius.circular(22),
               border: Border.all(
-                color: _isListening
-                    ? _teal.withOpacity(0.5)
-                    : _white20,
+                color: _isListening ? _teal.withOpacity(0.5) : _white20,
                 width: 1,
               ),
               boxShadow: _isListening
@@ -574,28 +531,18 @@ class _TranslatorScreenState extends State<TranslatorScreen>
             child: Column(
               children: [
                 if (hint.isNotEmpty)
-                  Text(
-                    hint,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      color: _white40,
-                      height: 1.5,
-                    ),
-                  ),
-
+                  Text(hint,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                          fontSize: 16, color: _white40, height: 1.5)),
                 if (hasText)
-                  Text(
-                    _displayText,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white,
-                      height: 1.45,
-                    ),
-                  ),
-
+                  Text(_displayText,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.white,
+                          height: 1.45)),
                 if (hasText) ...[
                   const SizedBox(height: 14),
                   Row(
@@ -627,10 +574,8 @@ class _TranslatorScreenState extends State<TranslatorScreen>
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Text(
-                '$_wordCount/$_maxWords words',
-                style: const TextStyle(color: _white40, fontSize: 12),
-              ),
+              Text('$_wordCount/$_maxWords words',
+                  style: const TextStyle(color: _white40, fontSize: 12)),
               if (_nlp.patternCount > 0) ...[
                 const SizedBox(width: 12),
                 Container(
@@ -643,8 +588,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                   ),
                   child: Text(
                     '${_nlp.patternCount} pattern${_nlp.patternCount == 1 ? '' : 's'} active',
-                    style:
-                        const TextStyle(color: _teal, fontSize: 11),
+                    style: const TextStyle(color: _teal, fontSize: 11),
                   ),
                 ),
               ],
@@ -678,7 +622,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
     );
   }
 
-  // ── CORRECTIONS PANEL ─────────────────────────────────────────────────────
+  // ── CORRECTIONS PANEL ──────────────────────────────────────────────────────
   Widget _buildCorrectionsPanel() {
     final uid = FirebaseAuth.instance.currentUser?.uid;
 
@@ -755,12 +699,9 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                             Container(
                               padding: const EdgeInsets.all(20),
                               decoration: const BoxDecoration(
-                                  color: _tealDim,
-                                  shape: BoxShape.circle),
-                              child: const Icon(
-                                  Icons.auto_fix_high_rounded,
-                                  color: _teal,
-                                  size: 32),
+                                  color: _tealDim, shape: BoxShape.circle),
+                              child: const Icon(Icons.auto_fix_high_rounded,
+                                  color: _teal, size: 32),
                             ),
                             const SizedBox(height: 16),
                             const Text('No corrections yet',
@@ -783,8 +724,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                     }
 
                     return ListView.separated(
-                      padding:
-                          const EdgeInsets.fromLTRB(20, 0, 20, 100),
+                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 100),
                       itemCount: docs.length,
                       separatorBuilder: (_, __) =>
                           const SizedBox(height: 8),
@@ -794,7 +734,6 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                         final wrong   = data['wrong']   as String? ?? '';
                         final correct = data['correct'] as String? ?? '';
                         final source  = data['source']  as String? ?? 'ai';
-
                         return _correctionTile(
                           wrong: wrong,
                           correct: correct,
@@ -832,15 +771,11 @@ class _TranslatorScreenState extends State<TranslatorScreen>
           Container(
             width: 34, height: 34,
             decoration: BoxDecoration(
-              color: isUser
-                  ? _tealDim
-                  : Colors.white.withOpacity(0.05),
+              color: isUser ? _tealDim : Colors.white.withOpacity(0.05),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Icon(
-              isUser
-                  ? Icons.person_rounded
-                  : Icons.auto_fix_high_rounded,
+              isUser ? Icons.person_rounded : Icons.auto_fix_high_rounded,
               color: isUser ? _teal : Colors.white38,
               size: 16,
             ),
@@ -915,7 +850,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
     );
   }
 
-  // ── MIC FAB ───────────────────────────────────────────────────────────────
+  // ── MIC FAB ────────────────────────────────────────────────────────────────
   Widget _buildMicFab() {
     return AnimatedBuilder(
       animation: _pulseAnim,
@@ -950,7 +885,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
     );
   }
 
-  // ── Sheet helpers ─────────────────────────────────────────────────────────
+  // ── Sheet helpers ──────────────────────────────────────────────────────────
   Widget _sheetLabel(String label) {
     return Text(label,
         style: const TextStyle(

@@ -11,19 +11,17 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
-  // ── Live data (pulled from Firestore) ──────────────────────────────────────
   String _name        = '';
   String _email       = '';
-  String _plan        = 'Free Plan';
+  String _plan        = 'free';
   String _memberSince = '';
   bool   _isLoading   = true;
 
-  // ── Real stats from Firestore (same source as TrainedVoiceScreen) ──────────
-  int    _sessionCount      = 0;
-  double _trainingProgress  = 0.0;
-  double _trainedHours      = 0.0;
+  int    _sessionCount     = 0;
+  double _trainingProgress = 0.0;
+  double _trainedHours     = 0.0;
 
-  // ── Theme constants ────────────────────────────────────────────────────────
+  // ── Theme ──────────────────────────────────────────────────────────────────
   static const _bg         = Color(0xFF0D2B2B);
   static const _bgMid      = Color(0xFF0E2233);
   static const _bgDark     = Color(0xFF0B1A28);
@@ -36,13 +34,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
   static const _white20    = Color(0x33FFFFFF);
   static const _fieldBg    = Color(0xFF0D2020);
 
+  bool get _isPremium => _plan == 'premium';
+
   @override
   void initState() {
     super.initState();
     _loadProfile();
   }
 
-  // ── Load profile + real stats from Firestore ───────────────────────────────
   Future<void> _loadProfile() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
@@ -67,12 +66,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
       setState(() {
         _name             = data?['name']  ?? user.displayName ?? 'User';
         _email            = data?['email'] ?? user.email       ?? '';
-        _plan             = data?['plan']  ?? 'Free Plan';
+        _plan             = data?['plan']  ?? 'free';
         _memberSince      = memberSince;
         _sessionCount     = (data?['sessionCount']     ?? 0) as int;
         _trainingProgress = (data?['trainingProgress'] ?? 0.0).toDouble().clamp(0.0, 1.0);
         _trainedHours     = (data?['trainedHours']     ?? 0.0).toDouble();
-        _isLoading = false;
+        _isLoading        = false;
       });
     } catch (e) {
       setState(() {
@@ -91,7 +90,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return months[month];
   }
 
-  // ── Save edited profile to Firestore + Auth ────────────────────────────────
   Future<void> _saveProfile(String name, String email) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
@@ -117,7 +115,59 @@ class _ProfileScreenState extends State<ProfileScreen> {
     });
   }
 
-  // ── Edit bottom sheet ──────────────────────────────────────────────────────
+  Future<void> _logout() async {
+    Navigator.pop(context);
+    await FirebaseAuth.instance.signOut();
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(
+        builder: (_) => PremiumScreen(
+          onLogin: () {
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(builder: (_) => const _Redirector()),
+              (_) => false,
+            );
+          },
+          onBack: () {},
+        ),
+      ),
+      (_) => false,
+    );
+  }
+
+  void _confirmLogout() {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: const Color(0xFF112828),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Log out?',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        content: const Text(
+          'You will be signed out of your CleftTune account.',
+          style: TextStyle(color: _white40, fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel', style: TextStyle(color: _white40)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red.shade700,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+            ),
+            onPressed: _logout,
+            child: const Text('Logout',
+                style: TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showEditSheet() {
     final nameController  = TextEditingController(text: _name);
     final emailController = TextEditingController(text: _email);
@@ -130,12 +180,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
       builder: (_) => StatefulBuilder(
         builder: (ctx, setSheetState) => Padding(
           padding: EdgeInsets.only(
-            bottom: MediaQuery.of(context).viewInsets.bottom,
-          ),
+              bottom: MediaQuery.of(context).viewInsets.bottom),
           child: Container(
             decoration: const BoxDecoration(
               color: Color(0xFF112828),
-              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+              borderRadius:
+                  BorderRadius.vertical(top: Radius.circular(24)),
             ),
             padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
             child: Column(
@@ -176,7 +226,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           side: const BorderSide(color: _white20),
                           shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(12)),
-                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          padding:
+                              const EdgeInsets.symmetric(vertical: 14),
                         ),
                         onPressed: () => Navigator.pop(context),
                         child: const Text('Cancel',
@@ -190,7 +241,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           backgroundColor: _teal,
                           shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(12)),
-                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          padding:
+                              const EdgeInsets.symmetric(vertical: 14),
                         ),
                         onPressed: isSaving
                             ? null
@@ -201,14 +253,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                     nameController.text.trim(),
                                     emailController.text.trim(),
                                   );
-                                  if (context.mounted) Navigator.pop(context);
+                                  if (context.mounted) {
+                                    Navigator.pop(context);
+                                  }
                                 } catch (e) {
                                   if (context.mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                          content: Text('Save failed: $e'),
-                                          backgroundColor: Colors.red),
-                                    );
+                                    ScaffoldMessenger.of(context)
+                                        .showSnackBar(SnackBar(
+                                      content: Text('Save failed: $e'),
+                                      backgroundColor: Colors.red,
+                                    ));
                                   }
                                 } finally {
                                   setSheetState(() => isSaving = false);
@@ -218,7 +272,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             ? const SizedBox(
                                 width: 18, height: 18,
                                 child: CircularProgressIndicator(
-                                    strokeWidth: 2, color: Colors.white))
+                                    strokeWidth: 2,
+                                    color: Colors.white))
                             : const Text('Save Changes',
                                 style: TextStyle(
                                     color: Colors.white,
@@ -235,19 +290,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // BUILD
+  // ══════════════════════════════════════════════════════════════════════════
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
       return const Scaffold(
         backgroundColor: _bg,
         body: Center(
-          child: CircularProgressIndicator(color: _teal),
-        ),
+            child: CircularProgressIndicator(color: _teal)),
       );
     }
 
-    final screenWidth = MediaQuery.of(context).size.width;
-    final isWide = screenWidth >= 700;
+    final isWide = MediaQuery.of(context).size.width >= 700;
 
     return Scaffold(
       body: Container(
@@ -274,31 +331,38 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  // ── MOBILE LAYOUT ──────────────────────────────────────────────────────────
+  // ── LAYOUTS ────────────────────────────────────────────────────────────────
+
   Widget _buildMobileLayout() {
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Column(
         children: [
           const SizedBox(height: 8),
-          _buildAvatarSection(centered: true),
+          _buildAvatarSection(),
           const SizedBox(height: 20),
           _buildStatsRow(),
-          const SizedBox(height: 24),
+          const SizedBox(height: 20),
+
+          // Premium card only shows if premium
+          if (_isPremium) ...[
+            _buildPremiumActiveCard(),
+            const SizedBox(height: 20),
+          ],
+
           _buildSectionLabel('ACCOUNT'),
           const SizedBox(height: 10),
           _buildInfoCard(),
           const SizedBox(height: 24),
           _buildSectionLabel('SESSION'),
           const SizedBox(height: 10),
-          _buildLogoutButton(),           // ← upgrade button removed
+          _buildLogoutButton(),
           const SizedBox(height: 32),
         ],
       ),
     );
   }
 
-  // ── WIDE / WEB LAYOUT ──────────────────────────────────────────────────────
   Widget _buildWideLayout() {
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 24),
@@ -309,9 +373,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
             width: 260,
             child: Column(
               children: [
-                _buildAvatarSection(centered: true),
+                _buildAvatarSection(),
                 const SizedBox(height: 20),
                 _buildStatsRow(),
+                if (_isPremium) ...[
+                  const SizedBox(height: 20),
+                  _buildPremiumActiveCard(),
+                ],
               ],
             ),
           ),
@@ -326,7 +394,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 const SizedBox(height: 24),
                 _buildSectionLabel('SESSION'),
                 const SizedBox(height: 10),
-                _buildLogoutButton(),     // ← upgrade button removed
+                _buildLogoutButton(),
               ],
             ),
           ),
@@ -364,7 +432,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 borderRadius: BorderRadius.circular(18),
                 border: Border.all(color: _tealBorder),
               ),
-              child: const Icon(Icons.edit_outlined, size: 17, color: _teal),
+              child:
+                  const Icon(Icons.edit_outlined, size: 17, color: _teal),
             ),
           ),
         ],
@@ -373,14 +442,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   // ── AVATAR SECTION ─────────────────────────────────────────────────────────
-  Widget _buildAvatarSection({bool centered = true}) {
+  Widget _buildAvatarSection() {
     final initials = _name.isNotEmpty
         ? _name.trim().split(' ').map((w) => w[0]).take(2).join().toUpperCase()
         : 'U';
 
     return Column(
-      crossAxisAlignment:
-          centered ? CrossAxisAlignment.center : CrossAxisAlignment.start,
       children: [
         Stack(
           alignment: Alignment.bottomRight,
@@ -433,36 +500,69 @@ class _ProfileScreenState extends State<ProfileScreen> {
         Text(_email,
             style: const TextStyle(fontSize: 13, color: _white40)),
         const SizedBox(height: 10),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-          decoration: BoxDecoration(
-            color: _tealDim,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: _tealBorder),
-          ),
-          child: Text(_plan,
-              style: const TextStyle(
-                  fontSize: 12,
-                  color: _teal,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 0.3)),
-        ),
+
+        // ── Plan badge — changes based on plan ──────────────────────────────
+        _isPremium
+            ? Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 12, vertical: 5),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF1D9E75), Color(0xFF0E5C47)],
+                  ),
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                      color: _teal.withOpacity(0.35),
+                      blurRadius: 10,
+                      spreadRadius: 1,
+                    ),
+                  ],
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.star_rounded,
+                        color: Colors.white, size: 13),
+                    SizedBox(width: 5),
+                    Text('Premium Member',
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.3)),
+                  ],
+                ),
+              )
+            : Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 12, vertical: 5),
+                decoration: BoxDecoration(
+                  color: _tealDim,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: _tealBorder),
+                ),
+                child: const Text('Free Plan',
+                    style: TextStyle(
+                        fontSize: 12,
+                        color: _teal,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.3)),
+              ),
       ],
     );
   }
 
   // ── STATS ROW ──────────────────────────────────────────────────────────────
   Widget _buildStatsRow() {
-    final accuracyLabel = '${(_trainingProgress * 100).toStringAsFixed(0)}%';
-    final hoursLabel    = '${_trainedHours.toStringAsFixed(1)}h';
-
     return Row(
       children: [
         _statChip('$_sessionCount', 'Sessions'),
         const SizedBox(width: 10),
-        _statChip(accuracyLabel, 'Accuracy'),
+        _statChip(
+            '${(_trainingProgress * 100).toStringAsFixed(0)}%', 'Accuracy'),
         const SizedBox(width: 10),
-        _statChip(hoursLabel, 'Trained'),
+        _statChip('${_trainedHours.toStringAsFixed(1)}h', 'Trained'),
       ],
     );
   }
@@ -492,6 +592,111 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  // ── PREMIUM ACTIVE CARD (shown on profile when premium) ───────────────────
+  Widget _buildPremiumActiveCard() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF0E5C47), Color(0xFF1D9E75)],
+        ),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white.withOpacity(0.15)),
+        boxShadow: [
+          BoxShadow(
+            color: _teal.withOpacity(0.3),
+            blurRadius: 16,
+            spreadRadius: 2,
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Top row
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.star_rounded,
+                        color: Colors.white, size: 12),
+                    SizedBox(width: 4),
+                    Text('PREMIUM ACTIVE',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.8)),
+                  ],
+                ),
+              ),
+              const Spacer(),
+              const Icon(Icons.verified_rounded,
+                  color: Colors.white, size: 20),
+            ],
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            "You're all set! 🎉",
+            style: TextStyle(
+                fontSize: 18,
+                color: Colors.white,
+                fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Enjoy all premium features — unlimited\nsubtitles, voice training & ad-free.',
+            style: TextStyle(
+                color: Colors.white70, fontSize: 12, height: 1.5),
+          ),
+          const SizedBox(height: 12),
+          // Feature chips
+          Wrap(
+            spacing: 6, runSpacing: 6,
+            children: [
+              _premiumChip(Icons.closed_caption_rounded, 'Unlimited'),
+              _premiumChip(Icons.graphic_eq_rounded, 'Voice Training'),
+              _premiumChip(Icons.block_rounded, 'Ad-Free'),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _premiumChip(IconData icon, String label) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.white.withOpacity(0.2)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: Colors.white, size: 11),
+          const SizedBox(width: 4),
+          Text(label,
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w500)),
+        ],
+      ),
+    );
+  }
+
   // ── ACCOUNT INFO CARD ──────────────────────────────────────────────────────
   Widget _buildInfoCard() {
     return Container(
@@ -509,21 +714,36 @@ class _ProfileScreenState extends State<ProfileScreen> {
           Divider(color: Colors.white.withOpacity(0.07), height: 20),
           _infoRow(Icons.calendar_today_outlined, 'Member Since',
               _memberSince.isEmpty ? '—' : _memberSince),
+          Divider(color: Colors.white.withOpacity(0.07), height: 20),
+          _infoRow(
+            _isPremium
+                ? Icons.star_rounded
+                : Icons.star_border_rounded,
+            'Plan',
+            _isPremium ? 'Premium' : 'Free',
+          ),
         ],
       ),
     );
   }
 
   Widget _infoRow(IconData icon, String label, String value) {
+    final isPlanRow = label == 'Plan';
     return Row(
       children: [
         Container(
           width: 34, height: 34,
           decoration: BoxDecoration(
-            color: _tealDim,
+            color: isPlanRow && _isPremium
+                ? const Color(0xFF1D9E75).withOpacity(0.3)
+                : _tealDim,
             borderRadius: BorderRadius.circular(8),
           ),
-          child: Icon(icon, color: _teal, size: 16),
+          child: Icon(icon,
+              color: isPlanRow && _isPremium
+                  ? Colors.white
+                  : _teal,
+              size: 16),
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -535,40 +755,38 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       fontSize: 10, color: _white40, letterSpacing: 0.3)),
               const SizedBox(height: 2),
               Text(value,
-                  style: const TextStyle(
+                  style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w500,
-                      color: Colors.white)),
+                      color: isPlanRow && _isPremium
+                          ? _teal
+                          : Colors.white)),
             ],
           ),
         ),
+        if (isPlanRow && _isPremium)
+          Container(
+            padding: const EdgeInsets.symmetric(
+                horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: _tealDim,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: _tealBorder),
+            ),
+            child: const Text('Active',
+                style: TextStyle(
+                    color: _teal,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600)),
+          ),
       ],
     );
   }
 
-  // ── SECTION LABEL ──────────────────────────────────────────────────────────
-  Widget _buildSectionLabel(String label) {
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Text(label,
-          style: const TextStyle(
-              color: _white40, fontSize: 11, letterSpacing: 0.8)),
-    );
-  }
-
-  // ── LOGOUT BUTTON ──────────────────────────────────────────────────────────
+  // ── LOGOUT ─────────────────────────────────────────────────────────────────
   Widget _buildLogoutButton() {
     return GestureDetector(
-      onTap: () => Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => PremiumScreen(
-            onBack: () => Navigator.pop(context),
-            onLogin: () => ScaffoldMessenger.of(context)
-                .showSnackBar(const SnackBar(content: Text('Login clicked'))),
-          ),
-        ),
-      ),
+      onTap: _confirmLogout,
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
@@ -591,7 +809,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  // ── SHEET HELPERS ──────────────────────────────────────────────────────────
+  Widget _buildSectionLabel(String label) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Text(label,
+          style: const TextStyle(
+              color: _white40, fontSize: 11, letterSpacing: 0.8)),
+    );
+  }
+
   Widget _sheetLabel(String label) {
     return Text(label,
         style: const TextStyle(
@@ -627,6 +853,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       ),
+    );
+  }
+}
+
+// ── Redirect helper ────────────────────────────────────────────────────────────
+class _Redirector extends StatelessWidget {
+  const _Redirector();
+
+  @override
+  Widget build(BuildContext context) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Navigator.of(context).pushNamedAndRemoveUntil('/', (_) => false);
+    });
+    return const Scaffold(
+      backgroundColor: Color(0xFF0D2B2B),
+      body: Center(
+          child: CircularProgressIndicator(color: Color(0xFF1D9E75))),
     );
   }
 }
