@@ -3,6 +3,7 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'nlp_service.dart';
+import 'notifications.dart'; // ← NEW
 
 class TrainedVoiceApp extends StatelessWidget {
   const TrainedVoiceApp({super.key});
@@ -33,15 +34,20 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
   bool _isLoadingUser = true;
 
   // ── Training state ─────────────────────────────────────────────────────────
-  String _rawOutput = '';
+  String _rawOutput       = '';
   String _correctedOutput = '';
-  bool _isProcessing = false;
-  bool _isListening = false;
-  bool _speechAvailable = false;
-  double _trainingProgress = 0.0; // loaded from Firestore
-  double _soundLevel = 0.0;
-  int _sessionCount = 0;
-  double _trainedHours = 0.0;
+  bool _isProcessing      = false;
+  bool _isListening       = false;
+  bool _speechAvailable   = false;
+  double _trainingProgress = 0.0;
+  double _soundLevel       = 0.0;
+  int    _sessionCount     = 0;
+  double _trainedHours     = 0.0;
+
+  // ── Pronunciation analytics from NlpService ───────────────────────────────
+  int    _clarityScore    = 0;
+  double _similarity      = 0.0;
+  List   _detectedIssues  = [];
 
   late AnimationController _pulseController;
 
@@ -79,21 +85,19 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
       final data = doc.data();
 
       setState(() {
-        _userName = data?['name'] ?? user.displayName ?? 'User';
-        // Load saved training progress (default 0 if never trained)
+        _userName         = data?['name'] ?? user.displayName ?? 'User';
         _trainingProgress =
             (data?['trainingProgress'] ?? 0.0).toDouble().clamp(0.0, 1.0);
-        _sessionCount = (data?['sessionCount'] ?? 0) as int;
-        _trainedHours = (data?['trainedHours'] ?? 0.0).toDouble();
-        _isLoadingUser = false;
+        _sessionCount     = (data?['sessionCount'] ?? 0) as int;
+        _trainedHours     = (data?['trainedHours'] ?? 0.0).toDouble();
+        _isLoadingUser    = false;
       });
 
-      // Sync NLP pattern count from Firestore
       await _nlp.init();
     } catch (e) {
-      final user = FirebaseAuth.instance.currentUser;
+      final u = FirebaseAuth.instance.currentUser;
       setState(() {
-        _userName = user?.displayName ?? 'User';
+        _userName      = u?.displayName ?? 'User';
         _isLoadingUser = false;
       });
     }
@@ -109,10 +113,10 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
         .doc(user.uid)
         .set({
       'trainingProgress': _trainingProgress,
-      'patternCount': _nlp.patternCount,
-      'sessionCount': _sessionCount,
-      'trainedHours': _trainedHours,
-      'lastTrainedAt': FieldValue.serverTimestamp(),
+      'patternCount':     _nlp.patternCount,
+      'sessionCount':     _sessionCount,
+      'trainedHours':     _trainedHours,
+      'lastTrainedAt':    FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
   }
 
@@ -146,28 +150,39 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
     }
 
     setState(() {
-      _rawOutput = '';
+      _rawOutput       = '';
       _correctedOutput = '';
-      _isListening = true;
-      _soundLevel = 0.0;
+      _clarityScore    = 0;
+      _similarity      = 0.0;
+      _detectedIssues  = [];
+      _isListening     = true;
+      _soundLevel      = 0.0;
     });
+
+    // ── NEW: fire training-started notification ────────────────────────────
+    await NotificationHelper.trainingStarted();
 
     await _speech.listen(
       onResult: (result) async {
         final recognized = result.recognizedWords.trim();
         if (recognized.isEmpty) return;
 
-        setState(() {
-          _rawOutput = recognized;
-        });
+        setState(() => _rawOutput = recognized);
+
+        final confidence = result.confidence > 0
+            ? result.confidence.toDouble()
+            : 0.6;
+
+        if (!_nlp.isReliableSpeechResult(recognized, confidence)) {
+          return;
+        }
 
         if (result.finalResult) {
           setState(() {
-            _isListening = false;
+            _isListening  = false;
             _isProcessing = true;
-            // Each completed session adds to trained hours
             _sessionCount += 1;
-            _trainedHours = double.parse(
+            _trainedHours  = double.parse(
                 (_trainedHours + 0.05).toStringAsFixed(2));
           });
           await _runCorrection(recognized);
@@ -176,33 +191,43 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
       onSoundLevelChange: (level) {
         setState(() => _soundLevel = (level + 160) / 160);
       },
-      listenFor: const Duration(seconds: 30),
-      pauseFor: const Duration(seconds: 4),
+      listenFor:      const Duration(seconds: 30),
+      pauseFor:       const Duration(seconds: 4),
       partialResults: true,
-      localeId: 'en_US',
-      cancelOnError: true,
+      localeId:       'en_US',
+      cancelOnError:  true,
     );
   }
 
   // ── Run NLP correction + update progress ───────────────────────────────────
   Future<void> _runCorrection(String raw) async {
-    final corrected = await _nlp.correct(raw);
+    final result = await _nlp.correct(raw);
 
-    // Progress goes up slightly per session (max 1.0)
-    // Base gain: 0.003 per session, slows down as it approaches 100%
+    final correctedText = result['corrected'] as String;
+    final score         = result['score']     as int;
+    final similarity    = result['similarity'] as double;
+    final issues        = result['issues']    as List;
+
     final gain = 0.003 * (1.0 - _trainingProgress);
 
     setState(() {
-      _correctedOutput = corrected;
-      _isProcessing = false;
+      _correctedOutput  = correctedText;
+      _clarityScore     = score;
+      _similarity       = similarity;
+      _detectedIssues   = issues;
+      _isProcessing     = false;
       _trainingProgress = (_trainingProgress + gain).clamp(0.0, 1.0);
     });
 
-    // Persist to Firestore
     await _saveTrainingProgress();
+
+    // ── NEW: fire training-completed notification ──────────────────────────
+    await NotificationHelper.trainingCompleted(
+      accuracy: _trainingProgress * 100,
+    );
   }
 
-  // ── Word correction — each correction boosts progress more ────────────────
+  // ── Word correction sheet ─────────────────────────────────────────────────
   void _showWordCorrectionSheet(String word) {
     final controller = TextEditingController(text: word);
     showModalBottomSheet(
@@ -225,8 +250,7 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
           children: [
             Center(
               child: Container(
-                width: 36,
-                height: 4,
+                width: 36, height: 4,
                 decoration: BoxDecoration(
                   color: Colors.white24,
                   borderRadius: BorderRadius.circular(2),
@@ -252,9 +276,9 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
               autofocus: true,
               style: const TextStyle(color: Colors.white),
               decoration: InputDecoration(
-                filled: true,
+                filled:    true,
                 fillColor: const Color(0xFF0D2020),
-                hintText: 'Correct word...',
+                hintText:  'Correct word...',
                 hintStyle: const TextStyle(color: Colors.white38),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(10),
@@ -275,22 +299,31 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
                     borderRadius: BorderRadius.circular(12)),
               ),
               onPressed: () async {
-                final correct = controller.text.trim();
-                if (correct.isNotEmpty && correct != word) {
-                  await _nlp.learnPattern(word, correct);
-                  final updated = await _nlp.correct(_rawOutput);
+                final correctWord = controller.text.trim();
+                if (correctWord.isNotEmpty && correctWord != word) {
+                  await _nlp.learnPattern(word, correctWord);
 
-                  // Each manual correction = bigger progress boost
+                  final result  = await _nlp.correct(_rawOutput);
+                  final updated = result['corrected'] as String;
+                  final score   = result['score']     as int;
+                  final sim     = result['similarity'] as double;
+                  final issues  = result['issues']    as List;
+
                   final correctionGain = 0.008 * (1.0 - _trainingProgress);
 
                   setState(() {
-                    _correctedOutput = updated;
+                    _correctedOutput  = updated;
+                    _clarityScore     = score;
+                    _similarity       = sim;
+                    _detectedIssues   = issues;
                     _trainingProgress =
                         (_trainingProgress + correctionGain).clamp(0.0, 1.0);
                   });
 
-                  // Save updated progress to Firestore
                   await _saveTrainingProgress();
+
+                  // ── NEW: notify word was corrected/added ─────────────────
+                  await NotificationHelper.wordAdded(correctWord);
                 }
                 if (mounted) Navigator.pop(context);
               },
@@ -335,19 +368,137 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
                 ),
                 child: Text(
                   word,
-                  style:
-                      const TextStyle(color: Colors.white, fontSize: 15),
+                  style: const TextStyle(color: Colors.white, fontSize: 15),
                 ),
               ),
             );
           }).toList(),
         ),
+
+        const SizedBox(height: 12),
+
+        // ── Pronunciation analytics panel ──────────────────────────────────
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.black26,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.white12),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  _analyticsChip(
+                    icon: Icons.graphic_eq,
+                    label: 'Clarity',
+                    value: '$_clarityScore%',
+                    color: _clarityColor(_clarityScore),
+                  ),
+                  const SizedBox(width: 8),
+                  _analyticsChip(
+                    icon: Icons.compare_arrows,
+                    label: 'Match',
+                    value: '${(_similarity * 100).toStringAsFixed(0)}%',
+                    color: Colors.tealAccent,
+                  ),
+                ],
+              ),
+
+              if (_detectedIssues.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                const Text(
+                  'Detected substitutions:',
+                  style: TextStyle(
+                      color: Colors.white54,
+                      fontSize: 11,
+                      letterSpacing: 0.4),
+                ),
+                const SizedBox(height: 4),
+                ..._detectedIssues.map((issue) => Padding(
+                      padding: const EdgeInsets.only(bottom: 2),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.warning_amber_rounded,
+                              color: Colors.orangeAccent, size: 13),
+                          const SizedBox(width: 4),
+                          Text(
+                            issue.toString(),
+                            style: const TextStyle(
+                                color: Colors.orangeAccent, fontSize: 11),
+                          ),
+                        ],
+                      ),
+                    )),
+              ] else if (_correctedOutput.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                const Row(
+                  children: [
+                    Icon(Icons.check_circle_outline,
+                        color: Colors.greenAccent, size: 13),
+                    SizedBox(width: 4),
+                    Text(
+                      'No phoneme substitutions detected',
+                      style: TextStyle(
+                          color: Colors.greenAccent, fontSize: 11),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+
         const SizedBox(height: 8),
         Text(
           '${_nlp.patternCount} patterns learned',
           style: const TextStyle(color: Colors.teal, fontSize: 11),
         ),
       ],
+    );
+  }
+
+  Color _clarityColor(int score) {
+    if (score >= 75) return Colors.greenAccent;
+    if (score >= 45) return Colors.orangeAccent;
+    return Colors.redAccent;
+  }
+
+  Widget _analyticsChip({
+    required IconData icon,
+    required String label,
+    required String value,
+    required Color color,
+  }) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: color.withOpacity(0.3)),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: color, size: 14),
+            const SizedBox(width: 6),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label,
+                    style: TextStyle(
+                        color: color.withOpacity(0.7), fontSize: 9)),
+                Text(value,
+                    style: TextStyle(
+                        color: color,
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold)),
+              ],
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -371,8 +522,7 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
                 Transform.scale(
                   scale: scale + 0.3,
                   child: Container(
-                    width: 80,
-                    height: 80,
+                    width: 80, height: 80,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       color: Colors.teal.withOpacity(glowOpacity * 0.4),
@@ -383,8 +533,7 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
                 Transform.scale(
                   scale: scale + 0.1,
                   child: Container(
-                    width: 80,
-                    height: 80,
+                    width: 80, height: 80,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       color: Colors.teal.withOpacity(glowOpacity * 0.6),
@@ -394,8 +543,7 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
               Transform.scale(
                 scale: scale,
                 child: Container(
-                  width: 80,
-                  height: 80,
+                  width: 80, height: 80,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     color: _isListening
@@ -433,13 +581,10 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
 
   @override
   Widget build(BuildContext context) {
-    // Show loader while fetching user data
     if (_isLoadingUser) {
       return const Scaffold(
         backgroundColor: Color(0xFF0F172A),
-        body: Center(
-          child: CircularProgressIndicator(color: Colors.teal),
-        ),
+        body: Center(child: CircularProgressIndicator(color: Colors.teal)),
       );
     }
 
@@ -451,7 +596,7 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ── TOP BAR ────────────────────────────────────────────────────
+              // ── TOP BAR ──────────────────────────────────────────────────
               Row(
                 children: [
                   GestureDetector(
@@ -480,7 +625,7 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
 
               const SizedBox(height: 20),
 
-              // ── STATUS CARD ────────────────────────────────────────────────
+              // ── STATUS CARD ──────────────────────────────────────────────
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
@@ -499,7 +644,6 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
                           color: Colors.white, fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 10),
-                    // ✅ Real user name from Firestore
                     Text(
                       "Training: $_userName's Voice Model",
                       style: const TextStyle(fontWeight: FontWeight.w600),
@@ -508,15 +652,14 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
                     ClipRRect(
                       borderRadius: BorderRadius.circular(10),
                       child: LinearProgressIndicator(
-                        value: _trainingProgress,
-                        minHeight: 10,
+                        value:           _trainingProgress,
+                        minHeight:       10,
                         backgroundColor: const Color(0xFFD1D0D0),
                         valueColor: const AlwaysStoppedAnimation(
                             Color(0xFF0B5D5E)),
                       ),
                     ),
                     const SizedBox(height: 8),
-                    // ✅ Real percentage from Firestore
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
@@ -568,22 +711,21 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
                     fontWeight: FontWeight.bold, color: Colors.white),
               ),
               const SizedBox(height: 10),
-              // ✅ Real name in vocal profile
               _profileCard(
-                title: "$_userName's Trained",
+                title:    "$_userName's Trained",
                 subtitle: 'Optimized for daily conversation',
-                active: true,
+                active:   true,
               ),
               const SizedBox(height: 10),
               _profileCard(
-                title: 'Default',
+                title:    'Default',
                 subtitle: 'Standard system synthesized voice',
-                active: false,
+                active:   false,
               ),
 
               const SizedBox(height: 20),
 
-              // ── ANALYSIS + MIC + NLP ───────────────────────────────────────
+              // ── ANALYSIS + MIC + NLP ──────────────────────────────────────
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
@@ -601,19 +743,25 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
                     Row(
                       children: [
                         Text(
-                          '${(_trainingProgress * 100).toStringAsFixed(0)}%',
+                          _clarityScore > 0
+                              ? '$_clarityScore%'
+                              : '${(_trainingProgress * 100).toStringAsFixed(0)}%',
                           style: const TextStyle(
                               fontSize: 28,
                               fontWeight: FontWeight.bold,
                               color: Colors.teal),
                         ),
                         const SizedBox(width: 10),
-                        const Text('QUALITY\nRATING'),
+                        Text(
+                          _clarityScore > 0
+                              ? 'CLARITY\nSCORE'
+                              : 'QUALITY\nRATING',
+                        ),
                       ],
                     ),
                     const SizedBox(height: 20),
 
-                    // ── Waveform visualizer ────────────────────────────────
+                    // ── Waveform visualizer ─────────────────────────────────
                     Container(
                       height: 60,
                       decoration: BoxDecoration(
@@ -629,9 +777,9 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
                               : ((i % 5) + 1) * 8.0;
                           return AnimatedContainer(
                             duration: const Duration(milliseconds: 100),
-                            width: 3,
+                            width:  3,
                             height: heightFactor.clamp(4.0, 52.0),
-                            color: _isListening
+                            color:  _isListening
                                 ? Colors.teal
                                 : const Color(0xFF040706),
                           );
@@ -641,7 +789,7 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
 
                     const SizedBox(height: 24),
 
-                    // ── Mic button ─────────────────────────────────────────
+                    // ── Mic button ──────────────────────────────────────────
                     Center(child: _buildMicButton()),
 
                     const SizedBox(height: 8),
@@ -656,8 +804,7 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
                                     ? 'Tap to speak'
                                     : 'Microphone unavailable',
                         style: TextStyle(
-                          color:
-                              _isListening ? Colors.red : Colors.black54,
+                          color: _isListening ? Colors.red : Colors.black54,
                           fontSize: 12,
                           fontWeight: FontWeight.w500,
                         ),
@@ -666,7 +813,7 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
 
                     const SizedBox(height: 20),
 
-                    // ── Raw STT output ─────────────────────────────────────
+                    // ── Raw STT output ──────────────────────────────────────
                     if (_rawOutput.isNotEmpty) ...[
                       const Text(
                         'What the AI heard:',
@@ -686,7 +833,7 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
                       const SizedBox(height: 12),
                     ],
 
-                    // ── NLP corrected output / spinner ─────────────────────
+                    // ── NLP corrected output / spinner ──────────────────────
                     if (_isProcessing)
                       const Center(
                         child: Padding(
@@ -700,7 +847,7 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
 
                     const SizedBox(height: 20),
 
-                    // ── Reset button ───────────────────────────────────────
+                    // ── Reset button ────────────────────────────────────────
                     OutlinedButton(
                       style: OutlinedButton.styleFrom(
                         minimumSize: const Size.fromHeight(50),
@@ -708,7 +855,6 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
                             borderRadius: BorderRadius.circular(12)),
                       ),
                       onPressed: () async {
-                        // Show confirmation before resetting
                         final confirm = await showDialog<bool>(
                           context: context,
                           builder: (_) => AlertDialog(
@@ -739,8 +885,7 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
                                 onPressed: () =>
                                     Navigator.pop(context, true),
                                 child: const Text('Reset',
-                                    style:
-                                        TextStyle(color: Colors.white)),
+                                    style: TextStyle(color: Colors.white)),
                               ),
                             ],
                           ),
@@ -749,11 +894,14 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
                         if (confirm == true) {
                           await _nlp.clearPatterns();
                           setState(() {
-                            _rawOutput = '';
-                            _correctedOutput = '';
+                            _rawOutput        = '';
+                            _correctedOutput  = '';
+                            _clarityScore     = 0;
+                            _similarity       = 0.0;
+                            _detectedIssues   = [];
                             _trainingProgress = 0.0;
-                            _sessionCount = 0;
-                            _trainedHours = 0.0;
+                            _sessionCount     = 0;
+                            _trainedHours     = 0.0;
                           });
                           await _saveTrainingProgress();
                           _showSnack('Training reset successfully');
@@ -789,7 +937,8 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
                     color: Colors.teal)),
             const SizedBox(height: 3),
             Text(label,
-                style: const TextStyle(fontSize: 11, color: Colors.white54)),
+                style:
+                    const TextStyle(fontSize: 11, color: Colors.white54)),
           ],
         ),
       ),
@@ -804,7 +953,7 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: active ? const Color(0xFF000101) : const Color(0xFF0B0404),
+        color:  active ? const Color(0xFF000101) : const Color(0xFF0B0404),
         borderRadius: BorderRadius.circular(15),
         border: Border.all(
           color: active ? Colors.teal : const Color(0xFF0B0404),
@@ -828,7 +977,8 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
               ],
             ),
           ),
-          if (active) const Icon(Icons.check_circle, color: Colors.teal),
+          if (active)
+            const Icon(Icons.check_circle, color: Colors.teal),
         ],
       ),
     );

@@ -2,21 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// NOTIFICATION TYPES
-// ─────────────────────────────────────────────────────────────────────────────
-// 'training'       — AI voice training started / completed / improved
-// 'word_deleted'   — User deleted a corrected word
-// 'word_added'     — User added/corrected a word
-// 'premium_pay'    — Monthly payment reminder
-// 'premium_active' — Subscription confirmed / renewed
-// 'premium_cancel' — Subscription cancelled
-// 'app_update'     — New app version available
-// 'sync'           — Cloud sync completed
-// 'cloud'          — Cloud backup status
-// 'reminder'       — General reminder
-// ─────────────────────────────────────────────────────────────────────────────
-
 // ── Data model ───────────────────────────────────────────────────────────────
 class NotifItem {
   final String id;
@@ -48,11 +33,8 @@ class NotifItem {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// NOTIFICATION HELPER — call from anywhere in the app
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Notification Helper ──────────────────────────────────────────────────────
 class NotificationHelper {
-  // ── Generic sender ────────────────────────────────────────────────────────
   static Future<void> send({
     required String title,
     required String body,
@@ -65,305 +47,236 @@ class NotificationHelper {
         .doc(user.uid)
         .collection('notifications')
         .add({
-      'title':     title,
-      'body':      body,
-      'type':      type,
-      'isRead':    false,
+      'title': title,
+      'body': body,
+      'type': type,
+      'isRead': false,
       'timestamp': FieldValue.serverTimestamp(),
     });
   }
 
-  // ── AI Training ───────────────────────────────────────────────────────────
   static Future<void> trainingStarted() => send(
         title: 'Voice Training Started',
-        body:  'CleftTune is now learning your voice. This may take a few moments.',
-        type:  'training',
+        body: 'CleftTune is now learning your voice. This may take a few moments.',
+        type: 'training',
       );
-
   static Future<void> trainingCompleted({double? accuracy}) => send(
         title: 'Training Complete ✅',
-        body:  accuracy != null
-            ? 'Your voice model improved to ${accuracy.toStringAsFixed(1)}% accuracy. Keep training to improve further!'
+        body: accuracy != null
+            ? 'Your voice model improved to ${accuracy.toStringAsFixed(1)}% accuracy.'
             : 'Your AI voice model has been updated successfully.',
-        type:  'training',
+        type: 'training',
       );
-
   static Future<void> trainingFailed() => send(
         title: 'Training Failed',
-        body:  'Voice training encountered an issue. Please try again.',
-        type:  'training',
+        body: 'Voice training encountered an issue. Please try again.',
+        type: 'training',
       );
-
-  // ── Word actions ──────────────────────────────────────────────────────────
   static Future<void> wordDeleted(String word) => send(
         title: 'Word Removed',
-        body:  '"$word" has been deleted from your corrected words list.',
-        type:  'word_deleted',
+        body: '"$word" has been deleted from your corrected words list.',
+        type: 'word_deleted',
       );
-
   static Future<void> wordAdded(String word) => send(
         title: 'Word Added',
-        body:  '"$word" was added to your corrected words list and will improve future translations.',
-        type:  'word_added',
+        body: '"$word" was added to your corrected words list.',
+        type: 'word_added',
       );
-
   static Future<void> wordUpdated(String oldWord, String newWord) => send(
         title: 'Word Updated',
-        body:  '"$oldWord" has been updated to "$newWord" in your vocabulary.',
-        type:  'word_added',
+        body: '"$oldWord" has been updated to "$newWord".',
+        type: 'word_added',
       );
-
-  // ── Premium payment ───────────────────────────────────────────────────────
   static Future<void> premiumPaymentReminder({int daysLeft = 3}) => send(
         title: 'Payment Due in $daysLeft Days 💳',
-        body:  'Your CleftTune Premium subscription renews in $daysLeft days. Make sure your payment method is ready.',
-        type:  'premium_pay',
+        body: 'Your subscription renews in $daysLeft days.',
+        type: 'premium_pay',
       );
-
   static Future<void> premiumActivated({String method = ''}) => send(
         title: 'Premium Activated 🎉',
-        body:  method.isNotEmpty
-            ? 'Your Premium subscription was confirmed via $method. Enjoy all features!'
-            : 'Your Premium subscription is now active. Enjoy unlimited access!',
-        type:  'premium_active',
+        body: method.isNotEmpty
+            ? 'Confirmed via $method. Enjoy all features!'
+            : 'Your Premium subscription is now active!',
+        type: 'premium_active',
       );
-
   static Future<void> premiumRenewed({String method = ''}) => send(
         title: 'Subscription Renewed ✅',
-        body:  'Your CleftTune Premium has been renewed successfully${method.isNotEmpty ? ' via $method' : ''}. Thank you!',
-        type:  'premium_active',
+        body: 'CleftTune Premium renewed successfully. Thank you!',
+        type: 'premium_active',
       );
-
   static Future<void> premiumCancelled() => send(
         title: 'Subscription Cancelled',
-        body:  'Your Premium subscription has been cancelled. You will lose access to Premium features at the end of your billing period.',
-        type:  'premium_cancel',
+        body: 'Your Premium subscription has been cancelled.',
+        type: 'premium_cancel',
       );
-
   static Future<void> premiumExpiringSoon() => send(
         title: 'Premium Expiring Soon ⚠️',
-        body:  'Your Premium subscription expires tomorrow. Renew now to keep your access uninterrupted.',
-        type:  'premium_pay',
+        body: 'Your Premium expires tomorrow. Renew now.',
+        type: 'premium_pay',
       );
-
-  // ── App update ────────────────────────────────────────────────────────────
-  static Future<void> appUpdateAvailable({
-    required String version,
-    String? changelog,
-  }) => send(
+  static Future<void> appUpdateAvailable(
+          {required String version, String? changelog}) =>
+      send(
         title: 'Update Available — v$version 🚀',
-        body:  changelog ??
-            'A new version of CleftTune is ready. Update now for the latest improvements and bug fixes.',
-        type:  'app_update',
+        body: changelog ?? 'A new version of CleftTune is ready.',
+        type: 'app_update',
       );
-
   static Future<void> appUpdatedSuccess({required String version}) => send(
         title: 'App Updated to v$version',
-        body:  'CleftTune has been updated successfully. Enjoy the new features!',
-        type:  'app_update',
+        body: 'CleftTune updated successfully. Enjoy the new features!',
+        type: 'app_update',
       );
-
-  // ── Cloud / Sync ──────────────────────────────────────────────────────────
   static Future<void> syncCompleted() => send(
         title: 'Sync Complete',
-        body:  'Your data has been synced to the cloud successfully.',
-        type:  'sync',
+        body: 'Your data has been synced to the cloud successfully.',
+        type: 'sync',
       );
-
   static Future<void> cloudBackupDone() => send(
         title: 'Cloud Backup Done ☁️',
-        body:  'Your voice model and history have been backed up securely.',
-        type:  'cloud',
+        body: 'Your voice model and history have been backed up securely.',
+        type: 'cloud',
       );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// NOTIFICATIONS SCREEN
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Screen ───────────────────────────────────────────────────────────────────
 class NotificationsScreen extends StatefulWidget {
   const NotificationsScreen({super.key});
-
   @override
   State<NotificationsScreen> createState() => _NotificationsScreenState();
 }
 
 class _NotificationsScreenState extends State<NotificationsScreen> {
-  // ── Palette ──────────────────────────────────────────────────────────────
-  static const _bg         = Color(0xFF0D1F2D);
-  static const _appBar     = Color(0xFF0E2D2D);
-  static const _teal       = Color(0xFF1D9E75);
-  static const _tealDim    = Color(0x261D9E75);
-  static const _tealBorder = Color(0x401D9E75);
-  static const _white40    = Color(0x66FFFFFF);
-  static const _white20    = Color(0x33FFFFFF);
-  static const _white06    = Color(0x0FFFFFFF);
+  // Hard-coded fully-opaque colors — nothing can be overridden by inheritance
+  static const Color kBg         = Color(0xFF0D1B2A);
+  static const Color kHeader     = Color(0xFF0B2420);
+  static const Color kTeal       = Color(0xFF1DB87F);
+  static const Color kCardUnread = Color(0xFF112B22);
+  static const Color kCardRead   = Color(0xFF0F1E28);
+  static const Color kBorder     = Color(0xFF1F3C35);
 
-  List<NotifItem> _notifications = [];
-  bool _isLoading = true;
+  List<NotifItem> _items = [];
+  bool _loading = true;
+  String? _filter;
 
-  // Active filter — null means 'All'
-  String? _activeFilter;
-
-  static const _filterOptions = [
-    {'label': 'All',       'value': null},
-    {'label': 'Training',  'value': 'training'},
-    {'label': 'Words',     'value': 'word'},
-    {'label': 'Premium',   'value': 'premium'},
-    {'label': 'Updates',   'value': 'app_update'},
-    {'label': 'Sync',      'value': 'sync'},
+  static const _filters = [
+    ['All', null],
+    ['Training', 'training'],
+    ['Words', 'word'],
+    ['Premium', 'premium'],
+    ['Updates', 'app_update'],
+    ['Sync', 'sync'],
   ];
 
   @override
   void initState() {
     super.initState();
-    _listenToNotifications();
+    _listen();
   }
 
-  void _listenToNotifications() {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
-      setState(() => _isLoading = false);
-      return;
-    }
+  void _listen() {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) { setState(() => _loading = false); return; }
     FirebaseFirestore.instance
-        .collection('users')
-        .doc(user.uid)
-        .collection('notifications')
+        .collection('users').doc(uid).collection('notifications')
         .orderBy('timestamp', descending: true)
         .snapshots()
-        .listen((snapshot) {
-      setState(() {
-        _notifications = snapshot.docs.map(NotifItem.fromFirestore).toList();
-        _isLoading = false;
-      });
-    });
+        .listen((s) => setState(() {
+              _items = s.docs.map(NotifItem.fromFirestore).toList();
+              _loading = false;
+            }));
   }
 
-  List<NotifItem> get _filtered {
-    if (_activeFilter == null) return _notifications;
-    return _notifications
-        .where((n) => n.type.startsWith(_activeFilter!))
-        .toList();
-  }
+  List<NotifItem> get _visible => _filter == null
+      ? _items
+      : _items.where((n) => n.type.startsWith(_filter!)).toList();
+
+  int get _unread => _items.where((n) => !n.isRead).length;
 
   Future<void> _markRead(NotifItem item) async {
     if (item.isRead) return;
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
     await FirebaseFirestore.instance
-        .collection('users')
-        .doc(user.uid)
-        .collection('notifications')
-        .doc(item.id)
-        .update({'isRead': true});
+        .collection('users').doc(uid).collection('notifications')
+        .doc(item.id).update({'isRead': true});
   }
 
   Future<void> _markAllRead() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
-    final batch = FirebaseFirestore.instance.batch();
-    for (final item in _notifications.where((n) => !n.isRead)) {
-      batch.update(
-        FirebaseFirestore.instance
-            .collection('users')
-            .doc(user.uid)
-            .collection('notifications')
-            .doc(item.id),
-        {'isRead': true},
-      );
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+    final b = FirebaseFirestore.instance.batch();
+    for (final n in _items.where((n) => !n.isRead)) {
+      b.update(FirebaseFirestore.instance
+          .collection('users').doc(uid).collection('notifications').doc(n.id),
+          {'isRead': true});
     }
-    await batch.commit();
+    await b.commit();
   }
 
-  Future<void> _deleteNotification(NotifItem item) async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
+  Future<void> _delete(NotifItem item) async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
     await FirebaseFirestore.instance
-        .collection('users')
-        .doc(user.uid)
-        .collection('notifications')
-        .doc(item.id)
-        .delete();
+        .collection('users').doc(uid).collection('notifications')
+        .doc(item.id).delete();
   }
 
   Future<void> _clearAll() async {
-    final confirmed = await showDialog<bool>(
+    final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: const Color(0xFF112828),
-        shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text('Clear all notifications?',
-            style: TextStyle(color: Colors.white, fontSize: 16)),
-        content: const Text('This cannot be undone.',
-            style: TextStyle(color: _white40, fontSize: 13)),
+        backgroundColor: const Color(0xFF0C2020),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Clear all?',
+            style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
+        content: const Text('All notifications will be deleted.',
+            style: TextStyle(color: Color(0xFFAAC8BC), fontSize: 13)),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child:
-                const Text('Cancel', style: TextStyle(color: _white40)),
-          ),
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel', style: TextStyle(color: Color(0xFFAAC8BC)))),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red.shade800,
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10)),
-            ),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Clear all',
-                style: TextStyle(color: Colors.white)),
-          ),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade800),
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Clear', style: TextStyle(color: Colors.white))),
         ],
       ),
     );
-    if (confirmed != true) return;
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
-    final batch = FirebaseFirestore.instance.batch();
-    for (final item in _notifications) {
-      batch.delete(FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .collection('notifications')
-          .doc(item.id));
+    if (ok != true) return;
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+    final b = FirebaseFirestore.instance.batch();
+    for (final n in _items) {
+      b.delete(FirebaseFirestore.instance
+          .collection('users').doc(uid).collection('notifications').doc(n.id));
     }
-    await batch.commit();
+    await b.commit();
   }
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
-  int get _unreadCount => _notifications.where((n) => !n.isRead).length;
-
-  String _formatTime(DateTime dt) {
-    final h = dt.hour.toString().padLeft(2, '0');
+  String _time(DateTime dt) {
+    final h = dt.hour > 12 ? dt.hour - 12 : (dt.hour == 0 ? 12 : dt.hour);
     final m = dt.minute.toString().padLeft(2, '0');
-    return '$h:$m';
+    return '$h:$m ${dt.hour >= 12 ? "PM" : "AM"}';
   }
 
-  String _groupLabel(DateTime dt) {
-    final now       = DateTime.now();
-    final today     = DateTime(now.year, now.month, now.day);
-    final yesterday = today.subtract(const Duration(days: 1));
-    final date      = DateTime(dt.year, dt.month, dt.day);
-    if (date == today)     return 'TODAY';
-    if (date == yesterday) return 'YESTERDAY';
-    const months = [
-      '', 'Jan', 'Feb', 'Mar', 'Apr', 'May',
-      'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
-    ];
-    return '${months[dt.month]} ${dt.day}, ${dt.year}';
+  String _dayLabel(DateTime dt) {
+    final now   = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final d     = DateTime(dt.year, dt.month, dt.day);
+    if (d == today) return 'TODAY';
+    if (d == today.subtract(const Duration(days: 1))) return 'YESTERDAY';
+    const mo = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return '${mo[dt.month]} ${dt.day}, ${dt.year}';
   }
 
   Map<String, List<NotifItem>> get _grouped {
-    final map = <String, List<NotifItem>>{};
-    for (final item in _filtered) {
-      map.putIfAbsent(_groupLabel(item.timestamp), () => []).add(item);
-    }
-    return map;
+    final m = <String, List<NotifItem>>{};
+    for (final n in _visible) m.putIfAbsent(_dayLabel(n.timestamp), () => []).add(n);
+    return m;
   }
 
-  // ── Icon / color per type ─────────────────────────────────────────────────
-  IconData _iconFor(String type) {
-    switch (type) {
+  IconData _icon(String t) {
+    switch (t) {
       case 'training':       return Icons.mic_rounded;
       case 'word_deleted':   return Icons.delete_rounded;
       case 'word_added':     return Icons.spellcheck_rounded;
@@ -373,58 +286,64 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       case 'app_update':     return Icons.system_update_rounded;
       case 'sync':           return Icons.sync_rounded;
       case 'cloud':          return Icons.cloud_done_rounded;
-      default:               return Icons.notifications_none_rounded;
+      default:               return Icons.notifications_rounded;
     }
   }
 
-  Color _iconBgFor(String type) {
-    switch (type) {
-      case 'training':       return const Color(0x261D9E75);
-      case 'word_deleted':   return const Color(0x26E53935);
-      case 'word_added':     return const Color(0x261D9E75);
-      case 'premium_active': return const Color(0x26EF9F27);
-      case 'premium_pay':    return const Color(0x26EF9F27);
-      case 'premium_cancel': return const Color(0x26E53935);
-      case 'app_update':     return const Color(0x26378ADD);
-      case 'sync':           return const Color(0x261D9E75);
-      case 'cloud':          return const Color(0x26378ADD);
-      default:               return const Color(0x26D85A30);
+  Color _iconColor(String t) {
+    switch (t) {
+      case 'training':
+      case 'word_added':
+      case 'sync':           return const Color(0xFF2FD49A);
+      case 'word_deleted':
+      case 'premium_cancel': return const Color(0xFFFF6B6B);
+      case 'premium_active':
+      case 'premium_pay':    return const Color(0xFFFFB74D);
+      case 'app_update':
+      case 'cloud':          return const Color(0xFF64B5F6);
+      default:               return const Color(0xFFFF8A65);
     }
   }
 
-  Color _iconColorFor(String type) {
-    switch (type) {
-      case 'training':       return const Color(0xFF1D9E75);
-      case 'word_deleted':   return const Color(0xFFE53935);
-      case 'word_added':     return const Color(0xFF1D9E75);
-      case 'premium_active': return const Color(0xFFEF9F27);
-      case 'premium_pay':    return const Color(0xFFEF9F27);
-      case 'premium_cancel': return const Color(0xFFE53935);
-      case 'app_update':     return const Color(0xFF378ADD);
-      case 'sync':           return const Color(0xFF1D9E75);
-      case 'cloud':          return const Color(0xFF378ADD);
-      default:               return const Color(0xFFD85A30);
+  Color _iconBg(String t) {
+    switch (t) {
+      case 'training':
+      case 'word_added':
+      case 'sync':           return const Color(0xFF0B3020);
+      case 'word_deleted':
+      case 'premium_cancel': return const Color(0xFF350C0C);
+      case 'premium_active':
+      case 'premium_pay':    return const Color(0xFF332808);
+      case 'app_update':
+      case 'cloud':          return const Color(0xFF081A35);
+      default:               return const Color(0xFF2A1508);
     }
   }
 
   // ── Build ─────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: _bg,
-      body: SafeArea(
-        child: Column(
+    // CRITICAL: Wrap entire screen in DefaultTextStyle with explicit white.
+    // This resets any inherited text color from a parent Theme that may be
+    // transparent or matching the background, which caused invisible text.
+    return DefaultTextStyle(
+      style: const TextStyle(
+        color: Colors.white,
+        decoration: TextDecoration.none,
+        fontFamily: 'Roboto',
+      ),
+      child: Scaffold(
+        backgroundColor: kBg,
+        body: Column(
           children: [
-            _buildAppBar(),
-            _buildFilterRow(),
+            _header(context),
+            _filterRow(),
             Expanded(
-              child: _isLoading
-                  ? const Center(
-                      child: CircularProgressIndicator(
-                          color: _teal, strokeWidth: 2))
-                  : _filtered.isEmpty
-                      ? _buildEmpty()
-                      : _buildList(),
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator(color: Color(0xFF1DB87F), strokeWidth: 2))
+                  : _visible.isEmpty
+                      ? _empty()
+                      : _list(),
             ),
           ],
         ),
@@ -432,129 +351,150 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     );
   }
 
-  // ── App bar ───────────────────────────────────────────────────────────────
-  Widget _buildAppBar() {
+  // ── Header ────────────────────────────────────────────────────────────────
+  Widget _header(BuildContext context) {
+    final top = MediaQuery.of(context).padding.top;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-      decoration: const BoxDecoration(
-        color: _appBar,
-        border:
-            Border(bottom: BorderSide(color: _tealBorder, width: 0.5)),
-      ),
-      child: Row(
+      color: kHeader,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          GestureDetector(
-            onTap: () => Navigator.pop(context),
-            child: Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                color: _tealDim,
-                shape: BoxShape.circle,
-                border: Border.all(color: _tealBorder),
+          SizedBox(height: top),
+          SizedBox(
+            height: 60,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: [
+                  // Back
+                  GestureDetector(
+                    onTap: () => Navigator.pop(context),
+                    child: Container(
+                      width: 38, height: 38,
+                      decoration: BoxDecoration(
+                        color: const Color(0x301DB87F),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: const Color(0x551DB87F)),
+                      ),
+                      child: const Icon(Icons.arrow_back_ios_new_rounded,
+                          color: Color(0xFF1DB87F), size: 15),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  // Title — explicit RichText to guarantee visibility
+                  const Expanded(
+                    child: Text(
+                      'Notifications',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                        decoration: TextDecoration.none,
+                      ),
+                    ),
+                  ),
+                  // Unread badge
+                  if (_unread > 0) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: kTeal,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        '$_unread new',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          decoration: TextDecoration.none,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    GestureDetector(
+                      onTap: _markAllRead,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: const Color(0x301DB87F),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: const Color(0x551DB87F)),
+                        ),
+                        child: const Text(
+                          'Read all',
+                          style: TextStyle(
+                            color: Color(0xFF1DB87F),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            decoration: TextDecoration.none,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  // Delete all
+                  if (_items.isNotEmpty)
+                    GestureDetector(
+                      onTap: _clearAll,
+                      child: Container(
+                        width: 38, height: 38,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF102020),
+                          shape: BoxShape.circle,
+                          border: Border.all(color: const Color(0xFF244040)),
+                        ),
+                        child: const Icon(Icons.delete_outline_rounded,
+                            color: Color(0xFFAAC8BC), size: 18),
+                      ),
+                    ),
+                ],
               ),
-              child: const Icon(Icons.arrow_back_ios_new,
-                  color: _teal, size: 15),
             ),
           ),
-          const SizedBox(width: 12),
-          const Expanded(
-            child: Text('Notifications',
-                style: TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white)),
-          ),
-          if (_unreadCount > 0)
-            Container(
-              margin: const EdgeInsets.only(right: 10),
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: _teal,
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Text('$_unreadCount new',
-                  style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600)),
-            ),
-          if (_unreadCount > 0)
-            GestureDetector(
-              onTap: _markAllRead,
-              child: Container(
-                margin: const EdgeInsets.only(right: 8),
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: _tealDim,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: _tealBorder),
-                ),
-                child: const Text('Read all',
-                    style: TextStyle(
-                        color: _teal,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600)),
-              ),
-            ),
-          if (_notifications.isNotEmpty)
-            GestureDetector(
-              onTap: _clearAll,
-              child: Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  color: _white06,
-                  shape: BoxShape.circle,
-                  border: Border.all(color: _white20),
-                ),
-                child: const Icon(Icons.delete_outline_rounded,
-                    color: _white40, size: 17),
-              ),
-            ),
+          const Divider(color: Color(0xFF1F3C35), thickness: 0.8, height: 0.8),
         ],
       ),
     );
   }
 
-  // ── Filter chips row ──────────────────────────────────────────────────────
-  Widget _buildFilterRow() {
+  // ── Filter row ────────────────────────────────────────────────────────────
+  Widget _filterRow() {
     return Container(
-      height: 44,
-      color: _appBar,
+      height: 48,
+      color: kHeader,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-        itemCount: _filterOptions.length,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        itemCount: _filters.length,
         separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemBuilder: (_, i) {
-          final opt      = _filterOptions[i];
-          final val      = opt['value'] as String?;
-          final selected = _activeFilter == val;
+          final label    = _filters[i][0] as String;
+          final val      = _filters[i][1] as String?;
+          final selected = _filter == val;
           return GestureDetector(
-            onTap: () => setState(() => _activeFilter = val),
+            onTap: () => setState(() => _filter = val),
             child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 14, vertical: 0),
+              duration: const Duration(milliseconds: 180),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
               decoration: BoxDecoration(
-                color: selected ? _teal : _white06,
+                color: selected ? kTeal : const Color(0xFF102020),
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(
-                    color: selected ? _teal : _white20),
+                  color: selected ? kTeal : const Color(0xFF244040),
+                ),
               ),
               child: Center(
-                child: Text(opt['label'] as String,
-                    style: TextStyle(
-                        color: selected
-                            ? Colors.white
-                            : _white40,
-                        fontSize: 12,
-                        fontWeight: selected
-                            ? FontWeight.w600
-                            : FontWeight.w400)),
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    color: selected ? Colors.white : const Color(0xFFAAC8BC),
+                    fontSize: 13,
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                    decoration: TextDecoration.none,
+                  ),
+                ),
               ),
             ),
           );
@@ -563,189 +503,189 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     );
   }
 
-  // ── Empty state ───────────────────────────────────────────────────────────
-  Widget _buildEmpty() {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 72,
-            height: 72,
-            decoration: BoxDecoration(
-              color: _tealDim,
-              shape: BoxShape.circle,
-              border: Border.all(color: _tealBorder),
+  // ── Empty ─────────────────────────────────────────────────────────────────
+  Widget _empty() => Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 72, height: 72,
+              decoration: BoxDecoration(
+                color: const Color(0x301DB87F),
+                shape: BoxShape.circle,
+                border: Border.all(color: const Color(0x551DB87F), width: 1.5),
+              ),
+              child: const Icon(Icons.notifications_off_outlined,
+                  color: Color(0xFF1DB87F), size: 32),
             ),
-            child: const Icon(Icons.notifications_off_outlined,
-                color: _teal, size: 32),
-          ),
-          const SizedBox(height: 16),
-          const Text('No notifications',
-              style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600)),
-          const SizedBox(height: 6),
-          const Text("You're all caught up!",
-              style: TextStyle(color: _white40, fontSize: 13)),
-        ],
-      ),
-    );
-  }
+            const SizedBox(height: 18),
+            const Text('No notifications',
+                style: TextStyle(
+                    color: Colors.white, fontSize: 17, fontWeight: FontWeight.w700,
+                    decoration: TextDecoration.none)),
+            const SizedBox(height: 6),
+            const Text("You're all caught up!",
+                style: TextStyle(
+                    color: Color(0xFFAAC8BC), fontSize: 14,
+                    decoration: TextDecoration.none)),
+          ],
+        ),
+      );
 
-  // ── Grouped list ──────────────────────────────────────────────────────────
-  Widget _buildList() {
+  // ── List ──────────────────────────────────────────────────────────────────
+  Widget _list() {
     final grouped  = _grouped;
     final sections = grouped.keys.toList();
-
     return ListView.builder(
-      padding: const EdgeInsets.only(bottom: 24),
+      padding: const EdgeInsets.only(top: 8, bottom: 32),
       itemCount: sections.length,
-      itemBuilder: (context, sectionIndex) {
-        final label  = sections[sectionIndex];
-        final items  = grouped[label]!;
-        final isLast = sectionIndex == sections.length - 1;
-
+      itemBuilder: (_, si) {
+        final label = sections[si];
+        final items = grouped[label]!;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _sectionHeader(label,
-                showMarkAll:
-                    label == 'TODAY' && _unreadCount > 0),
-            ...items.map(_swipeableCard),
-            if (!isLast) ...[
-              const SizedBox(height: 8),
-              const Divider(
-                  color: _white06, thickness: 0.5, height: 1),
-              const SizedBox(height: 4),
-            ],
+            _dayHeader(label, showMark: label == 'TODAY' && _unread > 0),
+            ...items.map(_dismissible),
           ],
         );
       },
     );
   }
 
-  Widget _sectionHeader(String label, {bool showMarkAll = false}) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 10),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label,
-              style: const TextStyle(
-                  color: _white40,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w500,
-                  letterSpacing: 0.8)),
-          if (showMarkAll)
-            GestureDetector(
-              onTap: _markAllRead,
-              child: const Text('Mark all as read',
-                  style: TextStyle(color: _teal, fontSize: 12)),
-            ),
-        ],
-      ),
-    );
-  }
-
-  // ── Swipe-to-delete ───────────────────────────────────────────────────────
-  Widget _swipeableCard(NotifItem item) {
-    return Dismissible(
-      key: Key(item.id),
-      direction: DismissDirection.endToStart,
-      onDismissed: (_) => _deleteNotification(item),
-      background: Container(
-        alignment: Alignment.centerRight,
-        margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-        padding: const EdgeInsets.only(right: 20),
-        decoration: BoxDecoration(
-          color: Colors.red.shade900,
-          borderRadius: BorderRadius.circular(16),
+  Widget _dayHeader(String label, {bool showMark = false}) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(label,
+                style: const TextStyle(
+                    color: Color(0xFF5E8070),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 1.2,
+                    decoration: TextDecoration.none)),
+            if (showMark)
+              GestureDetector(
+                onTap: _markAllRead,
+                child: const Text('Mark all as read',
+                    style: TextStyle(
+                        color: Color(0xFF1DB87F),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        decoration: TextDecoration.none)),
+              ),
+          ],
         ),
-        child: const Icon(Icons.delete_rounded,
-            color: Colors.white, size: 22),
-      ),
-      child: _notifCard(item),
-    );
-  }
+      );
 
-  // ── Notification card ─────────────────────────────────────────────────────
-  Widget _notifCard(NotifItem item) {
-    final iconColor = _iconColorFor(item.type);
+  Widget _dismissible(NotifItem item) => Dismissible(
+        key: Key(item.id),
+        direction: DismissDirection.endToStart,
+        onDismissed: (_) => _delete(item),
+        background: Container(
+          alignment: Alignment.centerRight,
+          margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+          padding: const EdgeInsets.only(right: 24),
+          decoration: BoxDecoration(
+            color: Colors.red.shade900,
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: const Icon(Icons.delete_rounded, color: Colors.white, size: 24),
+        ),
+        child: _card(item),
+      );
 
+  // ── Card ──────────────────────────────────────────────────────────────────
+  Widget _card(NotifItem item) {
+    final accent = _iconColor(item.type);
     return GestureDetector(
       onTap: () => _markRead(item),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 250),
+      child: Container(
         margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: item.isRead
-              ? _white06
-              : const Color(0x0C1D9E75),
+          // Fully opaque card backgrounds — the REAL fix
+          color: item.isRead ? kCardRead : kCardUnread,
           borderRadius: BorderRadius.circular(16),
           border: Border(
             left: BorderSide(
-              color: item.isRead ? Colors.transparent : iconColor,
-              width: 2.5,
+              color: item.isRead ? Colors.transparent : accent,
+              width: 3,
             ),
-            top:    const BorderSide(color: _white20, width: 0.5),
-            right:  const BorderSide(color: _white20, width: 0.5),
-            bottom: const BorderSide(color: _white20, width: 0.5),
+            top:    const BorderSide(color: kBorder, width: 0.8),
+            right:  const BorderSide(color: kBorder, width: 0.8),
+            bottom: const BorderSide(color: kBorder, width: 0.8),
           ),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Icon bubble
             Container(
-              width: 38,
-              height: 38,
+              width: 42, height: 42,
               decoration: BoxDecoration(
-                color: _iconBgFor(item.type),
+                color: _iconBg(item.type),
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: Icon(_iconFor(item.type),
-                  color: iconColor, size: 18),
+              child: Icon(_icon(item.type), color: accent, size: 20),
             ),
             const SizedBox(width: 12),
+            // Text — wrap in DefaultTextStyle reset to guarantee visibility
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(item.title,
+              child: DefaultTextStyle(
+                style: const TextStyle(
+                  color: Colors.white,
+                  decoration: TextDecoration.none,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      item.title,
                       style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 13,
-                          fontWeight: item.isRead
-                              ? FontWeight.w400
-                              : FontWeight.w600)),
-                  const SizedBox(height: 3),
-                  Text(item.body,
+                        color: item.isRead
+                            ? const Color(0xFFAAC8BC)
+                            : Colors.white,
+                        fontSize: 14,
+                        fontWeight: item.isRead ? FontWeight.w500 : FontWeight.w700,
+                        decoration: TextDecoration.none,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      item.body,
                       style: const TextStyle(
-                          color: _white40,
-                          fontSize: 12,
-                          height: 1.5)),
-                ],
+                        color: Color(0xFFAAC8BC),
+                        fontSize: 12,
+                        height: 1.5,
+                        decoration: TextDecoration.none,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
             const SizedBox(width: 10),
+            // Time + dot
             Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                Text(_formatTime(item.timestamp),
-                    style: const TextStyle(
-                        color: _white40, fontSize: 11)),
-                const SizedBox(height: 6),
+                Text(
+                  _time(item.timestamp),
+                  style: const TextStyle(
+                    color: Color(0xFF5E8070),
+                    fontSize: 11,
+                    decoration: TextDecoration.none,
+                  ),
+                ),
+                const SizedBox(height: 8),
                 AnimatedOpacity(
-                  duration: const Duration(milliseconds: 250),
-                  opacity: item.isRead ? 0.0 : 1.0,
+                  duration: const Duration(milliseconds: 300),
+                  opacity: item.isRead ? 0 : 1,
                   child: Container(
-                    width: 7,
-                    height: 7,
-                    decoration: BoxDecoration(
-                        color: iconColor,
-                        shape: BoxShape.circle),
+                    width: 8, height: 8,
+                    decoration: BoxDecoration(color: accent, shape: BoxShape.circle),
                   ),
                 ),
               ],

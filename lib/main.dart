@@ -12,6 +12,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'translator_screen.dart';
 import 'landing_page.dart';
 import 'package:url_launcher/url_launcher.dart';
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
@@ -37,8 +38,6 @@ class CleftTuneApp extends StatelessWidget {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SHARED BLURRED BACKGROUND
-// ClipRect confines the BackdropFilter blur strictly to this widget's bounds,
-// preventing it from bleeding onto the NavigationRail.
 // ─────────────────────────────────────────────────────────────────────────────
 
 class CleftBackground extends StatelessWidget {
@@ -51,26 +50,19 @@ class CleftBackground extends StatelessWidget {
     return Stack(
       fit: StackFit.expand,
       children: [
-        // 1. Background image
         Image.asset(
           'assets/images/cleft.png',
           fit: BoxFit.cover,
         ),
-
-        // 2. Blur layer — ClipRect keeps the blur strictly inside this area
         ClipRect(
           child: BackdropFilter(
             filter: ImageFilter.blur(sigmaX: 6.0, sigmaY: 6.0),
             child: const SizedBox.expand(),
           ),
         ),
-
-        // 3. Dark teal overlay — ~85% opaque dark teal
         Container(
           color: const Color(0xD80A1F2E),
         ),
-
-        // 4. Screen content on top
         child,
       ],
     );
@@ -79,9 +71,6 @@ class CleftBackground extends StatelessWidget {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // APP LAYOUT
-// NavigationRail sits in its own solid container — completely separate from
-// CleftBackground. The content area is wrapped in ClipRect so the blur from
-// CleftBackground cannot bleed leftward onto the rail.
 // ─────────────────────────────────────────────────────────────────────────────
 
 class AppLayout extends StatefulWidget {
@@ -98,7 +87,7 @@ class _AppLayoutState extends State<AppLayout> {
 
   static const _teal    = Color(0xFF1D9E75);
   static const _tealDim = Color(0x261D9E75);
-  static const _navBg   = Color(0xFF071520); // solid dark — never blurred
+  static const _navBg   = Color(0xFF071520);
 
   void enterAppFlow() => setState(() {
         showLanding      = false;
@@ -163,10 +152,8 @@ class _AppLayoutState extends State<AppLayout> {
           final bool isWide = constraints.maxWidth >= 800;
 
           if (isWide && !hideNav) {
-            // ── WIDE LAYOUT ─────────────────────────────────────────────────
             return Row(
               children: [
-                // Solid, sharp NavigationRail — NOT inside CleftBackground
                 Container(
                   color: _navBg,
                   child: NavigationRail(
@@ -216,12 +203,7 @@ class _AppLayoutState extends State<AppLayout> {
                     ],
                   ),
                 ),
-
-                // Thin divider between rail and content
                 Container(width: 0.5, color: const Color(0x201D9E75)),
-
-                // Content area — ClipRect ensures blur stays inside this area
-                // and does NOT bleed back onto the NavigationRail.
                 Expanded(
                   child: ClipRect(
                     child: currentScreen,
@@ -231,7 +213,6 @@ class _AppLayoutState extends State<AppLayout> {
             );
           }
 
-          // ── NARROW LAYOUT ──────────────────────────────────────────────────
           return Scaffold(
             backgroundColor: Colors.transparent,
             body: currentScreen,
@@ -277,7 +258,7 @@ class _AppLayoutState extends State<AppLayout> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HISTORY SCREEN — teal theme + cleft.png blurred background
+// HISTORY SCREEN
 // ─────────────────────────────────────────────────────────────────────────────
 
 class HistoryScreen extends StatefulWidget {
@@ -619,7 +600,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SETTINGS SCREEN — teal theme + cleft.png blurred background
+// SETTINGS SCREEN
 // ─────────────────────────────────────────────────────────────────────────────
 
 class SettingsScreen extends StatefulWidget {
@@ -641,12 +622,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   static const _cardColor  = Color(0x0DFFFFFF);
   static const _white40    = Color(0x66FFFFFF);
 
-  // ── Payment method URLs ────────────────────────────────────────────────────
-  // Replace these with your actual payment links / deep links
   static const _gcashUrl =
-    'https://raw.githubusercontent.com/Cluelssly/CleftTune-Flutter-app/main/QR.jpg';      // your GCash payment link
-  static const _paypalUrl  = 'https://paypal.me/yourlink'; // your PayPal.me link
-  static const _gotymUrl   = 'https://gotyme.com';         // your GoTyme link
+    'https://raw.githubusercontent.com/Cluelssly/CleftTune-Flutter-app/main/QR.jpg';
+  static const _mayaUrl  = 'https://raw.githubusercontent.com/Cluelssly/CleftTune-Flutter-app/main/maya.jpg';
+  static const _gotymUrl = 'https://gotyme.com';
 
   @override
   void initState() {
@@ -679,14 +658,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
 
-    // 1. Launch the payment URL first
     String url;
     switch (method) {
       case 'gcash':
         url = _gcashUrl;
         break;
       case 'paypal':
-        url = _paypalUrl;
+        url = _mayaUrl;
         break;
       case 'gotyme':
         url = _gotymUrl;
@@ -700,7 +678,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
     }
 
-    // 2. Mark premium in Firestore after launching payment
     setState(() => _isUpgrading = true);
     try {
       await FirebaseFirestore.instance
@@ -711,6 +688,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         'paymentMethod': method,
         'upgradedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
+
+      // ── NEW: fire premium-activated notification ───────────────────────
+      await NotificationHelper.premiumActivated(method: method);
 
       setState(() {
         _isPremium   = true;
@@ -755,6 +735,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         'cancelledAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
+      // ── NEW: fire premium-cancelled notification ───────────────────────
+      await NotificationHelper.premiumCancelled();
+
       setState(() {
         _isPremium    = false;
         _isCancelling = false;
@@ -786,7 +769,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   // ── DIALOGS ────────────────────────────────────────────────────────────────
 
-  /// Step 1 — pick payment method
   void _showPaymentMethodDialog() {
     showDialog(
       context: context,
@@ -808,8 +790,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             const Text('Select how you\'d like to pay for Premium:',
                 style: TextStyle(color: _white40, fontSize: 13)),
             const SizedBox(height: 20),
-
-            // ── GCash ──────────────────────────────────────────────────────
             _paymentMethodTile(
               label: 'GCash',
               subtitle: 'Pay via GCash e-wallet',
@@ -820,10 +800,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 _confirmPayment('gcash', 'GCash');
               },
             ),
-
             const SizedBox(height: 10),
-
-            // ── PayPal ─────────────────────────────────────────────────────
             _paymentMethodTile(
               label: 'PayPal',
               subtitle: 'Pay via PayPal',
@@ -834,10 +811,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 _confirmPayment('paypal', 'PayPal');
               },
             ),
-
             const SizedBox(height: 10),
-
-            // ── GoTyme ─────────────────────────────────────────────────────
             _paymentMethodTile(
               label: 'GoTyme',
               subtitle: 'Pay via GoTyme Bank',
@@ -861,7 +835,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  /// Step 2 — confirm and launch
   void _confirmPayment(String method, String label) {
     showDialog(
       context: context,
@@ -939,7 +912,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  /// Cancel premium warning dialog
   void _showCancelWarningDialog() {
     showDialog(
       context: context,
@@ -1176,8 +1148,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               'Trained Voice', Icons.graphic_eq_rounded),
                           _optionTile(
                               'Cloud Based', Icons.cloud_outlined),
-                          _optionTile('Notifications',
-                              Icons.notifications_none_rounded),
+
+                          // ── NEW: Notifications tile with live unread badge
+                          _notificationsTile(),
 
                           const SizedBox(height: 28),
 
@@ -1221,6 +1194,77 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  // ── NOTIFICATIONS TILE with live unread badge ─────────────────────────────
+  Widget _notificationsTile() {
+    final user = FirebaseAuth.instance.currentUser;
+    return StreamBuilder<QuerySnapshot>(
+      stream: user == null
+          ? const Stream.empty()
+          : FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .collection('notifications')
+              .where('isRead', isEqualTo: false)
+              .snapshots(),
+      builder: (context, snapshot) {
+        final unread = snapshot.data?.docs.length ?? 0;
+        return GestureDetector(
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+                builder: (_) => const NotificationsScreen()),
+          ),
+          child: Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: _cardColor,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: _tealBorder),
+            ),
+            child: Row(children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: _tealDim,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.notifications_none_rounded,
+                    color: _teal, size: 17),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text('Notifications',
+                    style: TextStyle(color: Colors.white, fontSize: 14)),
+              ),
+              // ── Live unread count badge ──────────────────────────────
+              if (unread > 0)
+                Container(
+                  margin: const EdgeInsets.only(right: 8),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 9, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: _teal,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    '$unread',
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700),
+                  ),
+                ),
+              const Icon(Icons.arrow_forward_ios,
+                  size: 13, color: _white40),
+            ]),
+          ),
+        );
+      },
     );
   }
 
@@ -1312,7 +1356,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           const SizedBox(height: 18),
 
-          // ── CANCEL BUTTON ─────────────────────────────────────────────
           GestureDetector(
             onTap: _showCancelWarningDialog,
             child: Container(
@@ -1411,7 +1454,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     color: _white40, fontSize: 13, height: 1.5)),
             const SizedBox(height: 16),
 
-            // Payment method icons row
             Row(children: [
               _miniPayBadge(Icons.account_balance_wallet_rounded,
                   const Color(0xFF007DFF), 'GCash'),
@@ -1513,11 +1555,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         } else if (title == 'Cloud Based') {
           Navigator.push(context,
               MaterialPageRoute(builder: (_) => const Cloud()));
-        } else if (title == 'Notifications') {
-          Navigator.push(
-              context,
-              MaterialPageRoute(
-                  builder: (_) => const NotificationsScreen()));
         }
       },
       child: Container(

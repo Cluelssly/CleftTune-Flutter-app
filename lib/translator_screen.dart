@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'dart:developer' as dev;
 import 'nlp_service.dart';
+import 'notifications.dart'; // ← NEW
 
 class TranslatorScreen extends StatefulWidget {
   final VoidCallback goToPremium;
@@ -78,6 +79,16 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   Future<void> _initServices() async {
     await _nlp.init();
     dev.log('NLP ready — ${_nlp.patternCount} pattern(s) loaded');
+
+    _nlp.onRealtimeCorrection = (Map<String, dynamic> result) {
+      if (!mounted) return;
+      final corrected = result['corrected'] as String;
+      final preview = (_accumulatedText.isEmpty
+          ? corrected
+          : '$_accumulatedText $corrected').trim();
+      setState(() => _displayText = preview);
+    };
+
     await _initSpeech();
   }
 
@@ -113,30 +124,40 @@ class _TranslatorScreenState extends State<TranslatorScreen>
     }
 
     await _speech.listen(
-      localeId: 'en_US',
-      listenFor: const Duration(seconds: 60),
-      pauseFor:  const Duration(seconds: 4),
+      localeId:       'en_US',
+      listenFor:      const Duration(seconds: 60),
+      pauseFor:       const Duration(seconds: 4),
       partialResults: true,
-      listenMode: stt.ListenMode.dictation,
+      listenMode:     stt.ListenMode.dictation,
       onResult: (result) async {
         final words = result.recognizedWords.trim();
         if (words.isEmpty) return;
 
+        final confidence = result.confidence > 0
+            ? result.confidence.toDouble()
+            : 0.6;
+
+        if (!_nlp.isReliableSpeechResult(words, confidence)) {
+          dev.log('Skipping low-confidence result: "$words" ($confidence)');
+          return;
+        }
+
         if (result.finalResult) {
-          // 1. Apply local patterns instantly
+          // 1. Local patterns instantly
           final localResult = _nlp.correctPartialSync(words);
 
-          // 2. Append to accumulated text
           final appended = (_accumulatedText.isEmpty
               ? localResult
               : '$_accumulatedText $localResult').trim();
 
           if (mounted) setState(() => _displayText = appended);
 
-          // 3. Send full text to Claude for deeper correction
+          // 2. Claude correction
           setState(() => _isRefiningFinal = true);
           try {
-            final corrected = await _nlp.correct(appended);
+            final correctionResult = await _nlp.correct(appended);
+            final corrected = correctionResult['corrected'] as String;
+
             if (mounted) {
               setState(() {
                 _accumulatedText = corrected;
@@ -167,7 +188,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
             }
           }
         } else {
-          // Partial: show live preview with local patterns applied
+          // Partial: local-pattern preview
           final localCorrected = _nlp.correctPartialSync(words);
           final preview = (_accumulatedText.isEmpty
               ? localCorrected
@@ -303,6 +324,10 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                         if (wrong.isEmpty || correct.isEmpty) return;
 
                         await _nlp.learnPattern(wrong, correct);
+
+                        // ── NEW: fire word-added notification ──────────────
+                        await NotificationHelper.wordAdded(correct);
+
                         if (mounted) {
                           Navigator.pop(context);
                           setState(() {});
@@ -375,7 +400,6 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   }
 
   // ── APP BAR ────────────────────────────────────────────────────────────────
-  // ⚠ Star/premium button removed — only corrections toggle and add button remain
   Widget _buildAppBar() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
@@ -451,7 +475,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             AnimatedOpacity(
-              opacity: _isListening ? 1.0 : 0.3,
+              opacity:  _isListening ? 1.0 : 0.3,
               duration: const Duration(milliseconds: 300),
               child: Row(
                 children: [
@@ -465,11 +489,10 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                   const SizedBox(width: 6),
                   const Text('LIVE',
                       style: TextStyle(
-                        color: Colors.redAccent,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 1.5,
-                      )),
+                          color: Colors.redAccent,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1.5)),
                 ],
               ),
             ),
@@ -484,9 +507,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                       Container(
                         width: 6, height: 6,
                         decoration: const BoxDecoration(
-                          color: _teal,
-                          shape: BoxShape.circle,
-                        ),
+                            color: _teal, shape: BoxShape.circle),
                       ),
                       const SizedBox(width: 5),
                       const Text('refining',
@@ -504,7 +525,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
 
         const SizedBox(height: 28),
 
-        // Main subtitle box
+        // ── Main subtitle box ──────────────────────────────────────────────
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
           child: AnimatedContainer(
@@ -521,7 +542,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
               boxShadow: _isListening
                   ? [
                       BoxShadow(
-                        color: _teal.withOpacity(0.08),
+                        color:      _teal.withOpacity(0.08),
                         blurRadius: 24,
                         spreadRadius: 2,
                       )
@@ -699,9 +720,12 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                             Container(
                               padding: const EdgeInsets.all(20),
                               decoration: const BoxDecoration(
-                                  color: _tealDim, shape: BoxShape.circle),
-                              child: const Icon(Icons.auto_fix_high_rounded,
-                                  color: _teal, size: 32),
+                                  color: _tealDim,
+                                  shape: BoxShape.circle),
+                              child: const Icon(
+                                  Icons.auto_fix_high_rounded,
+                                  color: _teal,
+                                  size: 32),
                             ),
                             const SizedBox(height: 16),
                             const Text('No corrections yet',
@@ -724,7 +748,8 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                     }
 
                     return ListView.separated(
-                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 100),
+                      padding:
+                          const EdgeInsets.fromLTRB(20, 0, 20, 100),
                       itemCount: docs.length,
                       separatorBuilder: (_, __) =>
                           const SizedBox(height: 8),
@@ -735,11 +760,11 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                         final correct = data['correct'] as String? ?? '';
                         final source  = data['source']  as String? ?? 'ai';
                         return _correctionTile(
-                          wrong: wrong,
+                          wrong:   wrong,
                           correct: correct,
-                          source: source,
-                          docId: docs[i].id,
-                          uid: uid,
+                          source:  source,
+                          docId:   docs[i].id,
+                          uid:     uid,
                         );
                       },
                     );
@@ -771,11 +796,15 @@ class _TranslatorScreenState extends State<TranslatorScreen>
           Container(
             width: 34, height: 34,
             decoration: BoxDecoration(
-              color: isUser ? _tealDim : Colors.white.withOpacity(0.05),
+              color: isUser
+                  ? _tealDim
+                  : Colors.white.withOpacity(0.05),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Icon(
-              isUser ? Icons.person_rounded : Icons.auto_fix_high_rounded,
+              isUser
+                  ? Icons.person_rounded
+                  : Icons.auto_fix_high_rounded,
               color: isUser ? _teal : Colors.white38,
               size: 16,
             ),
@@ -833,12 +862,16 @@ class _TranslatorScreenState extends State<TranslatorScreen>
               const SizedBox(height: 6),
               GestureDetector(
                 onTap: () async {
+                  // Delete from Firestore
                   await FirebaseFirestore.instance
                       .collection('users')
                       .doc(uid)
                       .collection('corrections')
                       .doc(docId)
                       .delete();
+
+                  // ── NEW: fire word-deleted notification ────────────────
+                  await NotificationHelper.wordDeleted(wrong);
                 },
                 child: const Icon(Icons.delete_outline_rounded,
                     size: 16, color: Colors.redAccent),
@@ -904,11 +937,11 @@ class _TranslatorScreenState extends State<TranslatorScreen>
       controller: controller,
       style: const TextStyle(color: Colors.white, fontSize: 14),
       decoration: InputDecoration(
-        hintText: hint,
-        hintStyle: const TextStyle(color: _white40, fontSize: 13),
+        hintText:   hint,
+        hintStyle:  const TextStyle(color: _white40, fontSize: 13),
         prefixIcon: Icon(icon, color: _white40, size: 18),
-        filled: true,
-        fillColor: const Color(0xFF0D2020),
+        filled:     true,
+        fillColor:  const Color(0xFF0D2020),
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         border: OutlineInputBorder(
