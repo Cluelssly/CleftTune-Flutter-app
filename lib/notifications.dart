@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-// ── Data model ───────────────────────────────────────────────────────────────
+// ── Data model ────────────────────────────────────────────────────────────────
 class NotifItem {
   final String id;
   final String title;
@@ -23,17 +23,17 @@ class NotifItem {
   factory NotifItem.fromFirestore(DocumentSnapshot doc) {
     final d = doc.data() as Map<String, dynamic>;
     return NotifItem(
-      id: doc.id,
-      title: d['title'] ?? '',
-      body: d['body'] ?? '',
-      type: d['type'] ?? 'reminder',
+      id:        doc.id,
+      title:     d['title'] ?? '',
+      body:      d['body']  ?? '',
+      type:      d['type']  ?? 'reminder',
       timestamp: (d['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      isRead: d['isRead'] ?? false,
+      isRead:    d['isRead'] ?? false,
     );
   }
 }
 
-// ── Notification Helper ──────────────────────────────────────────────────────
+// ── Notification Helper ───────────────────────────────────────────────────────
 class NotificationHelper {
   static Future<void> send({
     required String title,
@@ -47,98 +47,94 @@ class NotificationHelper {
         .doc(user.uid)
         .collection('notifications')
         .add({
-      'title': title,
-      'body': body,
-      'type': type,
-      'isRead': false,
+      'title':     title,
+      'body':      body,
+      'type':      type,
+      'isRead':    false,
       'timestamp': FieldValue.serverTimestamp(),
     });
   }
 
-  static Future<void> trainingStarted() => send(
-        title: 'Voice Training Started',
-        body: 'CleftTune is now learning your voice. This may take a few moments.',
-        type: 'training',
-      );
+  static Future<void> trainingStarted()  => send(
+    title: 'Voice Training Started',
+    body:  'CleftTune is now learning your voice. This may take a few moments.',
+    type:  'training',
+  );
   static Future<void> trainingCompleted({double? accuracy}) => send(
-        title: 'Training Complete ✅',
-        body: accuracy != null
-            ? 'Your voice model improved to ${accuracy.toStringAsFixed(1)}% accuracy.'
-            : 'Your AI voice model has been updated successfully.',
-        type: 'training',
-      );
+    title: 'Training Complete ✅',
+    body:  accuracy != null
+        ? 'Your voice model improved to ${accuracy.toStringAsFixed(1)}% accuracy.'
+        : 'Your AI voice model has been updated successfully.',
+    type:  'training',
+  );
   static Future<void> trainingFailed() => send(
-        title: 'Training Failed',
-        body: 'Voice training encountered an issue. Please try again.',
-        type: 'training',
-      );
+    title: 'Training Failed',
+    body:  'Voice training encountered an issue. Please try again.',
+    type:  'training',
+  );
   static Future<void> wordDeleted(String word) => send(
-        title: 'Word Removed',
-        body: '"$word" has been deleted from your corrected words list.',
-        type: 'word_deleted',
-      );
+    title: 'Word Removed',
+    body:  '"$word" has been deleted from your corrected words list.',
+    type:  'word_deleted',
+  );
   static Future<void> wordAdded(String word) => send(
-        title: 'Word Added',
-        body: '"$word" was added to your corrected words list.',
-        type: 'word_added',
-      );
+    title: 'Word Added',
+    body:  '"$word" was added to your corrected words list.',
+    type:  'word_added',
+  );
   static Future<void> wordUpdated(String oldWord, String newWord) => send(
-        title: 'Word Updated',
-        body: '"$oldWord" has been updated to "$newWord".',
-        type: 'word_added',
-      );
+    title: 'Word Updated',
+    body:  '"$oldWord" has been updated to "$newWord".',
+    type:  'word_added',
+  );
   static Future<void> premiumPaymentReminder({int daysLeft = 3}) => send(
-        title: 'Payment Due in $daysLeft Days 💳',
-        body: 'Your subscription renews in $daysLeft days.',
-        type: 'premium_pay',
-      );
+    title: 'Payment Due in $daysLeft Days 💳',
+    body:  'Your subscription renews in $daysLeft days.',
+    type:  'premium_pay',
+  );
   static Future<void> premiumActivated({String method = ''}) => send(
-        title: 'Premium Activated 🎉',
-        body: method.isNotEmpty
-            ? 'Confirmed via $method. Enjoy all features!'
-            : 'Your Premium subscription is now active!',
-        type: 'premium_active',
-      );
+    title: 'Premium Activated 🎉',
+    body:  method.isNotEmpty ? 'Confirmed via $method. Enjoy all features!' : 'Your Premium subscription is now active!',
+    type:  'premium_active',
+  );
   static Future<void> premiumRenewed({String method = ''}) => send(
-        title: 'Subscription Renewed ✅',
-        body: 'CleftTune Premium renewed successfully. Thank you!',
-        type: 'premium_active',
-      );
+    title: 'Subscription Renewed ✅',
+    body:  'CleftTune Premium renewed successfully. Thank you!',
+    type:  'premium_active',
+  );
   static Future<void> premiumCancelled() => send(
-        title: 'Subscription Cancelled',
-        body: 'Your Premium subscription has been cancelled.',
-        type: 'premium_cancel',
-      );
+    title: 'Subscription Cancelled',
+    body:  'Your Premium subscription has been cancelled.',
+    type:  'premium_cancel',
+  );
   static Future<void> premiumExpiringSoon() => send(
-        title: 'Premium Expiring Soon ⚠️',
-        body: 'Your Premium expires tomorrow. Renew now.',
-        type: 'premium_pay',
-      );
-  static Future<void> appUpdateAvailable(
-          {required String version, String? changelog}) =>
-      send(
-        title: 'Update Available — v$version 🚀',
-        body: changelog ?? 'A new version of CleftTune is ready.',
-        type: 'app_update',
-      );
+    title: 'Premium Expiring Soon ⚠️',
+    body:  'Your Premium expires tomorrow. Renew now.',
+    type:  'premium_pay',
+  );
+  static Future<void> appUpdateAvailable({required String version, String? changelog}) => send(
+    title: 'Update Available — v$version 🚀',
+    body:  changelog ?? 'A new version of CleftTune is ready.',
+    type:  'app_update',
+  );
   static Future<void> appUpdatedSuccess({required String version}) => send(
-        title: 'App Updated to v$version',
-        body: 'CleftTune updated successfully. Enjoy the new features!',
-        type: 'app_update',
-      );
+    title: 'App Updated to v$version',
+    body:  'CleftTune updated successfully. Enjoy the new features!',
+    type:  'app_update',
+  );
   static Future<void> syncCompleted() => send(
-        title: 'Sync Complete',
-        body: 'Your data has been synced to the cloud successfully.',
-        type: 'sync',
-      );
+    title: 'Sync Complete',
+    body:  'Your data has been synced to the cloud successfully.',
+    type:  'sync',
+  );
   static Future<void> cloudBackupDone() => send(
-        title: 'Cloud Backup Done ☁️',
-        body: 'Your voice model and history have been backed up securely.',
-        type: 'cloud',
-      );
+    title: 'Cloud Backup Done ☁️',
+    body:  'Your voice model and history have been backed up securely.',
+    type:  'cloud',
+  );
 }
 
-// ── Screen ───────────────────────────────────────────────────────────────────
+// ── Screen ────────────────────────────────────────────────────────────────────
 class NotificationsScreen extends StatefulWidget {
   const NotificationsScreen({super.key});
   @override
@@ -146,25 +142,25 @@ class NotificationsScreen extends StatefulWidget {
 }
 
 class _NotificationsScreenState extends State<NotificationsScreen> {
-  // Hard-coded fully-opaque colors — nothing can be overridden by inheritance
-  static const Color kBg         = Color(0xFF0D1B2A);
-  static const Color kHeader     = Color(0xFF0B2420);
-  static const Color kTeal       = Color(0xFF1DB87F);
-  static const Color kCardUnread = Color(0xFF112B22);
-  static const Color kCardRead   = Color(0xFF0F1E28);
-  static const Color kBorder     = Color(0xFF1F3C35);
+  // ── Design tokens (matches trained_voice_screen) ────────────────────────
+  static const _bg      = Color(0xFF060F1A);
+  static const _surface = Color(0xFF0D1F2D);
+  static const _card    = Color(0xFF112233);
+  static const _teal    = Color(0xFF0ECFB0);
+  static const _tealDeep = Color(0xFF0B5D5E);
 
-  List<NotifItem> _items = [];
-  bool _loading = true;
-  String? _filter;
+  List<NotifItem> _items   = [];
+  bool            _loading = true;
+  String?         _error;
+  String?         _filter;
 
   static const _filters = [
-    ['All', null],
+    ['All',      null],
     ['Training', 'training'],
-    ['Words', 'word'],
-    ['Premium', 'premium'],
-    ['Updates', 'app_update'],
-    ['Sync', 'sync'],
+    ['Words',    'word'],
+    ['Premium',  'premium'],
+    ['Updates',  'app_update'],
+    ['Sync',     'sync'],
   ];
 
   @override
@@ -176,14 +172,27 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   void _listen() {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) { setState(() => _loading = false); return; }
+
     FirebaseFirestore.instance
-        .collection('users').doc(uid).collection('notifications')
+        .collection('users')
+        .doc(uid)
+        .collection('notifications')
         .orderBy('timestamp', descending: true)
         .snapshots()
-        .listen((s) => setState(() {
-              _items = s.docs.map(NotifItem.fromFirestore).toList();
+        .listen(
+          (snapshot) {
+            debugPrint('📬 Notifications received: ${snapshot.docs.length}');
+            setState(() {
+              _items   = snapshot.docs.map(NotifItem.fromFirestore).toList();
               _loading = false;
-            }));
+              _error   = null;
+            });
+          },
+          onError: (e) {
+            debugPrint('❌ Firestore notifications error: $e');
+            setState(() { _loading = false; _error = e.toString(); });
+          },
+        );
   }
 
   List<NotifItem> get _visible => _filter == null
@@ -197,60 +206,67 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
     await FirebaseFirestore.instance
-        .collection('users').doc(uid).collection('notifications')
-        .doc(item.id).update({'isRead': true});
+        .collection('users').doc(uid).collection('notifications').doc(item.id)
+        .update({'isRead': true});
   }
 
   Future<void> _markAllRead() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
-    final b = FirebaseFirestore.instance.batch();
+    final batch = FirebaseFirestore.instance.batch();
     for (final n in _items.where((n) => !n.isRead)) {
-      b.update(FirebaseFirestore.instance
-          .collection('users').doc(uid).collection('notifications').doc(n.id),
-          {'isRead': true});
+      batch.update(
+        FirebaseFirestore.instance
+            .collection('users').doc(uid).collection('notifications').doc(n.id),
+        {'isRead': true},
+      );
     }
-    await b.commit();
+    await batch.commit();
   }
 
   Future<void> _delete(NotifItem item) async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
     await FirebaseFirestore.instance
-        .collection('users').doc(uid).collection('notifications')
-        .doc(item.id).delete();
+        .collection('users').doc(uid).collection('notifications').doc(item.id)
+        .delete();
   }
 
   Future<void> _clearAll() async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: const Color(0xFF0C2020),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('Clear all?',
+        backgroundColor: _card,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: const Text('Clear all notifications?',
             style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
-        content: const Text('All notifications will be deleted.',
-            style: TextStyle(color: Color(0xFFAAC8BC), fontSize: 13)),
+        content: const Text('All notifications will be permanently deleted.',
+            style: TextStyle(color: Colors.white54, fontSize: 13, height: 1.5)),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel', style: TextStyle(color: Color(0xFFAAC8BC)))),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel', style: TextStyle(color: Colors.white38)),
+          ),
           ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade800),
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Clear', style: TextStyle(color: Colors.white))),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.redAccent,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Clear', style: TextStyle(color: Colors.white)),
+          ),
         ],
       ),
     );
     if (ok != true) return;
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
-    final b = FirebaseFirestore.instance.batch();
+    final batch = FirebaseFirestore.instance.batch();
     for (final n in _items) {
-      b.delete(FirebaseFirestore.instance
+      batch.delete(FirebaseFirestore.instance
           .collection('users').doc(uid).collection('notifications').doc(n.id));
     }
-    await b.commit();
+    await batch.commit();
   }
 
   String _time(DateTime dt) {
@@ -265,13 +281,15 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     final d     = DateTime(dt.year, dt.month, dt.day);
     if (d == today) return 'TODAY';
     if (d == today.subtract(const Duration(days: 1))) return 'YESTERDAY';
-    const mo = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const mo = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     return '${mo[dt.month]} ${dt.day}, ${dt.year}';
   }
 
   Map<String, List<NotifItem>> get _grouped {
     final m = <String, List<NotifItem>>{};
-    for (final n in _visible) m.putIfAbsent(_dayLabel(n.timestamp), () => []).add(n);
+    for (final n in _visible) {
+      m.putIfAbsent(_dayLabel(n.timestamp), () => []).add(n);
+    }
     return m;
   }
 
@@ -290,18 +308,18 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     }
   }
 
-  Color _iconColor(String t) {
+  Color _accentColor(String t) {
     switch (t) {
       case 'training':
       case 'word_added':
-      case 'sync':           return const Color(0xFF2FD49A);
+      case 'sync':           return const Color(0xFF0ECFB0);  // teal
       case 'word_deleted':
-      case 'premium_cancel': return const Color(0xFFFF6B6B);
+      case 'premium_cancel': return const Color(0xFFFF6B6B);  // red
       case 'premium_active':
-      case 'premium_pay':    return const Color(0xFFFFB74D);
+      case 'premium_pay':    return const Color(0xFFFFB74D);  // amber
       case 'app_update':
-      case 'cloud':          return const Color(0xFF64B5F6);
-      default:               return const Color(0xFFFF8A65);
+      case 'cloud':          return const Color(0xFF64B5F6);  // blue
+      default:               return const Color(0xFFFF8A65);  // orange
     }
   }
 
@@ -309,164 +327,138 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     switch (t) {
       case 'training':
       case 'word_added':
-      case 'sync':           return const Color(0xFF0B3020);
+      case 'sync':           return const Color(0xFF0B2A20);
       case 'word_deleted':
-      case 'premium_cancel': return const Color(0xFF350C0C);
+      case 'premium_cancel': return const Color(0xFF2A0C0C);
       case 'premium_active':
-      case 'premium_pay':    return const Color(0xFF332808);
+      case 'premium_pay':    return const Color(0xFF2A1C06);
       case 'app_update':
-      case 'cloud':          return const Color(0xFF081A35);
-      default:               return const Color(0xFF2A1508);
+      case 'cloud':          return const Color(0xFF081828);
+      default:               return const Color(0xFF241008);
     }
   }
 
-  // ── Build ─────────────────────────────────────────────────────────────────
+  // ── BUILD ─────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    // CRITICAL: Wrap entire screen in DefaultTextStyle with explicit white.
-    // This resets any inherited text color from a parent Theme that may be
-    // transparent or matching the background, which caused invisible text.
-    return DefaultTextStyle(
-      style: const TextStyle(
-        color: Colors.white,
-        decoration: TextDecoration.none,
-        fontFamily: 'Roboto',
-      ),
-      child: Scaffold(
-        backgroundColor: kBg,
-        body: Column(
-          children: [
-            _header(context),
-            _filterRow(),
-            Expanded(
-              child: _loading
-                  ? const Center(child: CircularProgressIndicator(color: Color(0xFF1DB87F), strokeWidth: 2))
-                  : _visible.isEmpty
-                      ? _empty()
-                      : _list(),
-            ),
-          ],
-        ),
+    return Scaffold(
+      backgroundColor: _bg,
+      body: Column(
+        children: [
+          _buildHeader(),
+          _buildFilterRow(),
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator(color: _teal, strokeWidth: 2))
+                : _error != null
+                    ? _buildErrorView()
+                    : _visible.isEmpty
+                        ? _buildEmpty()
+                        : _buildList(),
+          ),
+        ],
       ),
     );
   }
 
   // ── Header ────────────────────────────────────────────────────────────────
-  Widget _header(BuildContext context) {
+  Widget _buildHeader() {
     final top = MediaQuery.of(context).padding.top;
     return Container(
-      color: kHeader,
+      color: _surface,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           SizedBox(height: top),
           SizedBox(
-            height: 60,
+            height: 64,
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
+              padding: const EdgeInsets.symmetric(horizontal: 18),
               child: Row(
                 children: [
-                  // Back
+                  // Back button
                   GestureDetector(
                     onTap: () => Navigator.pop(context),
                     child: Container(
                       width: 38, height: 38,
                       decoration: BoxDecoration(
-                        color: const Color(0x301DB87F),
-                        shape: BoxShape.circle,
-                        border: Border.all(color: const Color(0x551DB87F)),
+                        color: _card,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.white12),
                       ),
-                      child: const Icon(Icons.arrow_back_ios_new_rounded,
-                          color: Color(0xFF1DB87F), size: 15),
+                      child: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 15),
                     ),
                   ),
                   const SizedBox(width: 12),
-                  // Title — explicit RichText to guarantee visibility
                   const Expanded(
-                    child: Text(
-                      'Notifications',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
-                        decoration: TextDecoration.none,
-                      ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text('Notifications',
+                            style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
+                        Text('Activity & alerts',
+                            style: TextStyle(color: Colors.white38, fontSize: 11)),
+                      ],
                     ),
                   ),
-                  // Unread badge
                   if (_unread > 0) ...[
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                       decoration: BoxDecoration(
-                        color: kTeal,
+                        color: _teal,
                         borderRadius: BorderRadius.circular(20),
                       ),
-                      child: Text(
-                        '$_unread new',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                          decoration: TextDecoration.none,
-                        ),
-                      ),
+                      child: Text('$_unread new',
+                          style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
                     ),
                     const SizedBox(width: 8),
                     GestureDetector(
                       onTap: _markAllRead,
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                         decoration: BoxDecoration(
-                          color: const Color(0x301DB87F),
+                          color: _teal.withOpacity(0.1),
                           borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: const Color(0x551DB87F)),
+                          border: Border.all(color: _teal.withOpacity(0.25)),
                         ),
-                        child: const Text(
-                          'Read all',
-                          style: TextStyle(
-                            color: Color(0xFF1DB87F),
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            decoration: TextDecoration.none,
-                          ),
-                        ),
+                        child: const Text('Read all',
+                            style: TextStyle(color: _teal, fontSize: 11, fontWeight: FontWeight.w600)),
                       ),
                     ),
                     const SizedBox(width: 8),
                   ],
-                  // Delete all
                   if (_items.isNotEmpty)
                     GestureDetector(
                       onTap: _clearAll,
                       child: Container(
                         width: 38, height: 38,
                         decoration: BoxDecoration(
-                          color: const Color(0xFF102020),
-                          shape: BoxShape.circle,
-                          border: Border.all(color: const Color(0xFF244040)),
+                          color: _card,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: Colors.white12),
                         ),
-                        child: const Icon(Icons.delete_outline_rounded,
-                            color: Color(0xFFAAC8BC), size: 18),
+                        child: const Icon(Icons.delete_outline_rounded, color: Colors.white38, size: 18),
                       ),
                     ),
                 ],
               ),
             ),
           ),
-          const Divider(color: Color(0xFF1F3C35), thickness: 0.8, height: 0.8),
+          const Divider(color: Colors.white10, thickness: 0.8, height: 0.8),
         ],
       ),
     );
   }
 
   // ── Filter row ────────────────────────────────────────────────────────────
-  Widget _filterRow() {
+  Widget _buildFilterRow() {
     return Container(
-      height: 48,
-      color: kHeader,
+      height: 52,
+      color: _surface,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
         itemCount: _filters.length,
         separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemBuilder: (_, i) {
@@ -477,22 +469,22 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             onTap: () => setState(() => _filter = val),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 180),
-              padding: const EdgeInsets.symmetric(horizontal: 16),
+              padding: const EdgeInsets.symmetric(horizontal: 14),
               decoration: BoxDecoration(
-                color: selected ? kTeal : const Color(0xFF102020),
+                color: selected ? _teal.withOpacity(0.15) : _card,
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(
-                  color: selected ? kTeal : const Color(0xFF244040),
+                  color: selected ? _teal.withOpacity(0.5) : Colors.white12,
+                  width: selected ? 1.2 : 1.0,
                 ),
               ),
               child: Center(
                 child: Text(
                   label,
                   style: TextStyle(
-                    color: selected ? Colors.white : const Color(0xFFAAC8BC),
-                    fontSize: 13,
+                    color: selected ? _teal : Colors.white38,
+                    fontSize: 12,
                     fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                    decoration: TextDecoration.none,
                   ),
                 ),
               ),
@@ -503,41 +495,84 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     );
   }
 
-  // ── Empty ─────────────────────────────────────────────────────────────────
-  Widget _empty() => Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 72, height: 72,
-              decoration: BoxDecoration(
-                color: const Color(0x301DB87F),
-                shape: BoxShape.circle,
-                border: Border.all(color: const Color(0x551DB87F), width: 1.5),
-              ),
-              child: const Icon(Icons.notifications_off_outlined,
-                  color: Color(0xFF1DB87F), size: 32),
+  // ── Error view ────────────────────────────────────────────────────────────
+  Widget _buildErrorView() => Center(
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 72, height: 72,
+            decoration: BoxDecoration(
+              color: Colors.redAccent.withOpacity(0.1),
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.redAccent.withOpacity(0.3), width: 1.5),
             ),
-            const SizedBox(height: 18),
-            const Text('No notifications',
-                style: TextStyle(
-                    color: Colors.white, fontSize: 17, fontWeight: FontWeight.w700,
-                    decoration: TextDecoration.none)),
-            const SizedBox(height: 6),
-            const Text("You're all caught up!",
-                style: TextStyle(
-                    color: Color(0xFFAAC8BC), fontSize: 14,
-                    decoration: TextDecoration.none)),
-          ],
+            child: const Icon(Icons.error_outline_rounded, color: Colors.redAccent, size: 32),
+          ),
+          const SizedBox(height: 18),
+          const Text('Could not load notifications',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 6),
+          const Text(
+            'Check your Firestore security rules\nallow reads for authenticated users.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.white38, fontSize: 13, height: 1.5),
+          ),
+          const SizedBox(height: 20),
+          GestureDetector(
+            onTap: () {
+              setState(() { _loading = true; _error = null; _items = []; });
+              _listen();
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+              decoration: BoxDecoration(
+                color: _teal.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: _teal.withOpacity(0.3)),
+              ),
+              child: const Text('Retry',
+                  style: TextStyle(color: _teal, fontSize: 14, fontWeight: FontWeight.w600)),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  // ── Empty state ───────────────────────────────────────────────────────────
+  Widget _buildEmpty() => Center(
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 72, height: 72,
+          decoration: BoxDecoration(
+            color: _teal.withOpacity(0.08),
+            shape: BoxShape.circle,
+            border: Border.all(color: _teal.withOpacity(0.2), width: 1.5),
+          ),
+          child: const Icon(Icons.notifications_off_outlined, color: _teal, size: 30),
         ),
-      );
+        const SizedBox(height: 18),
+        const Text('No notifications',
+            style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 6),
+        const Text("You're all caught up!",
+            style: TextStyle(color: Colors.white38, fontSize: 14)),
+      ],
+    ),
+  );
 
   // ── List ──────────────────────────────────────────────────────────────────
-  Widget _list() {
+  Widget _buildList() {
     final grouped  = _grouped;
     final sections = grouped.keys.toList();
     return ListView.builder(
-      padding: const EdgeInsets.only(top: 8, bottom: 32),
+      padding: const EdgeInsets.only(top: 10, bottom: 40),
       itemCount: sections.length,
       itemBuilder: (_, si) {
         final label = sections[si];
@@ -554,143 +589,137 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 
   Widget _dayHeader(String label, {bool showMark = false}) => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(label,
-                style: const TextStyle(
-                    color: Color(0xFF5E8070),
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 1.2,
-                    decoration: TextDecoration.none)),
-            if (showMark)
-              GestureDetector(
-                onTap: _markAllRead,
-                child: const Text('Mark all as read',
-                    style: TextStyle(
-                        color: Color(0xFF1DB87F),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        decoration: TextDecoration.none)),
-              ),
-          ],
-        ),
-      );
+    padding: const EdgeInsets.fromLTRB(18, 14, 18, 8),
+    child: Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(label,
+            style: const TextStyle(
+              color: Colors.white24, fontSize: 10,
+              fontWeight: FontWeight.w700, letterSpacing: 1.5,
+            )),
+        if (showMark)
+          GestureDetector(
+            onTap: _markAllRead,
+            child: const Text('Mark all read',
+                style: TextStyle(color: _teal, fontSize: 11, fontWeight: FontWeight.w600)),
+          ),
+      ],
+    ),
+  );
 
   Widget _dismissible(NotifItem item) => Dismissible(
-        key: Key(item.id),
-        direction: DismissDirection.endToStart,
-        onDismissed: (_) => _delete(item),
-        background: Container(
-          alignment: Alignment.centerRight,
-          margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-          padding: const EdgeInsets.only(right: 24),
-          decoration: BoxDecoration(
-            color: Colors.red.shade900,
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: const Icon(Icons.delete_rounded, color: Colors.white, size: 24),
-        ),
-        child: _card(item),
-      );
+    key: Key(item.id),
+    direction: DismissDirection.endToStart,
+    onDismissed: (_) => _delete(item),
+    background: Container(
+      alignment: Alignment.centerRight,
+      margin: const EdgeInsets.fromLTRB(18, 0, 18, 10),
+      padding: const EdgeInsets.only(right: 24),
+      decoration: BoxDecoration(
+        color: Colors.redAccent.withOpacity(0.85),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: const Icon(Icons.delete_rounded, color: Colors.white, size: 22),
+    ),
+    child: _buildCard(item),
+  );
 
-  // ── Card ──────────────────────────────────────────────────────────────────
-  Widget _card(NotifItem item) {
-    final accent = _iconColor(item.type);
+  // ── Notification card ─────────────────────────────────────────────────────
+  Widget _buildCard(NotifItem item) {
+    final accent = _accentColor(item.type);
     return GestureDetector(
       onTap: () => _markRead(item),
       child: Container(
-        margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-        padding: const EdgeInsets.all(14),
+        margin: const EdgeInsets.fromLTRB(18, 0, 18, 10),
         decoration: BoxDecoration(
-          // Fully opaque card backgrounds — the REAL fix
-          color: item.isRead ? kCardRead : kCardUnread,
+          color: item.isRead ? _surface : _card,
           borderRadius: BorderRadius.circular(16),
-          border: Border(
-            left: BorderSide(
-              color: item.isRead ? Colors.transparent : accent,
-              width: 3,
-            ),
-            top:    const BorderSide(color: kBorder, width: 0.8),
-            right:  const BorderSide(color: kBorder, width: 0.8),
-            bottom: const BorderSide(color: kBorder, width: 0.8),
+          border: Border.all(
+            color: item.isRead ? Colors.white10 : accent.withOpacity(0.2),
+            width: item.isRead ? 1.0 : 1.2,
           ),
         ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Icon bubble
-            Container(
-              width: 42, height: 42,
-              decoration: BoxDecoration(
-                color: _iconBg(item.type),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Icon(_icon(item.type), color: accent, size: 20),
-            ),
-            const SizedBox(width: 12),
-            // Text — wrap in DefaultTextStyle reset to guarantee visibility
-            Expanded(
-              child: DefaultTextStyle(
-                style: const TextStyle(
-                  color: Colors.white,
-                  decoration: TextDecoration.none,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      item.title,
-                      style: TextStyle(
-                        color: item.isRead
-                            ? const Color(0xFFAAC8BC)
-                            : Colors.white,
-                        fontSize: 14,
-                        fontWeight: item.isRead ? FontWeight.w500 : FontWeight.w700,
-                        decoration: TextDecoration.none,
-                      ),
-                    ),
-                    const SizedBox(height: 5),
-                    Text(
-                      item.body,
-                      style: const TextStyle(
-                        color: Color(0xFFAAC8BC),
-                        fontSize: 12,
-                        height: 1.5,
-                        decoration: TextDecoration.none,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(width: 10),
-            // Time + dot
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(15),
+          child: IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(
-                  _time(item.timestamp),
-                  style: const TextStyle(
-                    color: Color(0xFF5E8070),
-                    fontSize: 11,
-                    decoration: TextDecoration.none,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                AnimatedOpacity(
-                  duration: const Duration(milliseconds: 300),
-                  opacity: item.isRead ? 0 : 1,
-                  child: Container(
-                    width: 8, height: 8,
-                    decoration: BoxDecoration(color: accent, shape: BoxShape.circle),
+                // Left accent bar (unread only)
+                if (!item.isRead)
+                  Container(width: 3, color: accent),
+
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.all(14),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Icon container
+                        Container(
+                          width: 42, height: 42,
+                          decoration: BoxDecoration(
+                            color: _iconBg(item.type),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: accent.withOpacity(0.15)),
+                          ),
+                          child: Icon(_icon(item.type), color: accent, size: 19),
+                        ),
+                        const SizedBox(width: 12),
+
+                        // Content
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                item.title,
+                                style: TextStyle(
+                                  color: item.isRead ? Colors.white54 : Colors.white,
+                                  fontSize: 13,
+                                  fontWeight: item.isRead ? FontWeight.w500 : FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(height: 5),
+                              Text(
+                                item.body,
+                                style: const TextStyle(
+                                  color: Colors.white38, fontSize: 12, height: 1.5,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+
+                        // Timestamp + unread dot
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(_time(item.timestamp),
+                                style: const TextStyle(color: Colors.white24, fontSize: 10)),
+                            const SizedBox(height: 8),
+                            AnimatedOpacity(
+                              duration: const Duration(milliseconds: 300),
+                              opacity: item.isRead ? 0 : 1,
+                              child: Container(
+                                width: 7, height: 7,
+                                decoration: BoxDecoration(
+                                  color: accent,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ],
             ),
-          ],
+          ),
         ),
       ),
     );

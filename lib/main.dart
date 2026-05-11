@@ -31,7 +31,85 @@ class CleftTuneApp extends StatelessWidget {
         primaryColor: const Color(0xFF1D9E75),
         scaffoldBackgroundColor: const Color(0xFF0A1628),
       ),
-      home: const AppLayout(),
+      home: const RootRouter(),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ROOT ROUTER
+//
+// UPDATED PERSISTENT LOGIN FLOW:
+//   • App launch, user already signed in  → go directly to AppShell
+//   • App launch, no user                 → show LandingPage
+//   • User taps Continue on Landing       → show PremiumScreen (login/signup)
+//   • User logs in / signs up             → FirebaseAuth emits User → AppShell
+//   • User logs out                       → FirebaseAuth emits null → LandingPage
+//
+// The key change: we check FirebaseAuth.instance.currentUser on startup.
+// If a session already exists, we skip the landing page entirely.
+// ─────────────────────────────────────────────────────────────────────────────
+
+class RootRouter extends StatefulWidget {
+  const RootRouter({super.key});
+
+  @override
+  State<RootRouter> createState() => _RootRouterState();
+}
+
+class _RootRouterState extends State<RootRouter> {
+  // Show landing only when there is no active session on startup.
+  // If the user is already logged in (persistent session), skip landing.
+  late bool _showLanding;
+
+  @override
+  void initState() {
+    super.initState();
+    // ✅ KEY FIX: If Firebase already has a current user (saved session),
+    // we don't show the landing page — the user stays logged in.
+    _showLanding = FirebaseAuth.instance.currentUser == null;
+  }
+
+  void _onLandingContinue() => setState(() => _showLanding = false);
+
+  // Called by PremiumScreen's onBack to return to landing.
+  void _onBackToLanding() => setState(() => _showLanding = true);
+
+  @override
+  Widget build(BuildContext context) {
+    // If no active session on startup, show landing first.
+    if (_showLanding) {
+      return LandingPage(onContinue: _onLandingContinue);
+    }
+
+    // React to Firebase auth state in real-time.
+    return StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.authStateChanges(),
+      builder: (context, snapshot) {
+        // Still waiting for the first auth event — show a minimal loader.
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(
+            backgroundColor: Color(0xFF0D2B2B),
+            body: Center(
+              child: CircularProgressIndicator(color: Color(0xFF1D9E75)),
+            ),
+          );
+        }
+
+        // ✅ User is signed in (new login OR restored session) → show app.
+        if (snapshot.hasData && snapshot.data != null) {
+          return const AppShell();
+        }
+
+        // No user (logged out or never logged in) → show login screen.
+        return PremiumScreen(
+          onLogin: () {
+            // Nothing needed — StreamBuilder rebuilds automatically
+            // once FirebaseAuth emits the signed-in user.
+          },
+          onBack: _onBackToLanding,
+        );
+      },
     );
   }
 }
@@ -70,98 +148,70 @@ class CleftBackground extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// APP LAYOUT
+// APP SHELL  (shown only when a user is signed in)
 // ─────────────────────────────────────────────────────────────────────────────
 
-class AppLayout extends StatefulWidget {
-  const AppLayout({super.key});
+class AppShell extends StatefulWidget {
+  const AppShell({super.key});
 
   @override
-  State<AppLayout> createState() => _AppLayoutState();
+  State<AppShell> createState() => _AppShellState();
 }
 
-class _AppLayoutState extends State<AppLayout> {
-  int currentIndex      = 0;
-  bool showLanding      = true;
-  bool showPremiumLogin = false;
+class _AppShellState extends State<AppShell> {
+  int _currentIndex = 0;
 
   static const _teal    = Color(0xFF1D9E75);
   static const _tealDim = Color(0x261D9E75);
   static const _navBg   = Color(0xFF071520);
 
-  void enterAppFlow() => setState(() {
-        showLanding      = false;
-        showPremiumLogin = true;
-      });
-
-  Future<void> completeLogin() async {
-    try {
-      await FirebaseAuth.instance.signInAnonymously();
-    } catch (e) {
-      debugPrint('Auth error: $e');
-    }
-    setState(() {
-      showPremiumLogin = false;
-      showLanding      = false;
-      currentIndex     = 0;
-    });
+  void _openPremium() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PremiumScreen(
+          onLogin: () => Navigator.pop(context),
+          onBack: ()  => Navigator.pop(context),
+        ),
+      ),
+    );
   }
 
-  void switchPage(int index) => setState(() => currentIndex = index);
+  void _switchPage(int index) => setState(() => _currentIndex = index);
 
-  void openPremium() => setState(() {
-        showPremiumLogin = true;
-        showLanding      = false;
-      });
-
-  void backToLanding() => setState(() {
-        showPremiumLogin = false;
-        showLanding      = true;
-      });
+  Widget get _currentScreen {
+    switch (_currentIndex) {
+      case 0:
+        return TranslatorScreen(goToPremium: _openPremium);
+      case 1:
+        return const HistoryScreen();
+      case 2:
+        return const SettingsScreen();
+      default:
+        return TranslatorScreen(goToPremium: _openPremium);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    Widget currentScreen;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final bool isWide = constraints.maxWidth >= 800;
 
-    if (showLanding) {
-      currentScreen = LandingPage(onContinue: enterAppFlow);
-    } else if (showPremiumLogin) {
-      currentScreen = PremiumScreen(onLogin: completeLogin, onBack: backToLanding);
-    } else {
-      switch (currentIndex) {
-        case 0:
-          currentScreen = TranslatorScreen(goToPremium: openPremium);
-          break;
-        case 1:
-          currentScreen = const HistoryScreen();
-          break;
-        case 2:
-          currentScreen = const SettingsScreen();
-          break;
-        default:
-          currentScreen = TranslatorScreen(goToPremium: openPremium);
-      }
-    }
-
-    final bool hideNav = showLanding || showPremiumLogin;
-
-    return Scaffold(
-      backgroundColor: const Color(0xFF0A1628),
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          final bool isWide = constraints.maxWidth >= 800;
-
-          if (isWide && !hideNav) {
-            return Row(
+        if (isWide) {
+          return Scaffold(
+            backgroundColor: const Color(0xFF0A1628),
+            body: Row(
               children: [
                 Container(
                   color: _navBg,
                   child: NavigationRail(
                     backgroundColor: Colors.transparent,
-                    selectedIndex: currentIndex,
-                    onDestinationSelected: switchPage,
+                    selectedIndex: _currentIndex,
+                    onDestinationSelected: _switchPage,
                     labelType: NavigationRailLabelType.all,
-                    selectedIconTheme: const IconThemeData(color: _teal),
+                    selectedIconTheme:
+                        const IconThemeData(color: _teal),
                     unselectedIconTheme:
                         const IconThemeData(color: Colors.white38),
                     selectedLabelTextStyle: const TextStyle(
@@ -178,7 +228,8 @@ class _AppLayoutState extends State<AppLayout> {
                         decoration: BoxDecoration(
                           color: _tealDim,
                           shape: BoxShape.circle,
-                          border: Border.all(color: const Color(0x401D9E75)),
+                          border:
+                              Border.all(color: const Color(0x401D9E75)),
                         ),
                         child: const Icon(Icons.graphic_eq_rounded,
                             color: _teal, size: 18),
@@ -203,56 +254,51 @@ class _AppLayoutState extends State<AppLayout> {
                     ],
                   ),
                 ),
-                Container(width: 0.5, color: const Color(0x201D9E75)),
-                Expanded(
-                  child: ClipRect(
-                    child: currentScreen,
-                  ),
+                Container(
+                    width: 0.5, color: const Color(0x201D9E75)),
+                Expanded(child: ClipRect(child: _currentScreen)),
+              ],
+            ),
+          );
+        }
+
+        // Mobile layout
+        return Scaffold(
+          backgroundColor: const Color(0xFF0A1628),
+          body: _currentScreen,
+          bottomNavigationBar: Container(
+            decoration: const BoxDecoration(
+              color: _navBg,
+              border: Border(
+                top: BorderSide(color: Color(0x201D9E75), width: 0.5),
+              ),
+            ),
+            child: BottomNavigationBar(
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              selectedItemColor: _teal,
+              unselectedItemColor: Colors.white38,
+              currentIndex: _currentIndex,
+              onTap: _switchPage,
+              items: const [
+                BottomNavigationBarItem(
+                  icon: Icon(Icons.mic_none_rounded),
+                  activeIcon: Icon(Icons.mic_rounded),
+                  label: 'Translate',
+                ),
+                BottomNavigationBarItem(
+                  icon: Icon(Icons.history_rounded),
+                  label: 'History',
+                ),
+                BottomNavigationBarItem(
+                  icon: Icon(Icons.tune_rounded),
+                  label: 'Settings',
                 ),
               ],
-            );
-          }
-
-          return Scaffold(
-            backgroundColor: Colors.transparent,
-            body: currentScreen,
-            bottomNavigationBar: hideNav
-                ? null
-                : Container(
-                    decoration: const BoxDecoration(
-                      color: _navBg,
-                      border: Border(
-                        top: BorderSide(
-                            color: Color(0x201D9E75), width: 0.5),
-                      ),
-                    ),
-                    child: BottomNavigationBar(
-                      backgroundColor: Colors.transparent,
-                      elevation: 0,
-                      selectedItemColor: _teal,
-                      unselectedItemColor: Colors.white38,
-                      currentIndex: currentIndex,
-                      onTap: switchPage,
-                      items: const [
-                        BottomNavigationBarItem(
-                          icon: Icon(Icons.mic_none_rounded),
-                          activeIcon: Icon(Icons.mic_rounded),
-                          label: 'Translate',
-                        ),
-                        BottomNavigationBarItem(
-                          icon: Icon(Icons.history_rounded),
-                          label: 'History',
-                        ),
-                        BottomNavigationBarItem(
-                          icon: Icon(Icons.tune_rounded),
-                          label: 'Settings',
-                        ),
-                      ],
-                    ),
-                  ),
-          );
-        },
-      ),
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -460,10 +506,11 @@ class _HistoryScreenState extends State<HistoryScreen> {
                                     if (ts == null) continue;
                                     final dt   = (ts as Timestamp).toDate();
                                     final date = DateTime(dt.year, dt.month, dt.day);
-                                    if (date == today)
+                                    if (date == today) {
                                       grouped['TODAY']!.add(doc);
-                                    else if (date == yesterday)
+                                    } else if (date == yesterday) {
                                       grouped['YESTERDAY']!.add(doc);
+                                    }
                                   }
 
                                   return ListView(
@@ -689,7 +736,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         'upgradedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
-      // ── NEW: fire premium-activated notification ───────────────────────
       await NotificationHelper.premiumActivated(method: method);
 
       setState(() {
@@ -735,7 +781,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         'cancelledAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
-      // ── NEW: fire premium-cancelled notification ───────────────────────
       await NotificationHelper.premiumCancelled();
 
       setState(() {
@@ -1149,7 +1194,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           _optionTile(
                               'Cloud Based', Icons.cloud_outlined),
 
-                          // ── NEW: Notifications tile with live unread badge
                           _notificationsTile(),
 
                           const SizedBox(height: 28),
@@ -1197,7 +1241,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  // ── NOTIFICATIONS TILE with live unread badge ─────────────────────────────
   Widget _notificationsTile() {
     final user = FirebaseAuth.instance.currentUser;
     return StreamBuilder<QuerySnapshot>(
@@ -1241,7 +1284,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 child: Text('Notifications',
                     style: TextStyle(color: Colors.white, fontSize: 14)),
               ),
-              // ── Live unread count badge ──────────────────────────────
               if (unread > 0)
                 Container(
                   margin: const EdgeInsets.only(right: 8),
@@ -1268,7 +1310,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  // ── PREMIUM ACTIVE CARD ───────────────────────────────────────────────────
   Widget _buildPremiumActiveCard() {
     return Container(
       padding: const EdgeInsets.all(20),
@@ -1411,7 +1452,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 fontWeight: FontWeight.w500)),
       );
 
-  // ── UPGRADE CARD ──────────────────────────────────────────────────────────
   Widget _buildUpgradeCard() {
     return GestureDetector(
       onTap: _showPaymentMethodDialog,
@@ -1513,8 +1553,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   fontWeight: FontWeight.w600)),
         ]),
       );
-
-  // ── HELPERS ───────────────────────────────────────────────────────────────
 
   Widget _sectionLabel(String label) => Row(children: [
         Container(

@@ -306,7 +306,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                       ),
                       onPressed: () => Navigator.pop(context),
                       child: const Text('Cancel',
-                          style: TextStyle(color: _white40)),
+                          style: TextStyle(color: Color.fromARGB(255, 255, 255, 255))),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -334,7 +334,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
                               content: Text('"$wrong" → "$correct" saved!'),
-                              backgroundColor: const Color(0xFF1E3A3A),
+                              backgroundColor: const Color.fromARGB(255, 192, 252, 252),
                               behavior: SnackBarBehavior.floating,
                               shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(10)),

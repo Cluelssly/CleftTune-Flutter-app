@@ -3,6 +3,39 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'premium.dart';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// HOW THE LOGOUT → LOGIN → TRANSLATOR FLOW WORKS
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Your main.dart should have a StreamBuilder<User?> at the root, like this:
+//
+//   MaterialApp(
+//     home: StreamBuilder<User?>(
+//       stream: FirebaseAuth.instance.authStateChanges(),
+//       builder: (context, snapshot) {
+//         if (snapshot.connectionState == ConnectionState.waiting) {
+//           return const SplashScreen(); // or a loader
+//         }
+//         if (snapshot.hasData) {
+//           return const TranslatorScreen(); // ← your main app screen
+//         }
+//         return PremiumScreen(           // ← login screen
+//           onLogin: () {},               //   stream handles navigation
+//           onBack: () {},
+//         );
+//       },
+//     ),
+//   )
+//
+// With that in place:
+//   • Logout  → FirebaseAuth.signOut() → stream emits null → shows PremiumScreen
+//   • Login   → FirebaseAuth signs in  → stream emits User → shows Translator
+//   No manual Navigator calls needed for the auth transition at all.
+//
+// The _logout() below simply signs out and pops back to root. The stream does
+// the rest automatically.
+// ─────────────────────────────────────────────────────────────────────────────
+
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
 
@@ -115,24 +148,30 @@ class _ProfileScreenState extends State<ProfileScreen> {
     });
   }
 
+  // ── LOGOUT ─────────────────────────────────────────────────────────────────
+  //
+  // Steps:
+  //   1. Close the confirm dialog.
+  //   2. Sign out — this triggers FirebaseAuth.authStateChanges() to emit null.
+  //   3. Your root StreamBuilder sees null → automatically shows PremiumScreen.
+  //   4. User logs in → stream emits User → automatically shows TranslatorScreen.
+  //
+  // We do NOT manually push PremiumScreen here. The stream handles everything.
+  // All we do after sign-out is pop back to the root so the stream can rebuild.
+  //
   Future<void> _logout() async {
-    Navigator.pop(context);
+    // 1. Close the confirm dialog
+    if (mounted) Navigator.of(context).pop();
+
+    // 2. Sign out from Firebase — triggers authStateChanges stream
     await FirebaseAuth.instance.signOut();
+
+    // 3. Guard against unmounted widget
     if (!mounted) return;
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(
-        builder: (_) => PremiumScreen(
-          onLogin: () {
-            Navigator.of(context).pushAndRemoveUntil(
-              MaterialPageRoute(builder: (_) => const _Redirector()),
-              (_) => false,
-            );
-          },
-          onBack: () {},
-        ),
-      ),
-      (_) => false,
-    );
+
+    // 4. Pop all the way back to root (the StreamBuilder in main.dart).
+    //    The stream now sees no user → renders PremiumScreen automatically.
+    Navigator.of(context).popUntil((route) => route.isFirst);
   }
 
   void _confirmLogout() {
@@ -149,7 +188,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.of(context).pop(),
             child: const Text('Cancel', style: TextStyle(color: _white40)),
           ),
           ElevatedButton(
@@ -184,8 +223,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           child: Container(
             decoration: const BoxDecoration(
               color: Color(0xFF112828),
-              borderRadius:
-                  BorderRadius.vertical(top: Radius.circular(24)),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
             ),
             padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
             child: Column(
@@ -226,8 +264,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           side: const BorderSide(color: _white20),
                           shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(12)),
-                          padding:
-                              const EdgeInsets.symmetric(vertical: 14),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
                         ),
                         onPressed: () => Navigator.pop(context),
                         child: const Text('Cancel',
@@ -241,8 +278,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           backgroundColor: _teal,
                           shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(12)),
-                          padding:
-                              const EdgeInsets.symmetric(vertical: 14),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
                         ),
                         onPressed: isSaving
                             ? null
@@ -253,9 +289,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                     nameController.text.trim(),
                                     emailController.text.trim(),
                                   );
-                                  if (context.mounted) {
-                                    Navigator.pop(context);
-                                  }
+                                  if (context.mounted) Navigator.pop(context);
                                 } catch (e) {
                                   if (context.mounted) {
                                     ScaffoldMessenger.of(context)
@@ -272,8 +306,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             ? const SizedBox(
                                 width: 18, height: 18,
                                 child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: Colors.white))
+                                    strokeWidth: 2, color: Colors.white))
                             : const Text('Save Changes',
                                 style: TextStyle(
                                     color: Colors.white,
@@ -299,8 +332,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (_isLoading) {
       return const Scaffold(
         backgroundColor: _bg,
-        body: Center(
-            child: CircularProgressIndicator(color: _teal)),
+        body: Center(child: CircularProgressIndicator(color: _teal)),
       );
     }
 
@@ -320,9 +352,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             children: [
               _buildTopBar(),
               Expanded(
-                child: isWide
-                    ? _buildWideLayout()
-                    : _buildMobileLayout(),
+                child: isWide ? _buildWideLayout() : _buildMobileLayout(),
               ),
             ],
           ),
@@ -343,13 +373,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
           const SizedBox(height: 20),
           _buildStatsRow(),
           const SizedBox(height: 20),
-
-          // Premium card only shows if premium
           if (_isPremium) ...[
             _buildPremiumActiveCard(),
             const SizedBox(height: 20),
           ],
-
           _buildSectionLabel('ACCOUNT'),
           const SizedBox(height: 10),
           _buildInfoCard(),
@@ -432,8 +459,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 borderRadius: BorderRadius.circular(18),
                 border: Border.all(color: _tealBorder),
               ),
-              child:
-                  const Icon(Icons.edit_outlined, size: 17, color: _teal),
+              child: const Icon(Icons.edit_outlined, size: 17, color: _teal),
             ),
           ),
         ],
@@ -500,8 +526,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
         Text(_email,
             style: const TextStyle(fontSize: 13, color: _white40)),
         const SizedBox(height: 10),
-
-        // ── Plan badge — changes based on plan ──────────────────────────────
         _isPremium
             ? Container(
                 padding: const EdgeInsets.symmetric(
@@ -522,8 +546,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 child: const Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.star_rounded,
-                        color: Colors.white, size: 13),
+                    Icon(Icons.star_rounded, color: Colors.white, size: 13),
                     SizedBox(width: 5),
                     Text('Premium Member',
                         style: TextStyle(
@@ -592,7 +615,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  // ── PREMIUM ACTIVE CARD (shown on profile when premium) ───────────────────
+  // ── PREMIUM ACTIVE CARD ────────────────────────────────────────────────────
   Widget _buildPremiumActiveCard() {
     return Container(
       width: double.infinity,
@@ -616,7 +639,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Top row
           Row(
             children: [
               Container(
@@ -628,8 +650,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ),
                 child: const Row(
                   children: [
-                    Icon(Icons.star_rounded,
-                        color: Colors.white, size: 12),
+                    Icon(Icons.star_rounded, color: Colors.white, size: 12),
                     SizedBox(width: 4),
                     Text('PREMIUM ACTIVE',
                         style: TextStyle(
@@ -660,7 +681,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 color: Colors.white70, fontSize: 12, height: 1.5),
           ),
           const SizedBox(height: 12),
-          // Feature chips
           Wrap(
             spacing: 6, runSpacing: 6,
             children: [
@@ -716,9 +736,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               _memberSince.isEmpty ? '—' : _memberSince),
           Divider(color: Colors.white.withOpacity(0.07), height: 20),
           _infoRow(
-            _isPremium
-                ? Icons.star_rounded
-                : Icons.star_border_rounded,
+            _isPremium ? Icons.star_rounded : Icons.star_border_rounded,
             'Plan',
             _isPremium ? 'Premium' : 'Free',
           ),
@@ -740,9 +758,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             borderRadius: BorderRadius.circular(8),
           ),
           child: Icon(icon,
-              color: isPlanRow && _isPremium
-                  ? Colors.white
-                  : _teal,
+              color: isPlanRow && _isPremium ? Colors.white : _teal,
               size: 16),
         ),
         const SizedBox(width: 12),
@@ -766,8 +782,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ),
         if (isPlanRow && _isPremium)
           Container(
-            padding: const EdgeInsets.symmetric(
-                horizontal: 8, vertical: 3),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
             decoration: BoxDecoration(
               color: _tealDim,
               borderRadius: BorderRadius.circular(20),
@@ -783,7 +798,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  // ── LOGOUT ─────────────────────────────────────────────────────────────────
+  // ── LOGOUT BUTTON ──────────────────────────────────────────────────────────
   Widget _buildLogoutButton() {
     return GestureDetector(
       onTap: _confirmLogout,
@@ -853,23 +868,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       ),
-    );
-  }
-}
-
-// ── Redirect helper ────────────────────────────────────────────────────────────
-class _Redirector extends StatelessWidget {
-  const _Redirector();
-
-  @override
-  Widget build(BuildContext context) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      Navigator.of(context).pushNamedAndRemoveUntil('/', (_) => false);
-    });
-    return const Scaffold(
-      backgroundColor: Color(0xFF0D2B2B),
-      body: Center(
-          child: CircularProgressIndicator(color: Color(0xFF1D9E75))),
     );
   }
 }
