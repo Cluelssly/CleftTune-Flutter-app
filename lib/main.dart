@@ -691,8 +691,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
           .collection('users')
           .doc(user.uid)
           .get();
+
+      final data = doc.data() ?? {};
+
+      // ── Support both field formats ─────────────────────────────────────
+      // 'plan' == 'premium'  (SettingsScreen format)
+      // 'isPremium' == true  (PremiumGate / TranslatorScreen format)
+      final isPremiumByPlan = (data['plan'] ?? '') == 'premium';
+      final isPremiumByFlag = data['isPremium'] == true;
+
       setState(() {
-        _isPremium = (doc.data()?['plan'] ?? '') == 'premium';
+        _isPremium = isPremiumByPlan || isPremiumByFlag;
         _isLoading = false;
       });
     } catch (_) {
@@ -731,9 +740,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
           .collection('users')
           .doc(user.uid)
           .set({
-        'plan': 'premium',
+        // ── Both fields written so ALL screens read correctly ──────────────
+        'plan':          'premium',   // read by SettingsScreen
+        'isPremium':     true,        // read by PremiumGate / TranslatorScreen
         'paymentMethod': method,
-        'upgradedAt': FieldValue.serverTimestamp(),
+        'upgradedAt':    FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
       await NotificationHelper.premiumActivated(method: method);
@@ -777,7 +788,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
           .collection('users')
           .doc(user.uid)
           .set({
-        'plan': 'free',
+        // ── Both fields written so ALL screens read correctly ──────────────
+        'plan':        'free',   // read by SettingsScreen
+        'isPremium':   false,    // read by PremiumGate / TranslatorScreen
         'cancelledAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
@@ -1231,6 +1244,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                       color: _white40, fontSize: 13)),
                             ],
                           )),
+
+                          const SizedBox(height: 28),
+
+                          // ── FIRESTORE PREMIUM USER LIST (admin debug) ─────
+                          _sectionLabel('PREMIUM USERS'),
+                          const SizedBox(height: 10),
+                          _buildPremiumUserList(),
+
+                          const SizedBox(height: 40),
                         ]),
                 ),
               );
@@ -1239,6 +1261,158 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       ),
     );
+  }
+
+  // ── PREMIUM USER LIST ──────────────────────────────────────────────────────
+  // Shows all users where isPremium == true, pulled live from Firestore.
+  // Useful for admin/debug; remove this section in production if not needed.
+  Widget _buildPremiumUserList() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('users')
+          .where('isPremium', isEqualTo: true)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: CircularProgressIndicator(color: _teal, strokeWidth: 2),
+            ),
+          );
+        }
+
+        final docs = snapshot.data?.docs ?? [];
+
+        if (docs.isEmpty) {
+          return Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: _cardColor,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: _tealBorder),
+            ),
+            child: const Row(children: [
+              Icon(Icons.star_outline_rounded, color: _white40, size: 18),
+              SizedBox(width: 10),
+              Text('No premium users yet',
+                  style: TextStyle(color: _white40, fontSize: 13)),
+            ]),
+          );
+        }
+
+        return Column(
+          children: docs.map((doc) {
+            final data          = doc.data() as Map<String, dynamic>;
+            final uid           = doc.id;
+            final email         = data['email']         as String? ?? 'Unknown';
+            final paymentMethod = data['paymentMethod'] as String? ?? '—';
+            final upgradedAt    = data['upgradedAt']    as Timestamp?;
+            final upgradeDate   = upgradedAt != null
+                ? _formatDate(upgradedAt.toDate())
+                : 'Unknown date';
+
+            return Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: _tealDim,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: _tealBorder),
+              ),
+              child: Row(
+                children: [
+                  // ── Avatar ───────────────────────────────────────────────
+                  Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: _teal.withOpacity(0.2),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: _tealBorder),
+                    ),
+                    child: const Icon(Icons.star_rounded,
+                        color: _teal, size: 18),
+                  ),
+                  const SizedBox(width: 12),
+
+                  // ── Info ─────────────────────────────────────────────────
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          email,
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          'UID: ${uid.substring(0, 8)}...',
+                          style: const TextStyle(
+                              color: _white40, fontSize: 10),
+                        ),
+                        const SizedBox(height: 3),
+                        Row(children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: _teal.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              paymentMethod.toUpperCase(),
+                              style: const TextStyle(
+                                  color: _teal,
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w700),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            upgradeDate,
+                            style: const TextStyle(
+                                color: _white40, fontSize: 10),
+                          ),
+                        ]),
+                      ],
+                    ),
+                  ),
+
+                  // ── Premium badge ─────────────────────────────────────────
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: _teal,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: const Text('PREMIUM',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.5)),
+                  ),
+                ],
+              ),
+            );
+          }).toList(),
+        );
+      },
+    );
+  }
+
+  String _formatDate(DateTime date) {
+    final months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+    ];
+    return '${months[date.month - 1]} ${date.day}, ${date.year}';
   }
 
   Widget _notificationsTile() {

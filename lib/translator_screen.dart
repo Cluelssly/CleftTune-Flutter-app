@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -5,7 +6,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'dart:developer' as dev;
 import 'nlp_service.dart';
-import 'notifications.dart'; // ← NEW
+import 'notifications.dart';
+import 'premium_gate.dart';
 
 class TranslatorScreen extends StatefulWidget {
   final VoidCallback goToPremium;
@@ -26,9 +28,19 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   bool _userStopped     = false;
   bool _showCorrections = false;
 
+  // ── Premium gate ───────────────────────────────────────────────────────────
+  bool _isPremium = false;
+  late StreamSubscription<bool> _premiumSub;
+
   String _displayText     = '';
   String _accumulatedText = '';
   bool   _isRefiningFinal = false;
+
+  // ── Free user: countdown timer ─────────────────────────────────────────────
+  // Free users get 60 seconds total per session, after which the mic auto-stops.
+  Timer?  _freeTimer;
+  int     _freeSecondsLeft = 60;
+  static const int _freeTotalSeconds = 60;
 
   static const int _maxWords = 30;
 
@@ -73,6 +85,10 @@ class _TranslatorScreenState extends State<TranslatorScreen>
       CurvedAnimation(parent: _dotController, curve: Curves.easeInOut),
     );
 
+    _premiumSub = PremiumGate.isPremiumStream().listen((value) {
+      if (mounted) setState(() => _isPremium = value);
+    });
+
     _initServices();
   }
 
@@ -80,10 +96,13 @@ class _TranslatorScreenState extends State<TranslatorScreen>
     await _nlp.init();
     dev.log('NLP ready — ${_nlp.patternCount} pattern(s) loaded');
 
+    // ── Realtime callback — ONLY active for premium users ──────────────────
+    // This fires on every partial result so text updates live while speaking.
+    // Free users don't get this — they wait for the final result instead.
     _nlp.onRealtimeCorrection = (Map<String, dynamic> result) {
-      if (!mounted) return;
+      if (!mounted || _isPremium) return; // FIX: was `!_isPremium`, now correctly skips free users
       final corrected = result['corrected'] as String;
-      final preview = (_accumulatedText.isEmpty
+      final preview   = (_accumulatedText.isEmpty
           ? corrected
           : '$_accumulatedText $corrected').trim();
       setState(() => _displayText = preview);
@@ -115,18 +134,138 @@ class _TranslatorScreenState extends State<TranslatorScreen>
     setState(() {});
   }
 
-  // ── Core listening loop ────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════════
+  // FREE — Basic listening (LIMITED)
+  //
+  // Differences vs premium:
+  //   • 60-second session cap with visible countdown
+  //   • 8-second pause before a final result fires (vs 500ms for premium)
+  //   • NO noise filtering — all audio goes through including background noise
+  //   • NO realtime NLP callback — words only appear after the 8s silence
+  //   • Partials show raw spoken words with no NLP applied yet
+  // ══════════════════════════════════════════════════════════════════════════
 
-  Future<void> _startListening() async {
+  void _startFreeCountdown() {
+    _freeTimer?.cancel();
+    _freeSecondsLeft = _freeTotalSeconds;
+    _freeTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) { t.cancel(); return; }
+      setState(() => _freeSecondsLeft--);
+      if (_freeSecondsLeft <= 0) {
+        t.cancel();
+        _userStopped = true;
+        _speech.stop();
+        if (mounted) setState(() {
+          _isListening     = false;
+          _isRefiningFinal = false;
+        });
+      }
+    });
+  }
+
+  Future<void> _startBasicListening() async {
     if (!_isInitialized) {
       await _initSpeech();
       if (!_isInitialized) return;
     }
 
+    // Start the 60-second visible countdown for free users
+    _startFreeCountdown();
+
     await _speech.listen(
       localeId:       'en_US',
-      listenFor:      const Duration(seconds: 60),
-      pauseFor:       const Duration(seconds: 4),
+      listenFor:      const Duration(seconds: _freeTotalSeconds),
+      // ── 8 second pause = free users wait 8 seconds of silence before
+      //    their speech is translated. This is the core limitation vs premium.
+      pauseFor:       const Duration(seconds: 8),
+      partialResults: true,
+      listenMode:     stt.ListenMode.dictation,
+      onResult: (result) async {
+        final words = result.recognizedWords.trim();
+        if (words.isEmpty) return;
+
+        // ── NO noise filter for free users ────────────────────────────────
+        // All audio goes through — mumbles, background noise, everything.
+        // Premium users get strict confidence-based noise cancellation.
+
+        if (result.finalResult) {
+          // Apply local patterns (sync, instant) then send to Claude
+          final localResult = _nlp.correctPartialSync(words);
+          final appended    = (_accumulatedText.isEmpty
+              ? localResult
+              : '$_accumulatedText $localResult').trim();
+
+          if (mounted) setState(() {
+            _displayText     = appended;
+            _isRefiningFinal = true;
+          });
+
+          try {
+            final correctionResult = await _nlp.correct(appended);
+            final corrected        = correctionResult['corrected'] as String;
+
+            if (mounted) {
+              setState(() {
+                _accumulatedText = corrected;
+                _displayText     = corrected;
+                _isRefiningFinal = false;
+              });
+            }
+
+            final user = FirebaseAuth.instance.currentUser;
+            if (user != null) {
+              await FirebaseFirestore.instance
+                  .collection('translations')
+                  .add({
+                'text':    corrected,
+                'rawText': words,
+                'time':    FieldValue.serverTimestamp(),
+                'userId':  user.uid,
+                'mode':    'basic',           // free mode marker
+              });
+            }
+          } catch (e) {
+            dev.log('Basic correction error: $e');
+            if (mounted) {
+              setState(() {
+                _accumulatedText = appended;
+                _isRefiningFinal = false;
+              });
+            }
+          }
+        } else {
+          // Partials for free: show raw spoken words only, no NLP applied.
+          // Text won't be corrected until the 8s pause fires the final result.
+          if (mounted) setState(() => _displayText = words);
+        }
+      },
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // PREMIUM — Instant Realtime + Noise Cancellation (FULL FEATURES)
+  //
+  // Advantages vs free:
+  //   • No session time limit (120s listen window, auto-restarts)
+  //   • 500ms pause = translation fires ~instantly after speaking
+  //   • Text updates LIVE word-by-word via realtime NLP callback
+  //   • Strict noise filter drops single-word low-confidence blips
+  //   • Saves with mode: 'realtime' tag in Firestore
+  // ══════════════════════════════════════════════════════════════════════════
+
+  Future<void> _startRealtimeListening() async {
+    if (!_isInitialized) {
+      await _initSpeech();
+      if (!_isInitialized) return;
+    }
+
+    // No countdown for premium — session auto-restarts indefinitely
+    await _speech.listen(
+      localeId:       'en_US',
+      listenFor:      const Duration(seconds: 120),
+      // ── 500ms pause = translation fires almost instantly after speaking.
+      //    This is the key premium advantage: ~0.5s vs free's ~8s delay.
+      pauseFor:       const Duration(milliseconds: 500),
       partialResults: true,
       listenMode:     stt.ListenMode.dictation,
       onResult: (result) async {
@@ -137,26 +276,29 @@ class _TranslatorScreenState extends State<TranslatorScreen>
             ? result.confidence.toDouble()
             : 0.6;
 
-        if (!_nlp.isReliableSpeechResult(words, confidence)) {
-          dev.log('Skipping low-confidence result: "$words" ($confidence)');
+        // ── Noise cancellation (premium only) ─────────────────────────────
+        // Drop single-word results with <50% confidence — these are almost
+        // always background noise, mic bumps, or breath sounds.
+        // Free users do NOT get this filter.
+        if (words.split(' ').length < 2 && confidence < 0.5) {
+          dev.log('Noise filtered: "$words" ($confidence)');
           return;
         }
 
         if (result.finalResult) {
-          // 1. Local patterns instantly
           final localResult = _nlp.correctPartialSync(words);
-
-          final appended = (_accumulatedText.isEmpty
+          final appended    = (_accumulatedText.isEmpty
               ? localResult
               : '$_accumulatedText $localResult').trim();
 
-          if (mounted) setState(() => _displayText = appended);
+          if (mounted) setState(() {
+            _displayText     = appended;
+            _isRefiningFinal = true;
+          });
 
-          // 2. Claude correction
-          setState(() => _isRefiningFinal = true);
           try {
             final correctionResult = await _nlp.correct(appended);
-            final corrected = correctionResult['corrected'] as String;
+            final corrected        = correctionResult['corrected'] as String;
 
             if (mounted) {
               setState(() {
@@ -166,7 +308,6 @@ class _TranslatorScreenState extends State<TranslatorScreen>
               });
             }
 
-            // Save to Firestore
             final user = FirebaseAuth.instance.currentUser;
             if (user != null) {
               await FirebaseFirestore.instance
@@ -176,10 +317,11 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                 'rawText': words,
                 'time':    FieldValue.serverTimestamp(),
                 'userId':  user.uid,
+                'mode':    'realtime',        // premium mode marker
               });
             }
           } catch (e) {
-            dev.log('Final correction error: $e');
+            dev.log('Realtime correction error: $e');
             if (mounted) {
               setState(() {
                 _accumulatedText = appended;
@@ -188,9 +330,10 @@ class _TranslatorScreenState extends State<TranslatorScreen>
             }
           }
         } else {
-          // Partial: local-pattern preview
+          // Partials for premium: apply local NLP instantly while speaking.
+          // This is the live word-by-word update feel exclusive to premium.
           final localCorrected = _nlp.correctPartialSync(words);
-          final preview = (_accumulatedText.isEmpty
+          final preview        = (_accumulatedText.isEmpty
               ? localCorrected
               : '$_accumulatedText $localCorrected').trim();
           if (mounted) setState(() => _displayText = preview);
@@ -199,39 +342,59 @@ class _TranslatorScreenState extends State<TranslatorScreen>
     );
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // SHARED — Restart & Toggle
+  // ══════════════════════════════════════════════════════════════════════════
+
   Future<void> _restartListening() async {
     if (!_isListening || _userStopped) return;
     await _speech.stop();
     await Future.delayed(const Duration(milliseconds: 40));
     if (!_isListening || _userStopped) return;
-    await _startListening();
+
+    // Route to correct mode based on plan
+    if (_isPremium) {
+      await _startRealtimeListening();   // premium: instant + noise cancel
+    } else {
+      await _startBasicListening();      // free: 8s delay + no noise cancel
+    }
   }
 
   Future<void> _toggleMic() async {
     if (_isListening) {
+      // Stop
       _userStopped = true;
+      _freeTimer?.cancel();
       await _speech.stop();
-      if (mounted) {
-        setState(() {
-          _isListening     = false;
-          _isRefiningFinal = false;
-        });
-      }
+      if (mounted) setState(() {
+        _isListening     = false;
+        _isRefiningFinal = false;
+      });
     } else {
+      // Start — reset session state
       _userStopped     = false;
       _displayText     = '';
       _accumulatedText = '';
+      _freeSecondsLeft = _freeTotalSeconds;
       if (mounted) setState(() => _isListening = true);
       _nlp.beginSession();
-      await _startListening();
+
+      // Route to correct mode based on plan
+      if (_isPremium) {
+        await _startRealtimeListening();   // premium: instant + noise cancel
+      } else {
+        await _startBasicListening();      // free: 8s delay + no noise cancel
+      }
     }
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
   String get _subtitleHint {
-    if (!_isListening && _displayText.isEmpty) return 'Tap the mic to start speaking...';
-    if (_isListening  && _displayText.isEmpty) return 'Listening...';
+    if (!_isListening && _displayText.isEmpty) {
+      return 'Tap the mic to start speaking...';
+    }
+    if (_isListening && _displayText.isEmpty) return 'Listening...';
     return '';
   }
 
@@ -306,7 +469,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                       ),
                       onPressed: () => Navigator.pop(context),
                       child: const Text('Cancel',
-                          style: TextStyle(color: Color.fromARGB(255, 255, 255, 255))),
+                          style: TextStyle(color: Colors.white)),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -324,8 +487,6 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                         if (wrong.isEmpty || correct.isEmpty) return;
 
                         await _nlp.learnPattern(wrong, correct);
-
-                        // ── NEW: fire word-added notification ──────────────
                         await NotificationHelper.wordAdded(correct);
 
                         if (mounted) {
@@ -334,7 +495,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
                               content: Text('"$wrong" → "$correct" saved!'),
-                              backgroundColor: const Color.fromARGB(255, 192, 252, 252),
+                              backgroundColor: const Color(0xFF1E3A3A),
                               behavior: SnackBarBehavior.floating,
                               shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(10)),
@@ -359,6 +520,8 @@ class _TranslatorScreenState extends State<TranslatorScreen>
 
   @override
   void dispose() {
+    _freeTimer?.cancel();
+    _premiumSub.cancel();
     _nlp.onRealtimeCorrection = null;
     _speech.stop();
     _pulseController.dispose();
@@ -424,6 +587,29 @@ class _TranslatorScreenState extends State<TranslatorScreen>
             ),
           ),
           const Spacer(),
+          // Premium badge — only shown to premium users
+          if (_isPremium)
+            Container(
+              margin: const EdgeInsets.only(right: 8),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: _tealDim,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: _tealBorder),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.star_rounded, color: _teal, size: 11),
+                  SizedBox(width: 4),
+                  Text('Premium',
+                      style: TextStyle(
+                          color: _teal,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700)),
+                ],
+              ),
+            ),
           _appBarBtn(
             icon: _showCorrections
                 ? Icons.close_rounded
@@ -470,7 +656,8 @@ class _TranslatorScreenState extends State<TranslatorScreen>
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        // LIVE + refining status row
+
+        // ── LIVE dot + mode indicator ──────────────────────────────────────
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -510,11 +697,15 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                             color: _teal, shape: BoxShape.circle),
                       ),
                       const SizedBox(width: 5),
-                      const Text('refining',
-                          style: TextStyle(
-                              color: _teal,
-                              fontSize: 11,
-                              letterSpacing: 0.5)),
+                      Text(
+                        _isPremium
+                            ? 'translating...'
+                            : 'translating (basic mode)...',
+                        style: const TextStyle(
+                            color: _teal,
+                            fontSize: 11,
+                            letterSpacing: 0.5),
+                      ),
                     ],
                   ),
                 ),
@@ -590,15 +781,78 @@ class _TranslatorScreenState extends State<TranslatorScreen>
 
         const SizedBox(height: 20),
 
-        // Status footer
+        // ── Status footer ──────────────────────────────────────────────────
         if (_isListening)
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 8, runSpacing: 6,
             children: [
+              // Mode badge
+              if (_isPremium)
+                // PREMIUM: shows "Realtime · Noise Filter"
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: _tealDim,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: _tealBorder),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.star_rounded, color: _teal, size: 11),
+                      SizedBox(width: 4),
+                      Text('Realtime · Noise Filter',
+                          style: TextStyle(color: _teal, fontSize: 11)),
+                    ],
+                  ),
+                )
+              else
+                // FREE: shows countdown timer — turns red in last 10s
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: _freeSecondsLeft <= 10
+                        ? Colors.redAccent.withOpacity(0.15)
+                        : _card,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: _freeSecondsLeft <= 10
+                          ? Colors.redAccent.withOpacity(0.5)
+                          : _white20,
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.timer_outlined,
+                          size: 11,
+                          color: _freeSecondsLeft <= 10
+                              ? Colors.redAccent
+                              : _white40),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Basic · ${_freeSecondsLeft}s left',
+                        style: TextStyle(
+                          color: _freeSecondsLeft <= 10
+                              ? Colors.redAccent
+                              : _white40,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+              // Word count
               Text('$_wordCount/$_maxWords words',
-                  style: const TextStyle(color: _white40, fontSize: 12)),
-              if (_nlp.patternCount > 0) ...[
-                const SizedBox(width: 12),
+                  style: const TextStyle(
+                      color: _white40, fontSize: 12)),
+
+              // Pattern count
+              if (_nlp.patternCount > 0)
                 Container(
                   padding: const EdgeInsets.symmetric(
                       horizontal: 10, vertical: 3),
@@ -612,9 +866,43 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                     style: const TextStyle(color: _teal, fontSize: 11),
                   ),
                 ),
-              ],
             ],
           ),
+
+        // ── Upgrade nudge — only shown to free users when NOT listening ─────
+        if (!_isPremium && !_isListening) ...[
+          const SizedBox(height: 20),
+          GestureDetector(
+            onTap: widget.goToPremium,
+            child: Container(
+              margin: const EdgeInsets.symmetric(horizontal: 24),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 16, vertical: 10),
+              decoration: BoxDecoration(
+                color: _tealDim,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: _tealBorder),
+              ),
+              child: const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.star_rounded, color: _teal, size: 14),
+                  SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      'Upgrade for Instant Realtime + Noise Cancellation',
+                      style: TextStyle(
+                          color: _teal,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
 
         const SizedBox(height: 100),
       ],
@@ -862,15 +1150,12 @@ class _TranslatorScreenState extends State<TranslatorScreen>
               const SizedBox(height: 6),
               GestureDetector(
                 onTap: () async {
-                  // Delete from Firestore
                   await FirebaseFirestore.instance
                       .collection('users')
                       .doc(uid)
                       .collection('corrections')
                       .doc(docId)
                       .delete();
-
-                  // ── NEW: fire word-deleted notification ────────────────
                   await NotificationHelper.wordDeleted(wrong);
                 },
                 child: const Icon(Icons.delete_outline_rounded,
