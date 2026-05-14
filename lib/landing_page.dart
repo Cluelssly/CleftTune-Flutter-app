@@ -56,8 +56,8 @@ class _LandingPageState extends State<LandingPage>
           ),
         );
 
-    _taglineSlide = Tween<Offset>(begin: const Offset(0, 0.4), end: Offset.zero)
-        .animate(
+    _taglineSlide =
+        Tween<Offset>(begin: const Offset(0, 0.4), end: Offset.zero).animate(
           CurvedAnimation(
             parent: _controller,
             curve: const Interval(0.15, 0.55, curve: Curves.easeOut),
@@ -80,8 +80,8 @@ class _LandingPageState extends State<LandingPage>
           ),
         );
 
-    _buttonSlide = Tween<Offset>(begin: const Offset(0, 0.4), end: Offset.zero)
-        .animate(
+    _buttonSlide =
+        Tween<Offset>(begin: const Offset(0, 0.4), end: Offset.zero).animate(
           CurvedAnimation(
             parent: _controller,
             curve: const Interval(0.65, 1.0, curve: Curves.easeOut),
@@ -118,7 +118,9 @@ class _LandingPageState extends State<LandingPage>
           child: LayoutBuilder(
             builder: (context, constraints) {
               final isMobile = constraints.maxWidth < 800;
-              return isMobile ? _buildMobile() : _buildDesktop();
+              return isMobile
+                  ? _buildMobile(constraints)
+                  : _buildDesktop();
             },
           ),
         ),
@@ -127,60 +129,258 @@ class _LandingPageState extends State<LandingPage>
   }
 
   // ─── MOBILE ───────────────────────────────────────────────────────────────
-  Widget _buildMobile() {
-    return SingleChildScrollView(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 36),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            SlideTransition(
-              position: _logoSlide,
-              child: FadeTransition(opacity: _fadeIn, child: _buildLogo(160)),
-            ),
-            const SizedBox(height: 24),
-            SlideTransition(
-              position: _taglineSlide,
-              child: FadeTransition(
+  Widget _buildMobile(BoxConstraints constraints) {
+    final screenH = constraints.maxHeight;
+
+    // Scale logo size based on available height so nothing overflows
+    final logoSize = (screenH * 0.16).clamp(72.0, 110.0);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          // ── TOP: Logo + tagline + subtitle ─────────────────────────────
+          Column(
+            children: [
+              // Logo
+              SlideTransition(
+                position: _logoSlide,
+                child: FadeTransition(
+                  opacity: _fadeIn,
+                  child: _buildLogo(logoSize),
+                ),
+              ),
+
+              SizedBox(height: screenH * 0.018),
+
+              // "Your Voice, Understood."
+              SlideTransition(
+                position: _taglineSlide,
+                child: FadeTransition(
+                  opacity: _fadeIn,
+                  child: RichText(
+                    textAlign: TextAlign.center,
+                    text: TextSpan(
+                      children: [
+                        TextSpan(
+                          text: "Your Voice,\n",
+                          style: TextStyle(
+                            fontSize: (screenH * 0.033).clamp(18.0, 26.0),
+                            fontWeight: FontWeight.w800,
+                            color: Colors.white,
+                            height: 1.15,
+                          ),
+                        ),
+                        TextSpan(
+                          text: "Understood.",
+                          style: TextStyle(
+                            fontSize: (screenH * 0.033).clamp(18.0, 26.0),
+                            fontWeight: FontWeight.w800,
+                            color: const Color(0xFF1D9E75),
+                            height: 1.15,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+
+              SizedBox(height: screenH * 0.008),
+
+              FadeTransition(
                 opacity: _fadeIn,
-                child: _buildTagline(centered: true),
+                child: Text(
+                  "CleftTune bridges the gap — one word at a time.",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: (screenH * 0.016).clamp(10.0, 13.0),
+                    color: Colors.white.withOpacity(0.5),
+                    height: 1.4,
+                  ),
+                ),
+              ),
+            ],
+          ),
+
+          // ── MID: Brand name + subtitle ──────────────────────────────────
+          SlideTransition(
+            position: _textSlide,
+            child: FadeTransition(
+              opacity: _fadeIn,
+              child: Column(
+                children: [
+                  RichText(
+                    textAlign: TextAlign.center,
+                    text: TextSpan(
+                      children: [
+                        TextSpan(
+                          text: "Cleft",
+                          style: TextStyle(
+                            fontSize: (screenH * 0.044).clamp(26.0, 38.0),
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                        ),
+                        TextSpan(
+                          text: "Tune",
+                          style: TextStyle(
+                            fontSize: (screenH * 0.044).clamp(26.0, 38.0),
+                            fontWeight: FontWeight.bold,
+                            color: const Color(0xFF1D9E75),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(height: screenH * 0.006),
+                  Text(
+                    "AI-powered voice support for clearer communication.",
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: (screenH * 0.016).clamp(10.0, 13.0),
+                      color: Colors.white.withOpacity(0.6),
+                      height: 1.4,
+                    ),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 8),
-            FadeTransition(
+          ),
+
+          // ── QUOTE CARD ──────────────────────────────────────────────────
+          SlideTransition(
+            position: _quoteSlide,
+            child: FadeTransition(
               opacity: _fadeIn,
-              child: Text(
-                "CleftTune bridges the gap —\none word at a time.",
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 14,
-                  color: Colors.white.withOpacity(0.55),
-                  height: 1.6,
+              child: Container(
+                width: double.infinity,
+                padding: EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: screenH * 0.016,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.05),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: Colors.white.withOpacity(0.08),
+                  ),
+                ),
+                child: Column(
+                  children: [
+                    Icon(
+                      Icons.format_quote_rounded,
+                      color: const Color(0xFF1D9E75),
+                      size: (screenH * 0.025).clamp(14.0, 20.0),
+                    ),
+                    SizedBox(height: screenH * 0.008),
+                    Text(
+                      "Every voice deserves to be understood.",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: (screenH * 0.016).clamp(10.0, 13.0),
+                        color: Colors.white.withOpacity(0.75),
+                        fontStyle: FontStyle.italic,
+                        height: 1.5,
+                      ),
+                    ),
+                    SizedBox(height: screenH * 0.006),
+                    Text(
+                      "— CleftTune Team",
+                      style: TextStyle(
+                        fontSize: (screenH * 0.014).clamp(9.0, 11.0),
+                        color: const Color(0xFF1D9E75),
+                        letterSpacing: 0.4,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
-            const SizedBox(height: 32),
-            SlideTransition(
-              position: _textSlide,
-              child: FadeTransition(opacity: _fadeIn, child: _buildBrandName()),
+          ),
+
+          // ── FEATURES ROW ────────────────────────────────────────────────
+          FadeTransition(
+            opacity: _fadeIn,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                _miniFeature(
+                  Icons.graphic_eq_rounded,
+                  "Voice Clarity",
+                  "Enhance your voice\nwith precision.",
+                  screenH,
+                ),
+                Container(
+                  width: 1,
+                  height: 44,
+                  color: Colors.white.withOpacity(0.1),
+                ),
+                _miniFeature(
+                  Icons.shield_outlined,
+                  "Private & Secure",
+                  "Your data is protected\nand never shared.",
+                  screenH,
+                ),
+                Container(
+                  width: 1,
+                  height: 44,
+                  color: Colors.white.withOpacity(0.1),
+                ),
+                _miniFeature(
+                  Icons.people_alt_outlined,
+                  "Built for You",
+                  "Designed with care,\ndriven by empathy.",
+                  screenH,
+                ),
+              ],
             ),
-            const SizedBox(height: 6),
-            FadeTransition(opacity: _fadeIn, child: _buildSubtitle()),
-            const SizedBox(height: 20),
-            SlideTransition(
-              position: _quoteSlide,
-              child: FadeTransition(opacity: _fadeIn, child: _buildQuote()),
+          ),
+
+          // ── BUTTON ──────────────────────────────────────────────────────
+          SlideTransition(
+            position: _buttonSlide,
+            child: FadeTransition(
+              opacity: _fadeIn,
+              child: SizedBox(
+                width: double.infinity,
+                height: (screenH * 0.068).clamp(44.0, 54.0),
+                child: ElevatedButton(
+                  onPressed: widget.onContinue,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF1D9E75),
+                    elevation: 6,
+                    shadowColor: const Color(0xFF1D9E75).withOpacity(0.4),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        "Get Started",
+                        style: TextStyle(
+                          fontSize: (screenH * 0.02).clamp(13.0, 16.0),
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      const Icon(
+                        Icons.arrow_forward_rounded,
+                        color: Colors.white,
+                        size: 18,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
-            const SizedBox(height: 20),
-            FadeTransition(opacity: _fadeIn, child: _buildFeatureRow()),
-            const SizedBox(height: 32),
-            SlideTransition(
-              position: _buttonSlide,
-              child: FadeTransition(opacity: _fadeIn, child: _buildButton()),
-            ),
-            const SizedBox(height: 24),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -248,10 +448,12 @@ class _LandingPageState extends State<LandingPage>
                 const SizedBox(height: 24),
                 SlideTransition(
                   position: _quoteSlide,
-                  child: FadeTransition(opacity: _fadeIn, child: _buildQuote()),
+                  child: FadeTransition(
+                      opacity: _fadeIn, child: _buildQuote()),
                 ),
                 const SizedBox(height: 24),
-                FadeTransition(opacity: _fadeIn, child: _buildFeatureRow()),
+                FadeTransition(
+                    opacity: _fadeIn, child: _buildFeatureRow()),
                 const SizedBox(height: 36),
                 SlideTransition(
                   position: _buttonSlide,
@@ -268,7 +470,7 @@ class _LandingPageState extends State<LandingPage>
     );
   }
 
-  // ─── WIDGETS ──────────────────────────────────────────────────────────────
+  // ─── SHARED WIDGETS ───────────────────────────────────────────────────────
 
   /// Pulsing logo with animated glow rings
   Widget _buildLogo(double size) {
@@ -287,9 +489,8 @@ class _LandingPageState extends State<LandingPage>
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   border: Border.all(
-                    color: const Color(
-                      0xFF1D9E75,
-                    ).withOpacity(0.12 * (1 - _waveController.value)),
+                    color: const Color(0xFF1D9E75).withOpacity(
+                        0.12 * (1 - _waveController.value)),
                     width: 1,
                   ),
                 ),
@@ -349,15 +550,14 @@ class _LandingPageState extends State<LandingPage>
                   child: Stack(
                     alignment: Alignment.center,
                     children: [
-                      // dashed inner ring visual
                       CustomPaint(
                         size: Size(size, size),
                         painter: _DashedCirclePainter(
                           radius: size * 0.44,
-                          color: const Color(0xFF1D9E75).withOpacity(0.35),
+                          color:
+                              const Color(0xFF1D9E75).withOpacity(0.35),
                         ),
                       ),
-                      // Logo image
                       Padding(
                         padding: EdgeInsets.all(size * 0.18),
                         child: Image.asset(
@@ -411,7 +611,6 @@ class _LandingPageState extends State<LandingPage>
     );
   }
 
-  /// "Your Voice, \nUnderstood."
   Widget _buildTagline({bool centered = false}) {
     return RichText(
       textAlign: centered ? TextAlign.center : TextAlign.left,
@@ -442,7 +641,6 @@ class _LandingPageState extends State<LandingPage>
     );
   }
 
-  /// "CleftTune" with teal "Tune"
   Widget _buildBrandName() {
     return RichText(
       text: const TextSpan(
@@ -481,7 +679,6 @@ class _LandingPageState extends State<LandingPage>
     );
   }
 
-  /// Quote block
   Widget _buildQuote() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
@@ -493,7 +690,6 @@ class _LandingPageState extends State<LandingPage>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Quote icon badge
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
@@ -531,7 +727,6 @@ class _LandingPageState extends State<LandingPage>
     );
   }
 
-  /// Three feature chips: Voice Clarity | Private & Secure | Built for You
   Widget _buildFeatureRow() {
     final features = [
       (
@@ -608,7 +803,6 @@ class _LandingPageState extends State<LandingPage>
     );
   }
 
-  /// "Get Started →" button
   Widget _buildButton({bool fullWidth = false}) {
     return SizedBox(
       width: fullWidth ? double.infinity : 220,
@@ -642,6 +836,55 @@ class _LandingPageState extends State<LandingPage>
       ),
     );
   }
+}
+
+// ─── MOBILE FEATURE CHIP (with subtitle, matching desktop) ────────────────────
+Widget _miniFeature(
+  IconData icon,
+  String label,
+  String subtitle,
+  double screenH,
+) {
+  return Expanded(
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: (screenH * 0.052).clamp(36.0, 46.0),
+          height: (screenH * 0.052).clamp(36.0, 46.0),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1D9E75).withOpacity(0.12),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(
+            icon,
+            color: const Color(0xFF1D9E75),
+            size: (screenH * 0.026).clamp(16.0, 22.0),
+          ),
+        ),
+        SizedBox(height: screenH * 0.007),
+        Text(
+          label,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: (screenH * 0.015).clamp(9.0, 12.0),
+            color: Colors.white,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        SizedBox(height: screenH * 0.004),
+        Text(
+          subtitle,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: (screenH * 0.013).clamp(8.0, 10.5),
+            color: Colors.white.withOpacity(0.45),
+            height: 1.4,
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 // ─── DASHED CIRCLE PAINTER ────────────────────────────────────────────────────

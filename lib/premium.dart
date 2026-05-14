@@ -1,4 +1,31 @@
+// ============================================================
+// SETUP REQUIRED — read before running
+// ============================================================
+// pubspec.yaml dependencies:
+//   firebase_core: ^3.x
+//   firebase_auth: ^5.x
+//   google_sign_in: ^6.x
+//   connectivity_plus: ^6.x
+//
+// WEB:
+//   1. In Firebase Console → Authentication → Sign-in method → Google → enable it.
+//   2. Add your web OAuth client ID to index.html <head>:
+//      <meta name="google-signin-client_id" content="YOUR_WEB_CLIENT_ID.apps.googleusercontent.com">
+//   3. In web/index.html add the Firebase JS SDK scripts (if not already).
+//   4. In your GoogleSignIn() constructor pass clientId on web:
+//      GoogleSignIn(clientId: 'YOUR_WEB_CLIENT_ID.apps.googleusercontent.com')
+//
+// ANDROID:
+//   1. Add google-services.json to android/app/
+//   2. SHA-1 fingerprint added in Firebase Console for the Android app.
+//
+// IOS:
+//   1. Add GoogleService-Info.plist to ios/Runner/
+//   2. Add CFBundleURLSchemes in Info.plist (REVERSED_CLIENT_ID from plist).
+// ============================================================
+
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -18,20 +45,28 @@ class _PremiumScreenState extends State<PremiumScreen> {
   final TextEditingController emailController    = TextEditingController();
   final TextEditingController passwordController = TextEditingController();
 
-  bool isLoginMode        = true;
-  bool isLoading          = false;
-  bool isGoogleLoading    = false;
-  bool obscurePassword    = true;
-  bool _hasInternet       = true;
+  bool isLoginMode           = true;
+  bool isLoading             = false;
+  bool isGoogleLoading       = false;
+  bool obscurePassword       = true;
+  bool _hasInternet          = true;
   bool _showNoInternetBanner = false;
 
   // Password strength: 0=empty, 1=weak, 2=fair, 3=good, 4=strong
   int    _passwordStrength      = 0;
   String _passwordStrengthLabel = '';
 
-  final FirebaseAuth  _auth        = FirebaseAuth.instance;
-  final GoogleSignIn  _googleSignIn = GoogleSignIn();
-  late  StreamSubscription<List<ConnectivityResult>> _connectivitySub;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+
+  // GoogleSignIn instance — on web pass your OAuth client ID
+  late final GoogleSignIn _googleSignIn = kIsWeb
+      ? GoogleSignIn(
+          clientId: '756813986418-j2dgokq3hi229seu3hdhh6pn68pckint.apps.googleusercontent.com', // <-- replace
+          scopes: ['email', 'profile'],
+        )
+      : GoogleSignIn(scopes: ['email', 'profile']);
+
+  late StreamSubscription<List<ConnectivityResult>> _connectivitySub;
 
   // ── Theme constants ──────────────────────────────────────────────────────
   static const _bg          = Color(0xFF0D2B2B);
@@ -46,7 +81,6 @@ class _PremiumScreenState extends State<PremiumScreen> {
   static const _white30     = Color(0x4DFFFFFF);
   static const _fieldBg     = Color(0x12FFFFFF);
 
-  // Strength colors
   static const _strengthWeak   = Color(0xFFE74C3C);
   static const _strengthFair   = Color(0xFFE67E22);
   static const _strengthGood   = Color(0xFFF1C40F);
@@ -171,15 +205,15 @@ class _PremiumScreenState extends State<PremiumScreen> {
       }
     } on FirebaseAuthException catch (e) {
       final msgs = {
-        'user-not-found'                         : "No account found for this email",
-        'wrong-password'                          : "Incorrect password. Please try again",
-        'invalid-credential'                      : "Incorrect email or password. Please try again",
-        'email-already-in-use'                    : "This email is already registered",
-        'weak-password'                           : "Password is too weak. Use at least 6 characters",
-        'invalid-email'                           : "Enter a valid email address",
-        'too-many-requests'                       : "Too many attempts. Please try again later",
-        'network-request-failed'                  : "Network error. Check your internet connection",
-        'user-disabled'                           : "This account has been disabled",
+        'user-not-found'        : "No account found for this email",
+        'wrong-password'        : "Incorrect password. Please try again",
+        'invalid-credential'    : "Incorrect email or password. Please try again",
+        'email-already-in-use'  : "This email is already registered",
+        'weak-password'         : "Password is too weak. Use at least 6 characters",
+        'invalid-email'         : "Enter a valid email address",
+        'too-many-requests'     : "Too many attempts. Please try again later",
+        'network-request-failed': "Network error. Check your internet connection",
+        'user-disabled'         : "This account has been disabled",
       };
       _snack(msgs[e.code] ?? "Authentication failed: ${e.message}", isError: true);
     } catch (_) {
@@ -189,48 +223,121 @@ class _PremiumScreenState extends State<PremiumScreen> {
     }
   }
 
-  // ── GOOGLE SIGN-IN ───────────────────────────────────────────────────────
+  // ── GOOGLE SIGN-IN (Web + Mobile) ────────────────────────────────────────
   Future<void> handleGoogleSignIn() async {
     if (!await _checkInternet()) { _showInternetWarningSnack(); return; }
     setState(() => isGoogleLoading = true);
     try {
-      final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
-      if (googleUser == null) { setState(() => isGoogleLoading = false); return; }
+      if (kIsWeb) {
+        await _handleGoogleSignInWeb();
+      } else {
+        await _handleGoogleSignInMobile();
+      }
+    } finally {
+      if (mounted) setState(() => isGoogleLoading = false);
+    }
+  }
 
-      final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
+  // WEB: use Firebase's signInWithPopup — opens the Google OAuth popup natively
+  Future<void> _handleGoogleSignInWeb() async {
+    try {
+      final GoogleAuthProvider provider = GoogleAuthProvider();
+      provider.addScope('email');
+      provider.addScope('profile');
+      // signInWithPopup triggers the browser Google OAuth popup
+      final UserCredential userCredential =
+          await _auth.signInWithPopup(provider);
+      if (mounted) {
+        final isNewUser = userCredential.additionalUserInfo?.isNewUser ?? false;
+        final displayName = userCredential.user?.displayName ?? 'there';
+        if (isNewUser) {
+          await _showSuccessDialog(name: displayName, isGoogle: true);
+        }
+        widget.onLogin();
+      }
+    } on FirebaseAuthException catch (e) {
+      // popup-closed-by-user is not an error — user just dismissed it
+      if (e.code == 'popup-closed-by-user' || e.code == 'cancelled-popup-request') {
+        return;
+      }
+      final msgs = {
+        'account-exists-with-different-credential':
+            "An account already exists with a different sign-in method",
+        'invalid-credential'    : "Google sign-in failed. Please try again",
+        'network-request-failed': "Network error. Check your internet connection",
+        'popup-blocked'         : "Popup was blocked by the browser. Please allow popups and try again.",
+      };
+      _snack(msgs[e.code] ?? "Google sign-in failed: ${e.message}", isError: true);
+    } catch (e) {
+      // User closed popup — ignore
+      final errStr = e.toString().toLowerCase();
+      if (errStr.contains('popup') || errStr.contains('cancel') || errStr.contains('closed')) {
+        return;
+      }
+      _snack("Google sign-in failed. Please try again", isError: true);
+    }
+  }
+
+  // MOBILE (Android / iOS): use google_sign_in package then exchange for Firebase credential
+  Future<void> _handleGoogleSignInMobile() async {
+    try {
+      // Sign out first to always show the account picker
+      await _googleSignIn.signOut();
+
+      final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
+      // User cancelled the picker
+      if (googleUser == null) return;
+
+      final GoogleSignInAuthentication googleAuth =
+          await googleUser.authentication;
+
+      // Verify we got valid tokens
+      if (googleAuth.accessToken == null && googleAuth.idToken == null) {
+        _snack("Google sign-in failed: could not obtain credentials", isError: true);
+        return;
+      }
+
       final OAuthCredential credential = GoogleAuthProvider.credential(
         accessToken: googleAuth.accessToken,
         idToken    : googleAuth.idToken,
       );
-      final UserCredential userCredential = await _auth.signInWithCredential(credential);
+
+      final UserCredential userCredential =
+          await _auth.signInWithCredential(credential);
 
       if (mounted) {
         final isNewUser = userCredential.additionalUserInfo?.isNewUser ?? false;
         if (isNewUser) {
-          await _showSuccessDialog(name: googleUser.displayName ?? 'there', isGoogle: true);
+          await _showSuccessDialog(
+              name: googleUser.displayName ?? 'there', isGoogle: true);
         }
         widget.onLogin();
       }
     } on FirebaseAuthException catch (e) {
       final msgs = {
-        'account-exists-with-different-credential': "An account already exists with a different sign-in method",
-        'invalid-credential'                       : "Google sign-in failed. Please try again",
-        'network-request-failed'                   : "Network error. Check your internet connection",
+        'account-exists-with-different-credential':
+            "An account already exists with a different sign-in method",
+        'invalid-credential'    : "Google sign-in failed. Please try again",
+        'network-request-failed': "Network error. Check your internet connection",
       };
       _snack(msgs[e.code] ?? "Google sign-in failed: ${e.message}", isError: true);
-    } catch (_) {
+    } catch (e) {
+      // User cancelled native account picker — ignore silently
+      final errStr = e.toString().toLowerCase();
+      if (errStr.contains('cancel') || errStr.contains('sign_in_canceled') ||
+          errStr.contains('sign_in_failed') && errStr.contains('12501')) {
+        return;
+      }
       _snack("Google sign-in failed. Please try again", isError: true);
-    } finally {
-      if (mounted) setState(() => isGoogleLoading = false);
     }
   }
 
   // ── SUCCESS DIALOG ───────────────────────────────────────────────────────
   Future<void> _showSuccessDialog({String name = 'there', bool isGoogle = false}) async {
     return showDialog<void>(
-      context         : context,
+      context: context,
       barrierDismissible: false,
-      barrierColor    : Colors.black.withOpacity(0.7),
+      barrierColor: Colors.black.withOpacity(0.7),
       builder: (context) => Dialog(
         backgroundColor: Colors.transparent,
         child: Container(
@@ -288,9 +395,8 @@ class _PremiumScreenState extends State<PremiumScreen> {
     );
   }
 
-  // ── FORGOT PASSWORD — opens full dedicated screen ─────────────────────────
+  // ── FORGOT PASSWORD ───────────────────────────────────────────────────────
   void _openForgotPassword() {
-    // Pre-fill with whatever the user already typed in the email field
     final prefill = emailController.text.trim();
     Navigator.of(context).push(
       PageRouteBuilder(
@@ -532,7 +638,6 @@ class _PremiumScreenState extends State<PremiumScreen> {
       ]),
       const SizedBox(height: 16),
 
-      // Email field
       _buildFieldLabel("Email address"),
       const SizedBox(height: 6),
       _buildTextField(
@@ -543,7 +648,6 @@ class _PremiumScreenState extends State<PremiumScreen> {
       ),
       const SizedBox(height: 14),
 
-      // Password field
       _buildFieldLabel("Password"),
       const SizedBox(height: 6),
       _buildTextField(
@@ -560,13 +664,11 @@ class _PremiumScreenState extends State<PremiumScreen> {
         ),
       ),
 
-      // Password strength bar (sign-up only)
       if (!isLoginMode && _passwordStrength > 0) ...[
         const SizedBox(height: 10),
         _buildPasswordStrengthBar(),
       ],
 
-      // Forgot password link (login only)
       if (isLoginMode) ...[
         const SizedBox(height: 10),
         Align(
@@ -582,7 +684,6 @@ class _PremiumScreenState extends State<PremiumScreen> {
       ],
       const SizedBox(height: 22),
 
-      // No internet inline warning
       if (!_hasInternet) ...[
         Container(
           width: double.infinity,
@@ -606,7 +707,6 @@ class _PremiumScreenState extends State<PremiumScreen> {
         ),
       ],
 
-      // Login / Create Account button
       SizedBox(
         width: double.infinity, height: 50,
         child: ElevatedButton(
@@ -631,7 +731,6 @@ class _PremiumScreenState extends State<PremiumScreen> {
       ),
       const SizedBox(height: 16),
 
-      // Toggle login / sign-up
       SizedBox(
         width: double.infinity, height: 48,
         child: OutlinedButton(
@@ -640,10 +739,10 @@ class _PremiumScreenState extends State<PremiumScreen> {
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           ),
           onPressed: () => setState(() {
-            isLoginMode           = !isLoginMode;
+            isLoginMode            = !isLoginMode;
             emailController.clear();
             passwordController.clear();
-            _passwordStrength     = 0;
+            _passwordStrength      = 0;
             _passwordStrengthLabel = '';
           }),
           child: Text(
@@ -793,10 +892,6 @@ class _PremiumScreenState extends State<PremiumScreen> {
 
 // ════════════════════════════════════════════════════════════════════════════
 // FORGOT PASSWORD SCREEN
-// A fully self-contained screen with three states:
-//   1. INPUT  — enter email
-//   2. LOADING — sending the reset email
-//   3. SUCCESS — confirmation with resend option
 // ════════════════════════════════════════════════════════════════════════════
 
 class _ForgotPasswordScreen extends StatefulWidget {
@@ -813,8 +908,7 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
   late final AnimationController   _anim;
   late final Animation<double>     _fadeIn;
 
-  // 'input' | 'loading' | 'success'
-  String  _stage       = 'input';
+  String  _stage          = 'input';
   String? _errorText;
   bool    _resendCooldown = false;
   int     _cooldownSecs   = 0;
@@ -846,14 +940,11 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
     super.dispose();
   }
 
-  // ── Validate email ───────────────────────────────────────────────────────
   bool _isValidEmail(String e) =>
       RegExp(r'^[\w\.-]+@[\w\.-]+\.\w{2,}$').hasMatch(e);
 
-  // ── Send reset email ─────────────────────────────────────────────────────
   Future<void> _sendReset() async {
     final email = _emailCtrl.text.trim();
-
     if (email.isEmpty) {
       setState(() => _errorText = "Please enter your email address.");
       return;
@@ -864,14 +955,10 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
     }
     setState(() { _errorText = null; _stage = 'loading'; });
 
-    // Check connectivity
     final connected =
         (await Connectivity().checkConnectivity()).any((r) => r != ConnectivityResult.none);
     if (!connected) {
-      setState(() {
-        _stage     = 'input';
-        _errorText = "No internet connection. Please check your network.";
-      });
+      setState(() { _stage = 'input'; _errorText = "No internet connection. Please check your network."; });
       return;
     }
 
@@ -881,28 +968,17 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
       _startCooldown();
     } on FirebaseAuthException catch (e) {
       final msgs = {
-        'user-not-found'         : "No account found for this email address.",
-        'invalid-email'          : "Enter a valid email address.",
-        'too-many-requests'      : "Too many requests. Please wait a moment and try again.",
-        'network-request-failed' : "Network error. Check your internet connection.",
+        'user-not-found'        : "No account found for this email address.",
+        'invalid-email'         : "Enter a valid email address.",
+        'too-many-requests'     : "Too many requests. Please wait a moment and try again.",
+        'network-request-failed': "Network error. Check your internet connection.",
       };
-      if (mounted) {
-        setState(() {
-          _stage     = 'input';
-          _errorText = msgs[e.code] ?? "Something went wrong. Please try again.";
-        });
-      }
+      if (mounted) setState(() { _stage = 'input'; _errorText = msgs[e.code] ?? "Something went wrong. Please try again."; });
     } catch (_) {
-      if (mounted) {
-        setState(() {
-          _stage     = 'input';
-          _errorText = "Something went wrong. Please try again.";
-        });
-      }
+      if (mounted) setState(() { _stage = 'input'; _errorText = "Something went wrong. Please try again."; });
     }
   }
 
-  // ── Resend cooldown (60 s) ───────────────────────────────────────────────
   void _startCooldown() {
     setState(() { _resendCooldown = true; _cooldownSecs = 60; });
     _cooldownTimer = Timer.periodic(const Duration(seconds: 1), (t) {
@@ -918,10 +994,8 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
   void _resend() {
     if (_resendCooldown) return;
     setState(() => _stage = 'input');
-    // Small delay so the user sees the form before auto-sending again
   }
 
-  // ── BUILD ────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -950,16 +1024,12 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
                         transitionBuilder: (child, animation) => FadeTransition(
                           opacity: animation,
                           child: SlideTransition(
-                            position: Tween<Offset>(
-                              begin: const Offset(0, 0.06),
-                              end: Offset.zero,
-                            ).animate(animation),
+                            position: Tween<Offset>(begin: const Offset(0, 0.06), end: Offset.zero)
+                                .animate(animation),
                             child: child,
                           ),
                         ),
-                        child: _stage == 'success'
-                            ? _buildSuccessState()
-                            : _buildInputState(),
+                        child: _stage == 'success' ? _buildSuccessState() : _buildInputState(),
                       ),
                     ),
                   ),
@@ -972,7 +1042,6 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
     );
   }
 
-  // ── TOP BAR ──────────────────────────────────────────────────────────────
   Widget _buildTopBar() => Padding(
     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
     child: Row(children: [
@@ -982,30 +1051,24 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
       ),
       const Expanded(
         child: Center(
-          child: Text(
-            "Forgot Password",
-            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: Colors.white),
-          ),
+          child: Text("Forgot Password",
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: Colors.white)),
         ),
       ),
-      // Invisible spacer to balance the back button
       const SizedBox(width: 48),
     ]),
   );
 
-  // ── INPUT STATE ──────────────────────────────────────────────────────────
   Widget _buildInputState() {
     return Column(
       key: const ValueKey('input'),
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Icon
         Center(
           child: Container(
             width: 80, height: 80,
             decoration: BoxDecoration(
-              color: _tealDim,
-              shape: BoxShape.circle,
+              color: _tealDim, shape: BoxShape.circle,
               border: Border.all(color: _tealBorder, width: 1.5),
               boxShadow: [BoxShadow(color: _teal.withOpacity(0.2), blurRadius: 24, spreadRadius: 2)],
             ),
@@ -1013,17 +1076,11 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
           ),
         ),
         const SizedBox(height: 28),
-
-        // Title
         const Center(
-          child: Text(
-            "Reset your password",
-            style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: -0.3),
-          ),
+          child: Text("Reset your password",
+              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: -0.3)),
         ),
         const SizedBox(height: 8),
-
-        // Subtitle
         Center(
           child: Text(
             "Enter the email address linked to your CleftTune account and we'll send you a reset link.",
@@ -1032,15 +1089,9 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
           ),
         ),
         const SizedBox(height: 32),
-
-        // Email label
-        const Text(
-          "EMAIL ADDRESS",
-          style: TextStyle(fontSize: 10, color: _white40, fontWeight: FontWeight.w600, letterSpacing: 0.8),
-        ),
+        const Text("EMAIL ADDRESS",
+            style: TextStyle(fontSize: 10, color: _white40, fontWeight: FontWeight.w600, letterSpacing: 0.8)),
         const SizedBox(height: 8),
-
-        // Email field
         TextField(
           controller: _emailCtrl,
           keyboardType: TextInputType.emailAddress,
@@ -1066,31 +1117,19 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(
-                color: _errorText != null ? Colors.redAccent : _teal, width: 1.5,
-              ),
+              borderSide: BorderSide(color: _errorText != null ? Colors.redAccent : _teal, width: 1.5),
             ),
           ),
         ),
-
-        // Error text
         if (_errorText != null) ...[
           const SizedBox(height: 8),
           Row(children: [
             const Icon(Icons.error_outline, color: Colors.redAccent, size: 14),
             const SizedBox(width: 6),
-            Expanded(
-              child: Text(
-                _errorText!,
-                style: const TextStyle(color: Colors.redAccent, fontSize: 12),
-              ),
-            ),
+            Expanded(child: Text(_errorText!, style: const TextStyle(color: Colors.redAccent, fontSize: 12))),
           ]),
         ],
-
         const SizedBox(height: 28),
-
-        // Send button
         SizedBox(
           width: double.infinity, height: 52,
           child: ElevatedButton(
@@ -1106,32 +1145,24 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
                 : const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
                     Icon(Icons.send_rounded, color: Colors.white, size: 18),
                     SizedBox(width: 10),
-                    Text(
-                      "Send Reset Link",
-                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Colors.white, letterSpacing: 0.2),
-                    ),
+                    Text("Send Reset Link",
+                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Colors.white, letterSpacing: 0.2)),
                   ]),
           ),
         ),
         const SizedBox(height: 20),
-
-        // Back to login
         Center(
           child: GestureDetector(
             onTap: () => Navigator.of(context).pop(),
             child: Row(mainAxisSize: MainAxisSize.min, children: [
               const Icon(Icons.arrow_back, color: _white40, size: 14),
               const SizedBox(width: 5),
-              Text(
-                "Back to Sign In",
-                style: TextStyle(fontSize: 13, color: Colors.white.withOpacity(0.45), fontWeight: FontWeight.w500),
-              ),
+              Text("Back to Sign In",
+                  style: TextStyle(fontSize: 13, color: Colors.white.withOpacity(0.45), fontWeight: FontWeight.w500)),
             ]),
           ),
         ),
         const SizedBox(height: 24),
-
-        // Info box
         Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
@@ -1154,15 +1185,12 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
     );
   }
 
-  // ── SUCCESS STATE ────────────────────────────────────────────────────────
   Widget _buildSuccessState() {
     final email = _emailCtrl.text.trim();
     return Column(
       key: const ValueKey('success'),
       children: [
         const SizedBox(height: 12),
-
-        // Animated success icon
         TweenAnimationBuilder<double>(
           tween: Tween(begin: 0.6, end: 1.0),
           duration: const Duration(milliseconds: 500),
@@ -1171,8 +1199,7 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
           child: Container(
             width: 96, height: 96,
             decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: _tealDim,
+              shape: BoxShape.circle, color: _tealDim,
               border: Border.all(color: _teal, width: 2),
               boxShadow: [BoxShadow(color: _teal.withOpacity(0.35), blurRadius: 30, spreadRadius: 4)],
             ),
@@ -1180,21 +1207,13 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
           ),
         ),
         const SizedBox(height: 32),
-
-        const Text(
-          "Check your inbox!",
-          style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: -0.5),
-        ),
+        const Text("Check your inbox!",
+            style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: -0.5)),
         const SizedBox(height: 12),
-
-        Text(
-          "We've sent a password reset link to",
-          textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 14, color: Colors.white.withOpacity(0.5)),
-        ),
+        Text("We've sent a password reset link to",
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 14, color: Colors.white.withOpacity(0.5))),
         const SizedBox(height: 6),
-
-        // Email chip
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           decoration: BoxDecoration(
@@ -1205,19 +1224,12 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
           child: Row(mainAxisSize: MainAxisSize.min, children: [
             const Icon(Icons.email_rounded, color: _teal, size: 15),
             const SizedBox(width: 8),
-            Text(
-              email,
-              style: const TextStyle(fontSize: 13, color: _teal, fontWeight: FontWeight.w600),
-            ),
+            Text(email, style: const TextStyle(fontSize: 13, color: _teal, fontWeight: FontWeight.w600)),
           ]),
         ),
         const SizedBox(height: 32),
-
-        // Step-by-step instructions
         _instructionCard(),
         const SizedBox(height: 28),
-
-        // Spam tip
         Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
@@ -1237,15 +1249,11 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
           ]),
         ),
         const SizedBox(height: 28),
-
-        // Resend button
         SizedBox(
           width: double.infinity, height: 50,
           child: OutlinedButton(
             style: OutlinedButton.styleFrom(
-              side: BorderSide(
-                color: _resendCooldown ? Colors.white.withOpacity(0.1) : _tealBorder,
-              ),
+              side: BorderSide(color: _resendCooldown ? Colors.white.withOpacity(0.1) : _tealBorder),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
               backgroundColor: _resendCooldown ? Colors.transparent : _tealDim,
             ),
@@ -1254,24 +1262,18 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
                 ? Row(mainAxisAlignment: MainAxisAlignment.center, children: [
                     const Icon(Icons.timer_outlined, color: _white40, size: 16),
                     const SizedBox(width: 8),
-                    Text(
-                      "Resend in ${_cooldownSecs}s",
-                      style: const TextStyle(fontSize: 14, color: _white40, fontWeight: FontWeight.w500),
-                    ),
+                    Text("Resend in ${_cooldownSecs}s",
+                        style: const TextStyle(fontSize: 14, color: _white40, fontWeight: FontWeight.w500)),
                   ])
                 : const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
                     Icon(Icons.refresh_rounded, color: _teal, size: 16),
                     SizedBox(width: 8),
-                    Text(
-                      "Resend Email",
-                      style: TextStyle(fontSize: 14, color: _teal, fontWeight: FontWeight.w600),
-                    ),
+                    Text("Resend Email",
+                        style: TextStyle(fontSize: 14, color: _teal, fontWeight: FontWeight.w600)),
                   ]),
           ),
         ),
         const SizedBox(height: 16),
-
-        // Back to login
         SizedBox(
           width: double.infinity, height: 50,
           child: ElevatedButton(
@@ -1284,10 +1286,8 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
             child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
               Icon(Icons.arrow_back_rounded, color: Colors.white, size: 18),
               SizedBox(width: 8),
-              Text(
-                "Back to Sign In",
-                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Colors.white),
-              ),
+              Text("Back to Sign In",
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Colors.white)),
             ]),
           ),
         ),
@@ -1296,7 +1296,6 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
     );
   }
 
-  // ── Step-by-step instruction card ────────────────────────────────────────
   Widget _instructionCard() {
     final steps = [
       (Icons.email_outlined,    "Open the email from CleftTune"),
@@ -1304,7 +1303,6 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
       (Icons.lock_open_rounded, "Create a new strong password"),
       (Icons.login_rounded,     "Sign in with your new password"),
     ];
-
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
@@ -1315,10 +1313,8 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            "WHAT TO DO NEXT",
-            style: TextStyle(fontSize: 10, color: _white40, fontWeight: FontWeight.w700, letterSpacing: 1.0),
-          ),
+          const Text("WHAT TO DO NEXT",
+              style: TextStyle(fontSize: 10, color: _white40, fontWeight: FontWeight.w700, letterSpacing: 1.0)),
           const SizedBox(height: 14),
           ...steps.asMap().entries.map((entry) {
             final i    = entry.key;
@@ -1331,26 +1327,20 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
                   Container(
                     width: 32, height: 32,
                     decoration: BoxDecoration(
-                      color: _tealDim,
-                      shape: BoxShape.circle,
+                      color: _tealDim, shape: BoxShape.circle,
                       border: Border.all(color: _tealBorder),
                     ),
                     child: Icon(step.$1, color: _teal, size: 15),
                   ),
                   if (!isLast)
-                    Container(
-                      width: 1.5, height: 24,
-                      color: Colors.white.withOpacity(0.08),
-                    ),
+                    Container(width: 1.5, height: 24, color: Colors.white.withOpacity(0.08)),
                 ]),
                 const SizedBox(width: 14),
                 Expanded(
                   child: Padding(
                     padding: const EdgeInsets.only(top: 6),
-                    child: Text(
-                      step.$2,
-                      style: TextStyle(fontSize: 13, color: Colors.white.withOpacity(0.65), height: 1.5),
-                    ),
+                    child: Text(step.$2,
+                        style: TextStyle(fontSize: 13, color: Colors.white.withOpacity(0.65), height: 1.5)),
                   ),
                 ),
               ],
@@ -1383,7 +1373,7 @@ class _GoogleLogoPainter extends CustomPainter {
       canvas.drawArc(
         Rect.fromCircle(center: c, radius: r),
         angle * (3.14159 / 180),
-        90   * (3.14159 / 180),
+        90    * (3.14159 / 180),
         true, paint,
       );
       angle += 90;

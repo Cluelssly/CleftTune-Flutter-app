@@ -18,16 +18,25 @@ class _CloudState extends State<Cloud> {
   bool   _isSyncing    = false;
   bool   _syncSuccess  = false;
   String _lastSynced   = 'Never';
-  double _storageUsed  = 0.0;
   double _storageLimit = 5120; // 5 GB in MB
 
-  // ── Design tokens (matches trained_voice_screen) ──────────────────────────
+  // Real per-category storage (MB)
+  double _translationsMB = 0.0;
+  double _correctionsMB  = 0.0;
+  double _otherMB        = 0.0;
+
+  // Real counts
+  int _translationCount = 0;
+  int _correctionCount  = 0;
+
+  double get _storageUsed => _translationsMB + _correctionsMB + _otherMB;
+
+  // ── Design tokens ──────────────────────────────────────────────────────────
   static const _bg       = Color(0xFF060F1A);
   static const _surface  = Color(0xFF0D1F2D);
   static const _card     = Color(0xFF112233);
   static const _teal     = Color(0xFF0ECFB0);
   static const _tealDeep = Color(0xFF0B5D5E);
-  static const _accent   = Color(0xFF1AE5C8);
 
   static const _deviceIdKey = 'clefttune_device_id';
 
@@ -52,15 +61,18 @@ class _CloudState extends State<Cloud> {
     final uid = _auth.currentUser?.uid;
     if (uid == null) return;
     try {
-      final doc  = await _db.collection('users').doc(uid).get();
+      final doc = await _db.collection('users').doc(uid).get();
       if (!doc.exists) return;
       final data = doc.data()!;
       final ts   = data['lastSynced'] as Timestamp?;
-      final mb   = (data['storageUsedMB'] as num?)?.toDouble() ?? 0.0;
       if (mounted) {
         setState(() {
-          _storageUsed = mb;
-          _lastSynced  = ts != null ? _formatTime(ts.toDate()) : 'Never';
+          _translationsMB   = (data['translationsMB']  as num?)?.toDouble() ?? 0.0;
+          _correctionsMB    = (data['correctionsMB']   as num?)?.toDouble() ?? 0.0;
+          _otherMB          = (data['otherMB']         as num?)?.toDouble() ?? 0.0;
+          _translationCount = (data['translationCount'] as num?)?.toInt() ?? 0;
+          _correctionCount  = (data['correctionCount']  as num?)?.toInt() ?? 0;
+          _lastSynced       = ts != null ? _formatTime(ts.toDate()) : 'Never';
         });
       }
     } catch (_) {}
@@ -94,29 +106,49 @@ class _CloudState extends State<Cloud> {
     setState(() { _isSyncing = true; _syncSuccess = false; });
 
     try {
-      final corrections  = await _db.collection('users').doc(uid).collection('corrections').get();
-      final translations = await _db.collection('translations').where('userId', isEqualTo: uid).get();
+      final results = await Future.wait([
+        _db.collection('translations').where('userId', isEqualTo: uid).get(),
+        _db.collection('users').doc(uid).collection('corrections').get(),
+        _db.collection('users').doc(uid).collection('userdata').get(),
+      ]);
 
-      double totalBytes = 0;
-      for (final doc in corrections.docs)  totalBytes += utf8.encode(doc.data().toString()).length;
-      for (final doc in translations.docs) totalBytes += utf8.encode(doc.data().toString()).length;
-      final totalMB = totalBytes / (1024 * 1024);
+      final translationDocs = results[0].docs;
+      final correctionDocs  = results[1].docs;
+      final otherDocs       = results[2].docs;
+
+      double tMB = 0, cMB = 0, oMB = 0;
+      for (final d in translationDocs) tMB += utf8.encode(d.data().toString()).length;
+      for (final d in correctionDocs)  cMB += utf8.encode(d.data().toString()).length;
+      for (final d in otherDocs)       oMB += utf8.encode(d.data().toString()).length;
+
+      tMB /= (1024 * 1024);
+      cMB /= (1024 * 1024);
+      oMB /= (1024 * 1024);
 
       final now = DateTime.now();
+
       await _db.collection('users').doc(uid).set({
         'lastSynced':       FieldValue.serverTimestamp(),
-        'storageUsedMB':    totalMB,
-        'correctionCount':  corrections.docs.length,
-        'translationCount': translations.docs.length,
+        'translationsMB':   tMB,
+        'correctionsMB':    cMB,
+        'otherMB':          oMB,
+        'storageUsedMB':    tMB + cMB + oMB,
+        'translationCount': translationDocs.length,
+        'correctionCount':  correctionDocs.length,
       }, SetOptions(merge: true));
+
       await _registerDevice();
 
       if (mounted) {
         setState(() {
-          _isSyncing   = false;
-          _syncSuccess = true;
-          _storageUsed = totalMB;
-          _lastSynced  = _formatTime(now);
+          _isSyncing        = false;
+          _syncSuccess      = true;
+          _translationsMB   = tMB;
+          _correctionsMB    = cMB;
+          _otherMB          = oMB;
+          _translationCount = translationDocs.length;
+          _correctionCount  = correctionDocs.length;
+          _lastSynced       = _formatTime(now);
         });
         Future.delayed(const Duration(seconds: 3), () {
           if (mounted) setState(() => _syncSuccess = false);
@@ -145,11 +177,18 @@ class _CloudState extends State<Cloud> {
     return '${diff.inDays} day(s) ago';
   }
 
+  String _fmtMB(double mb) {
+    if (mb < 0.001) return '0 B';
+    if (mb < 1.0)   return '${(mb * 1024).toStringAsFixed(1)} KB';
+    if (mb < 1024)  return '${mb.toStringAsFixed(2)} MB';
+    return '${(mb / 1024).toStringAsFixed(2)} GB';
+  }
+
   String get _storageLabelGB {
     final usedGB  = _storageUsed / 1024;
     final limitGB = _storageLimit / 1024;
     if (usedGB < 0.01) {
-      return '${_storageUsed.toStringAsFixed(1)} MB of ${limitGB.toStringAsFixed(0)} GB used';
+      return '${_fmtMB(_storageUsed)} of ${limitGB.toStringAsFixed(0)} GB used';
     }
     return '${usedGB.toStringAsFixed(2)} GB of ${limitGB.toStringAsFixed(0)} GB used';
   }
@@ -167,17 +206,11 @@ class _CloudState extends State<Cloud> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ── Top bar ─────────────────────────────────────────────────
               _buildTopBar(),
               const SizedBox(height: 20),
 
-              // ── Header text ─────────────────────────────────────────────
-              const Text(
-                'Dashboard',
-                style: TextStyle(
-                  fontSize: 26, fontWeight: FontWeight.bold, color: Colors.white,
-                ),
-              ),
+              const Text('Dashboard',
+                  style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: Colors.white)),
               const SizedBox(height: 6),
               const Text(
                 'Your audio ecosystem is synchronized\nand secured across all active devices.',
@@ -185,15 +218,12 @@ class _CloudState extends State<Cloud> {
               ),
               const SizedBox(height: 22),
 
-              // ── Sync card ────────────────────────────────────────────────
               _buildSyncCard(),
               const SizedBox(height: 16),
 
-              // ── Storage card ─────────────────────────────────────────────
               _buildStorageCard(),
               const SizedBox(height: 22),
 
-              // ── Connected devices ────────────────────────────────────────
               _sectionLabel('Connected Devices'),
               const SizedBox(height: 12),
 
@@ -383,6 +413,27 @@ class _CloudState extends State<Cloud> {
             'Last synced: $_lastSynced',
             style: const TextStyle(color: Colors.white54, fontSize: 13),
           ),
+
+          // Real data summary
+          if (_translationCount > 0 || _correctionCount > 0) ...[
+            const SizedBox(height: 14),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: Colors.black26,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  _statPill(Icons.translate_rounded, '$_translationCount', 'Translations'),
+                  _vertDivider(),
+                  _statPill(Icons.tune_rounded, '$_correctionCount', 'Corrections'),
+                ],
+              ),
+            ),
+          ],
+
           const SizedBox(height: 18),
           SizedBox(
             width: double.infinity,
@@ -414,10 +465,34 @@ class _CloudState extends State<Cloud> {
     );
   }
 
+  Widget _statPill(IconData icon, String value, String label) {
+    return Column(
+      children: [
+        Icon(icon, color: _teal, size: 14),
+        const SizedBox(height: 4),
+        Text(value,
+            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+        Text(label,
+            style: const TextStyle(color: Colors.white38, fontSize: 10)),
+      ],
+    );
+  }
+
+  Widget _vertDivider() => Container(width: 1, height: 36, color: Colors.white12);
+
   // ── Storage card ──────────────────────────────────────────────────────────
   Widget _buildStorageCard() {
     final pct = (_storageUsed / _storageLimit).clamp(0.0, 1.0);
     final barColor = pct > 0.8 ? Colors.orangeAccent : _teal;
+
+    final categories = <_StorageCategory>[
+      if (_translationsMB > 0)
+        _StorageCategory('Translations', _translationsMB, const Color(0xFF0ECFB0), Icons.translate_rounded),
+      if (_correctionsMB > 0)
+        _StorageCategory('Corrections', _correctionsMB, const Color(0xFF3A8DFF), Icons.tune_rounded),
+      if (_otherMB > 0)
+        _StorageCategory('Other', _otherMB, const Color(0xFFFFAA44), Icons.folder_rounded),
+    ];
 
     return Container(
       padding: const EdgeInsets.all(20),
@@ -460,20 +535,42 @@ class _CloudState extends State<Cloud> {
                     border: Border.all(color: Colors.orangeAccent.withOpacity(0.3)),
                   ),
                   child: const Text('LOW SPACE',
-                      style: TextStyle(color: Colors.orangeAccent, fontSize: 9, fontWeight: FontWeight.bold, letterSpacing: 0.8)),
+                      style: TextStyle(
+                          color: Colors.orangeAccent, fontSize: 9,
+                          fontWeight: FontWeight.bold, letterSpacing: 0.8)),
                 ),
             ],
           ),
           const SizedBox(height: 16),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(6),
-            child: LinearProgressIndicator(
-              value: pct,
-              backgroundColor: Colors.white10,
-              valueColor: AlwaysStoppedAnimation(barColor),
-              minHeight: 8,
+
+          // Segmented or plain progress bar
+          if (categories.isNotEmpty && _storageUsed > 0)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: SizedBox(
+                height: 8,
+                child: Row(
+                  children: categories.map((cat) {
+                    final segPct = (cat.sizeMB / _storageUsed).clamp(0.0, 1.0);
+                    return Expanded(
+                      flex: (segPct * 1000).round(),
+                      child: Container(color: cat.color),
+                    );
+                  }).toList(),
+                ),
+              ),
+            )
+          else
+            ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: LinearProgressIndicator(
+                value: pct,
+                backgroundColor: Colors.white10,
+                valueColor: AlwaysStoppedAnimation(barColor),
+                minHeight: 8,
+              ),
             ),
-          ),
+
           const SizedBox(height: 10),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -494,6 +591,69 @@ class _CloudState extends State<Cloud> {
                 ),
               ),
             ],
+          ),
+
+          if (categories.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            const Divider(color: Colors.white10, height: 1),
+            const SizedBox(height: 14),
+            ...categories.map((cat) => _storageCategoryRow(cat)),
+          ] else ...[
+            const SizedBox(height: 12),
+            const Row(
+              children: [
+                Icon(Icons.info_outline_rounded, color: Colors.white24, size: 14),
+                SizedBox(width: 8),
+                Text('Tap Sync Now to calculate storage',
+                    style: TextStyle(color: Colors.white38, fontSize: 12)),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _storageCategoryRow(_StorageCategory cat) {
+    final pct = _storageUsed > 0 ? (cat.sizeMB / _storageUsed).clamp(0.0, 1.0) : 0.0;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: cat.color.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(cat.icon, color: cat.color, size: 13),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(cat.name,
+                        style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w500)),
+                    Text(_fmtMB(cat.sizeMB),
+                        style: TextStyle(color: cat.color, fontSize: 11, fontWeight: FontWeight.w600)),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: LinearProgressIndicator(
+                    value: pct,
+                    backgroundColor: Colors.white10,
+                    valueColor: AlwaysStoppedAnimation(cat.color.withOpacity(0.7)),
+                    minHeight: 4,
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -545,7 +705,9 @@ class _CloudState extends State<Cloud> {
                 border: Border.all(color: _teal.withOpacity(0.3)),
               ),
               child: const Text('Active',
-                  style: TextStyle(color: _teal, fontSize: 11, fontWeight: FontWeight.w600, letterSpacing: 0.4)),
+                  style: TextStyle(
+                      color: _teal, fontSize: 11,
+                      fontWeight: FontWeight.w600, letterSpacing: 0.4)),
             ),
         ],
       ),
@@ -568,4 +730,13 @@ class _CloudState extends State<Cloud> {
           style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 15)),
     ],
   );
+}
+
+// ── Data class ────────────────────────────────────────────────────────────────
+class _StorageCategory {
+  final String   name;
+  final double   sizeMB;
+  final Color    color;
+  final IconData icon;
+  const _StorageCategory(this.name, this.sizeMB, this.color, this.icon);
 }

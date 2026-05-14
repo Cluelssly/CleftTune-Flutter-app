@@ -25,15 +25,17 @@ class _TranslatorScreenState extends State<TranslatorScreen>
 
   bool _isListening     = false;
   bool _isInitialized   = false;
-  bool _userStopped     = false;
+  bool _userStopped     = false; // TRUE only when user taps Stop
   bool _showCorrections = false;
 
   // ── Premium gate ───────────────────────────────────────────────────────────
   bool _isPremium = false;
   late StreamSubscription<bool> _premiumSub;
 
-  String _displayText     = '';
-  String _accumulatedText = '';
+  // ── Text state ─────────────────────────────────────────────────────────────
+  String _displayText    = '';
+  String _committedText  = '';
+  String _currentSegment = '';
 
   // ── Free user: refining indicator ─────────────────────────────────────────
   bool _isRefiningFinal = false;
@@ -43,11 +45,40 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   int     _freeSecondsLeft = 60;
   static const int _freeTotalSeconds = 60;
 
-  // ── Premium: background save debounce ─────────────────────────────────────
-  // NLP correction runs fully in background — never blocks display
-  Timer? _bgSaveTimer;
+  // ── Premium: session duration tracker ─────────────────────────────────────
+  Timer?  _premiumSessionTimer;
+  int     _premiumSessionSeconds = 0;
 
-  static const int _maxWords = 30;
+  // ── Premium: debounce timers ───────────────────────────────────────────────
+  Timer? _bgSaveTimer;
+  Timer? _partialNlpDebounce;
+
+  // ── Premium: always-on watchdog ───────────────────────────────────────────
+  //
+  // WHY THIS IS NEEDED:
+  // The Android/iOS STT engine hard-kills itself after ~5-8 seconds of silence
+  // regardless of what listenFor or pauseFor values are set. This is an OS-level
+  // restriction that cannot be overridden via the speech_to_text API.
+  //
+  // THE SOLUTION — proactive restart:
+  // Instead of waiting for the OS to kill the engine, we detect silence ourselves
+  // and restart the engine first. The watchdog polls every 250ms and triggers a
+  // restart after 3s of silence — well before the OS kill at ~5-8s.
+  //
+  // This makes the mic feel permanently on during silence. The user sees no gap.
+  //
+  // onStatus / onError remain as a safety net in case the OS still beats us.
+  Timer?    _watchdog;
+  DateTime? _lastActivityTime;
+
+  // Proactively restart at 3s silence (OS kills at ~5-8s — we beat it)
+  static const _proactiveRestartThreshold = Duration(seconds: 3);
+
+  // ── Restart lock (prevents overlapping restarts) ──────────────────────────
+  bool _isRestarting = false;
+
+  // ── Free word cap ──────────────────────────────────────────────────────────
+  static const int _maxWordsFree = 30;
 
   // ── Theme ──────────────────────────────────────────────────────────────────
   static const _bg         = Color(0xFF0D2B2B);
@@ -108,21 +139,21 @@ class _TranslatorScreenState extends State<TranslatorScreen>
     _isInitialized = await _speech.initialize(
       onStatus: (status) {
         dev.log('STT STATUS: $status');
-        // Only restart for premium, and only if we didn't stop intentionally
-        if (!_userStopped &&
-            _isListening &&
-            _isPremium &&
-            (status == 'done' ||
-                status == 'notListening' ||
-                status == 'doneNoResult')) {
-          // Small delay so the engine fully resets before restarting
-          Future.delayed(const Duration(milliseconds: 100), _restartListening);
+        // Safety net: OS killed engine before our watchdog could restart it
+        if (!_userStopped && _isListening && _isPremium && !_isRestarting) {
+          if (status == 'done' ||
+              status == 'notListening' ||
+              status == 'doneNoResult') {
+            dev.log('OS killed STT (status: $status) — safety-net restart');
+            _scheduleRestart(delay: const Duration(milliseconds: 50));
+          }
         }
       },
       onError: (error) {
         dev.log('STT ERROR: ${error.errorMsg}');
-        if (!_userStopped && _isListening && _isPremium) {
-          Future.delayed(const Duration(milliseconds: 150), _restartListening);
+        if (!_userStopped && _isListening && _isPremium && !_isRestarting) {
+          dev.log('STT error — safety-net restart');
+          _scheduleRestart(delay: const Duration(milliseconds: 80));
         }
       },
     );
@@ -130,7 +161,87 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // FREE — Basic listening (corrects after silence / final result)
+  // HELPER — joins committed history with live partial for display
+  // ══════════════════════════════════════════════════════════════════════════
+
+  String _buildDisplay(String committed, String segment) {
+    if (committed.isEmpty) return segment;
+    if (segment.isEmpty)   return committed;
+    if (RegExp(r'^[.,!?;:]').hasMatch(segment)) return '$committed$segment';
+    return '$committed $segment';
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // PREMIUM SESSION TIMER
+  // ══════════════════════════════════════════════════════════════════════════
+
+  void _startPremiumSessionTimer() {
+    _premiumSessionTimer?.cancel();
+    _premiumSessionSeconds = 0;
+    _premiumSessionTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted || !_isListening) { t.cancel(); return; }
+      setState(() => _premiumSessionSeconds++);
+    });
+  }
+
+  void _stopPremiumSessionTimer() {
+    _premiumSessionTimer?.cancel();
+    _premiumSessionTimer = null;
+  }
+
+  String get _premiumSessionLabel {
+    final m = _premiumSessionSeconds ~/ 60;
+    final s = _premiumSessionSeconds % 60;
+    if (m == 0) return '${s}s';
+    return '${m}m ${s}s';
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // ALWAYS-ON WATCHDOG
+  // Polls every 250ms. Proactively restarts at 3s silence.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  void _startWatchdog() {
+    _watchdog?.cancel();
+    _heartbeat(); // seed the clock
+    _watchdog = Timer.periodic(const Duration(milliseconds: 250), (_) {
+      if (!_isListening || _userStopped || !_isPremium || _isRestarting) return;
+      if (_lastActivityTime == null) return;
+
+      final silence = DateTime.now().difference(_lastActivityTime!);
+      if (silence >= _proactiveRestartThreshold) {
+        dev.log('Proactive restart after ${silence.inMilliseconds}ms silence');
+        _lastActivityTime = null; // prevent double-trigger
+        _scheduleRestart(delay: Duration.zero);
+      }
+    });
+  }
+
+  void _stopWatchdog() {
+    _watchdog?.cancel();
+    _watchdog = null;
+  }
+
+  /// Call on every STT partial/final result to reset the silence clock.
+  void _heartbeat() => _lastActivityTime = DateTime.now();
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // SCHEDULE RESTART — single entry point, prevents overlapping restarts
+  // ══════════════════════════════════════════════════════════════════════════
+
+  void _scheduleRestart({Duration delay = const Duration(milliseconds: 80)}) {
+    if (_isRestarting || _userStopped || !_isListening || !_isPremium) return;
+    _isRestarting = true;
+    Future.delayed(delay, () async {
+      if (!_userStopped && _isListening && _isPremium && mounted) {
+        await _restartListening();
+      }
+      _isRestarting = false;
+    });
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // FREE — Basic listening (completely unchanged)
   // ══════════════════════════════════════════════════════════════════════════
 
   void _startFreeCountdown() {
@@ -171,12 +282,11 @@ class _TranslatorScreenState extends State<TranslatorScreen>
 
         if (result.finalResult) {
           final localResult = _nlp.correctPartialSync(words);
-          final appended    = (_accumulatedText.isEmpty
-              ? localResult
-              : '$_accumulatedText $localResult').trim();
+          final appended    = _buildDisplay(_committedText, localResult);
 
           if (mounted) setState(() {
             _displayText     = appended;
+            _currentSegment  = '';
             _isRefiningFinal = true;
           });
 
@@ -186,7 +296,8 @@ class _TranslatorScreenState extends State<TranslatorScreen>
 
             if (mounted) {
               setState(() {
-                _accumulatedText = corrected;
+                _committedText   = corrected;
+                _currentSegment  = '';
                 _displayText     = corrected;
                 _isRefiningFinal = false;
               });
@@ -206,29 +317,26 @@ class _TranslatorScreenState extends State<TranslatorScreen>
             dev.log('Basic correction error: $e');
             if (mounted) {
               setState(() {
-                _accumulatedText = appended;
+                _committedText   = appended;
+                _currentSegment  = '';
                 _displayText     = appended;
                 _isRefiningFinal = false;
               });
             }
           }
+        } else {
+          final preview = _buildDisplay(_committedText, words);
+          if (mounted) setState(() => _displayText = preview);
         }
-        // Partials intentionally ignored for free users
       },
     );
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // PREMIUM — INSTANT real-time display
+  // PREMIUM — ALWAYS-ON REAL-TIME LISTENING
   //
-  // HOW THIS WORKS:
-  //   • Every partial result from the STT engine → displayed IMMEDIATELY
-  //     using only _nlp.correctPartialSync() which is synchronous (no await).
-  //   • The user sees words appear word-by-word as they speak. Zero delay.
-  //   • When a final result arrives → still displayed instantly via sync.
-  //   • NLP async correction + Firestore save run in background (unawaited).
-  //     They silently improve the stored text but NEVER block the display.
-  //   • No _isRefiningFinal spinner for premium — display is always instant.
+  // pauseFor: 10s is just a backstop. The watchdog proactively restarts at
+  // 3s silence, so the user never notices the engine cycling.
   // ══════════════════════════════════════════════════════════════════════════
 
   Future<void> _startRealtimeListening() async {
@@ -237,57 +345,57 @@ class _TranslatorScreenState extends State<TranslatorScreen>
       if (!_isInitialized) return;
     }
 
+    _currentSegment = '';
+    _heartbeat();
+
     await _speech.listen(
       localeId:       'en_US',
-      listenFor:      const Duration(seconds: 120),
-      // pauseFor longer so we don't cut off the user mid-sentence
-      pauseFor:       const Duration(seconds: 2),
+      listenFor:      const Duration(hours: 1),
+      pauseFor:       const Duration(seconds: 10),
       partialResults: true,
       listenMode:     stt.ListenMode.dictation,
       onResult: (result) {
-        // ── THIS IS SYNCHRONOUS — no async, no await, nothing that can delay ──
+        if (_userStopped) return;
 
         final words = result.recognizedWords.trim();
         if (words.isEmpty) return;
+
+        // Reset silence clock — engine is alive and hearing something
+        _heartbeat();
 
         final confidence = result.confidence > 0
             ? result.confidence.toDouble()
             : 0.6;
 
-        // Noise gate: single word + low confidence = likely noise, skip
-        if (words.split(' ').length < 2 && confidence < 0.5) {
+        // Noise gate
+        if (words.split(' ').length < 2 && confidence < 0.35) {
           dev.log('Noise filtered: "$words" ($confidence)');
           return;
         }
 
-        // Apply sync correction (instant, no network, no delay)
         final syncCorrected = _nlp.correctPartialSync(words);
-        final preview = (_accumulatedText.isEmpty
-            ? syncCorrected
-            : '$_accumulatedText $syncCorrected').trim();
-
-        // ── INSTANT DISPLAY — runs synchronously, UI updates immediately ──
-        if (mounted) {
-          setState(() {
-            _displayText = preview;
-            // No _isRefiningFinal for premium — display is already final
-          });
-        }
 
         if (result.finalResult) {
-          // Lock in accumulated text with the sync result
-          _accumulatedText = preview;
+          _committedText  = _buildDisplay(_committedText, syncCorrected).trim();
+          _currentSegment = '';
 
-          // ── Background: async NLP + Firestore — completely non-blocking ──
-          _runBackgroundSave(words, preview);
+          if (mounted) setState(() => _displayText = _committedText);
+
+          _partialNlpDebounce?.cancel();
+          _partialNlpDebounce = Timer(
+            const Duration(milliseconds: 120),
+            () => _runBackgroundSave(words, _committedText),
+          );
+        } else {
+          _currentSegment = syncCorrected;
+          final preview   = _buildDisplay(_committedText, _currentSegment);
+          if (mounted) setState(() => _displayText = preview);
         }
-        // For partials: display is already updated above — nothing else needed
       },
     );
   }
 
-  /// Runs async NLP refinement and Firestore save entirely in the background.
-  /// Never awaited, never blocks the UI or the STT callback.
+  /// Async NLP refinement + Firestore — never awaited, never blocks UI.
   void _runBackgroundSave(String rawWords, String syncResult) {
     () async {
       String finalText = syncResult;
@@ -298,15 +406,13 @@ class _TranslatorScreenState extends State<TranslatorScreen>
         final refined = (correctionResult['corrected'] as String? ?? '').trim();
         if (refined.isNotEmpty) finalText = refined;
       } catch (e) {
-        dev.log('Background NLP refinement error: $e — using sync result');
+        dev.log('Background NLP error: $e — using sync result');
       }
 
-      // Silently update display if NLP improved the text
-      // (user may still be speaking, so only update if we're not mid-word)
-      if (mounted && _accumulatedText == syncResult && finalText != syncResult) {
+      if (mounted && _committedText == syncResult && finalText != syncResult) {
         setState(() {
-          _accumulatedText = finalText;
-          _displayText     = finalText;
+          _committedText = finalText;
+          _displayText   = _buildDisplay(finalText, _currentSegment);
         });
       }
 
@@ -324,37 +430,54 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // SHARED — Restart & Toggle
+  // RESTART
   // ══════════════════════════════════════════════════════════════════════════
 
   Future<void> _restartListening() async {
     if (!_isListening || _userStopped || !_isPremium) return;
-    await _speech.stop();
-    await Future.delayed(const Duration(milliseconds: 80));
-    if (!_isListening || _userStopped || !_isPremium) return;
+    dev.log('Restarting STT engine...');
+    try { await _speech.stop(); } catch (_) {}
+    await Future.delayed(const Duration(milliseconds: 60));
+    if (!_isListening || _userStopped || !_isPremium || !mounted) return;
     await _startRealtimeListening();
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // TOGGLE MIC — only place _userStopped becomes true
+  // ══════════════════════════════════════════════════════════════════════════
+
   Future<void> _toggleMic() async {
     if (_isListening) {
-      _userStopped = true;
+      // ── STOP ──────────────────────────────────────────────────────────────
+      _userStopped  = true;
+      _isRestarting = false;
       _freeTimer?.cancel();
       _bgSaveTimer?.cancel();
+      _partialNlpDebounce?.cancel();
+      _stopPremiumSessionTimer();
+      _stopWatchdog();
       await _speech.stop();
       if (mounted) setState(() {
         _isListening     = false;
         _isRefiningFinal = false;
       });
     } else {
-      _userStopped     = false;
-      _displayText     = '';
-      _accumulatedText = '';
-      _freeSecondsLeft = _freeTotalSeconds;
-      _isRefiningFinal = false;
+      // ── START ─────────────────────────────────────────────────────────────
+      _userStopped           = false;
+      _isRestarting          = false;
+      _displayText           = '';
+      _committedText         = '';
+      _currentSegment        = '';
+      _freeSecondsLeft       = _freeTotalSeconds;
+      _isRefiningFinal       = false;
+      _premiumSessionSeconds = 0;
+      _lastActivityTime      = null;
       if (mounted) setState(() => _isListening = true);
       _nlp.beginSession();
 
       if (_isPremium) {
+        _startPremiumSessionTimer();
+        _startWatchdog();
         await _startRealtimeListening();
       } else {
         await _startBasicListening();
@@ -500,6 +623,9 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   void dispose() {
     _freeTimer?.cancel();
     _bgSaveTimer?.cancel();
+    _premiumSessionTimer?.cancel();
+    _partialNlpDebounce?.cancel();
+    _watchdog?.cancel();
     _premiumSub.cancel();
     _nlp.onRealtimeCorrection = null;
     _speech.stop();
@@ -569,8 +695,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
           if (_isPremium)
             Container(
               margin: const EdgeInsets.only(right: 8),
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
                 color: _tealDim,
                 borderRadius: BorderRadius.circular(20),
@@ -592,8 +717,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
             icon: _showCorrections
                 ? Icons.close_rounded
                 : Icons.format_list_bulleted_rounded,
-            onTap: () =>
-                setState(() => _showCorrections = !_showCorrections),
+            onTap: () => setState(() => _showCorrections = !_showCorrections),
             active: _showCorrections,
           ),
           const SizedBox(width: 8),
@@ -620,8 +744,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
           borderRadius: BorderRadius.circular(10),
           border: Border.all(color: active ? _tealBorder : _white20),
         ),
-        child: Icon(icon, size: 18,
-            color: active ? _teal : Colors.white70),
+        child: Icon(icon, size: 18, color: active ? _teal : Colors.white70),
       ),
     );
   }
@@ -661,7 +784,29 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                 ],
               ),
             ),
-            // Free mode refinement indicator only
+            if (_isListening && _isPremium) ...[
+              const SizedBox(width: 16),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: _tealDim,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: _tealBorder),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.timer_rounded, color: _teal, size: 11),
+                    const SizedBox(width: 4),
+                    Text(
+                      _premiumSessionLabel,
+                      style: const TextStyle(
+                          color: _teal, fontSize: 11, fontWeight: FontWeight.w600),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             if (_isRefiningFinal && !_isPremium) ...[
               const SizedBox(width: 16),
               AnimatedBuilder(
@@ -679,9 +824,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                       const Text(
                         'translating (basic mode)...',
                         style: TextStyle(
-                            color: _teal,
-                            fontSize: 11,
-                            letterSpacing: 0.5),
+                            color: _teal, fontSize: 11, letterSpacing: 0.5),
                       ),
                     ],
                   ),
@@ -699,7 +842,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 150),
             padding: const EdgeInsets.all(24),
-            constraints: const BoxConstraints(minHeight: 140),
+            constraints: const BoxConstraints(minHeight: 140, maxHeight: 320),
             decoration: BoxDecoration(
               color: Colors.white.withOpacity(0.05),
               borderRadius: BorderRadius.circular(22),
@@ -708,16 +851,15 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                 width: 1,
               ),
               boxShadow: _isListening
-                  ? [
-                      BoxShadow(
-                        color:      _teal.withOpacity(0.08),
-                        blurRadius: 24,
-                        spreadRadius: 2,
-                      )
-                    ]
+                  ? [BoxShadow(
+                      color: _teal.withOpacity(0.08),
+                      blurRadius: 24,
+                      spreadRadius: 2,
+                    )]
                   : [],
             ),
             child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
                 if (hint.isNotEmpty)
                   Text(hint,
@@ -725,29 +867,42 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                       style: const TextStyle(
                           fontSize: 16, color: _white40, height: 1.5)),
                 if (hasText)
-                  Text(_displayText,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white,
-                          height: 1.45)),
+                  Flexible(
+                    child: SingleChildScrollView(
+                      physics: const BouncingScrollPhysics(),
+                      child: Text(
+                        _displayText,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.white,
+                            height: 1.5),
+                      ),
+                    ),
+                  ),
                 if (hasText) ...[
                   const SizedBox(height: 14),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.end,
                     children: [
                       _textAction(Icons.content_copy_rounded, 'Copy', () {
-                        Clipboard.setData(
-                            ClipboardData(text: _displayText));
+                        Clipboard.setData(ClipboardData(text: _displayText));
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                              content: Text('Copied to clipboard')),
+                          const SnackBar(content: Text('Copied to clipboard')),
                         );
                       }),
                       const SizedBox(width: 8),
                       _textAction(Icons.edit_note_rounded, 'Correct',
                           _showAddCorrectionDialog),
+                      const SizedBox(width: 8),
+                      _textAction(Icons.delete_sweep_rounded, 'Clear', () {
+                        setState(() {
+                          _displayText    = '';
+                          _committedText  = '';
+                          _currentSegment = '';
+                        });
+                      }),
                     ],
                   ),
                 ],
@@ -764,10 +919,9 @@ class _TranslatorScreenState extends State<TranslatorScreen>
             alignment: WrapAlignment.center,
             spacing: 8, runSpacing: 6,
             children: [
-              if (_isPremium)
+              if (_isPremium) ...[
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 10, vertical: 3),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
                   decoration: BoxDecoration(
                     color: _tealDim,
                     borderRadius: BorderRadius.circular(20),
@@ -776,17 +930,48 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                   child: const Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.star_rounded, color: _teal, size: 11),
+                      Icon(Icons.all_inclusive_rounded, color: _teal, size: 11),
                       SizedBox(width: 4),
-                      Text('Realtime · Noise Filter',
+                      Text('Unlimited · Always-On',
+                          style: TextStyle(
+                              color: _teal,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600)),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: _tealDim,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: _tealBorder),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.noise_aware_rounded, color: _teal, size: 11),
+                      SizedBox(width: 4),
+                      Text('Noise Filter',
                           style: TextStyle(color: _teal, fontSize: 11)),
                     ],
                   ),
-                )
-              else
+                ),
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 10, vertical: 3),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: _card,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: _white20),
+                  ),
+                  child: Text(
+                    '$_wordCount words',
+                    style: const TextStyle(color: _white40, fontSize: 11),
+                  ),
+                ),
+              ] else ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
                   decoration: BoxDecoration(
                     color: _freeSecondsLeft <= 10
                         ? Colors.redAccent.withOpacity(0.15)
@@ -819,15 +1004,13 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                     ],
                   ),
                 ),
-
-              Text('$_wordCount/$_maxWords words',
-                  style: const TextStyle(
-                      color: _white40, fontSize: 12)),
+                Text('$_wordCount/$_maxWordsFree words',
+                    style: const TextStyle(color: _white40, fontSize: 12)),
+              ],
 
               if (_nlp.patternCount > 0)
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 10, vertical: 3),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
                   decoration: BoxDecoration(
                     color: _tealDim,
                     borderRadius: BorderRadius.circular(20),
@@ -841,14 +1024,14 @@ class _TranslatorScreenState extends State<TranslatorScreen>
             ],
           ),
 
+        // ── Upgrade banner (free, not listening) ──────────────────────────
         if (!_isPremium && !_isListening) ...[
           const SizedBox(height: 20),
           GestureDetector(
             onTap: widget.goToPremium,
             child: Container(
               margin: const EdgeInsets.symmetric(horizontal: 24),
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 16, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               decoration: BoxDecoration(
                 color: _tealDim,
                 borderRadius: BorderRadius.circular(14),
@@ -857,11 +1040,11 @@ class _TranslatorScreenState extends State<TranslatorScreen>
               child: const Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.star_rounded, color: _teal, size: 14),
+                  Icon(Icons.all_inclusive_rounded, color: _teal, size: 14),
                   SizedBox(width: 6),
                   Flexible(
                     child: Text(
-                      'Upgrade for Instant Realtime + Noise Cancellation',
+                      'Upgrade for Always-On Listening + Realtime + Noise Cancellation',
                       style: TextStyle(
                           color: _teal,
                           fontSize: 12,
@@ -894,8 +1077,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
           children: [
             Icon(icon, size: 13, color: _teal),
             const SizedBox(width: 4),
-            Text(label,
-                style: const TextStyle(color: _teal, fontSize: 11)),
+            Text(label, style: const TextStyle(color: _teal, fontSize: 11)),
           ],
         ),
       ),
@@ -925,8 +1107,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
               GestureDetector(
                 onTap: _showAddCorrectionDialog,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 6),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
                     color: _tealDim,
                     borderRadius: BorderRadius.circular(20),
@@ -961,8 +1142,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                       .orderBy('updatedAt', descending: true)
                       .snapshots(),
                   builder: (context, snapshot) {
-                    if (snapshot.connectionState ==
-                        ConnectionState.waiting) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
                       return const Center(
                         child: CircularProgressIndicator(
                             color: _teal, strokeWidth: 2),
@@ -979,12 +1159,9 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                             Container(
                               padding: const EdgeInsets.all(20),
                               decoration: const BoxDecoration(
-                                  color: _tealDim,
-                                  shape: BoxShape.circle),
-                              child: const Icon(
-                                  Icons.auto_fix_high_rounded,
-                                  color: _teal,
-                                  size: 32),
+                                  color: _tealDim, shape: BoxShape.circle),
+                              child: const Icon(Icons.auto_fix_high_rounded,
+                                  color: _teal, size: 32),
                             ),
                             const SizedBox(height: 16),
                             const Text('No corrections yet',
@@ -997,9 +1174,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                               'Use the mic, then tap "Correct"\nto teach CleftTune your patterns.',
                               textAlign: TextAlign.center,
                               style: TextStyle(
-                                  color: _white40,
-                                  fontSize: 12,
-                                  height: 1.6),
+                                  color: _white40, fontSize: 12, height: 1.6),
                             ),
                           ],
                         ),
@@ -1007,23 +1182,17 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                     }
 
                     return ListView.separated(
-                      padding:
-                          const EdgeInsets.fromLTRB(20, 0, 20, 100),
+                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 100),
                       itemCount: docs.length,
-                      separatorBuilder: (_, __) =>
-                          const SizedBox(height: 8),
+                      separatorBuilder: (_, __) => const SizedBox(height: 8),
                       itemBuilder: (context, i) {
-                        final data =
-                            docs[i].data() as Map<String, dynamic>;
+                        final data = docs[i].data() as Map<String, dynamic>;
                         final wrong   = data['wrong']   as String? ?? '';
                         final correct = data['correct'] as String? ?? '';
                         final source  = data['source']  as String? ?? 'ai';
                         return _correctionTile(
-                          wrong:   wrong,
-                          correct: correct,
-                          source:  source,
-                          docId:   docs[i].id,
-                          uid:     uid,
+                          wrong: wrong, correct: correct,
+                          source: source, docId: docs[i].id, uid: uid,
                         );
                       },
                     );
@@ -1055,15 +1224,11 @@ class _TranslatorScreenState extends State<TranslatorScreen>
           Container(
             width: 34, height: 34,
             decoration: BoxDecoration(
-              color: isUser
-                  ? _tealDim
-                  : Colors.white.withOpacity(0.05),
+              color: isUser ? _tealDim : Colors.white.withOpacity(0.05),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Icon(
-              isUser
-                  ? Icons.person_rounded
-                  : Icons.auto_fix_high_rounded,
+              isUser ? Icons.person_rounded : Icons.auto_fix_high_rounded,
               color: isUser ? _teal : Colors.white38,
               size: 16,
             ),
@@ -1101,12 +1266,9 @@ class _TranslatorScreenState extends State<TranslatorScreen>
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 7, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                 decoration: BoxDecoration(
-                  color: isUser
-                      ? _tealDim
-                      : Colors.white.withOpacity(0.05),
+                  color: isUser ? _tealDim : Colors.white.withOpacity(0.05),
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Text(

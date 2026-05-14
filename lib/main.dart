@@ -12,6 +12,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'translator_screen.dart';
 import 'landing_page.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:intl/intl.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -309,343 +310,700 @@ class _AppShellState extends State<AppShell> {
 
 class HistoryScreen extends StatefulWidget {
   const HistoryScreen({super.key});
-
+ 
   @override
   State<HistoryScreen> createState() => _HistoryScreenState();
 }
-
+ 
 class _HistoryScreenState extends State<HistoryScreen> {
+  // ── Theme ────────────────────────────────────────────────────────────────
   static const _teal       = Color(0xFF1D9E75);
   static const _tealDim    = Color(0x261D9E75);
   static const _tealBorder = Color(0x401D9E75);
   static const _white40    = Color(0x66FFFFFF);
   static const _white12    = Color(0x1FFFFFFF);
-
-  String searchQuery = '';
-
+  static const _redDim     = Color(0x26E74C3C);
+  static const _red        = Color(0xFFE74C3C);
+  static const _redBorder  = Color(0x40E74C3C);
+ 
+  String _searchQuery = '';
+  final TextEditingController _searchCtrl = TextEditingController();
+ 
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+ 
+  // ── Group docs by date label ─────────────────────────────────────────────
+  Map<String, List<QueryDocumentSnapshot>> _groupByDate(
+      List<QueryDocumentSnapshot> docs) {
+    final now       = DateTime.now();
+    final today     = DateTime(now.year, now.month, now.day);
+    final yesterday = today.subtract(const Duration(days: 1));
+ 
+    final Map<String, List<QueryDocumentSnapshot>> grouped = {};
+ 
+    for (final doc in docs) {
+      final data = doc.data() as Map<String, dynamic>;
+      final ts   = data['time'];
+      if (ts == null) continue;
+      final dt   = (ts as Timestamp).toDate();
+      final date = DateTime(dt.year, dt.month, dt.day);
+ 
+      String label;
+      if (date == today) {
+        label = 'TODAY';
+      } else if (date == yesterday) {
+        label = 'YESTERDAY';
+      } else {
+        // e.g. "MON, JAN 6" or "MON, JAN 6, 2024" if different year
+        final fmt = date.year == now.year
+            ? DateFormat('EEE, MMM d').format(date).toUpperCase()
+            : DateFormat('EEE, MMM d, yyyy').format(date).toUpperCase();
+        label = fmt;
+      }
+ 
+      grouped.putIfAbsent(label, () => []).add(doc);
+    }
+    return grouped;
+  }
+ 
+  // ── Delete single doc with confirm dialog ────────────────────────────────
+  Future<void> _deleteItem(QueryDocumentSnapshot doc) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierColor: Colors.black.withOpacity(0.6),
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.transparent,
+        child: Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFF0D2B2B), Color(0xFF0E2233)],
+            ),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: _redBorder, width: 1.2),
+          ),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+              width: 60, height: 60,
+              decoration: BoxDecoration(
+                color: _redDim, shape: BoxShape.circle,
+                border: Border.all(color: _red.withOpacity(0.5)),
+              ),
+              child: const Icon(Icons.delete_outline_rounded, color: _red, size: 28),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Delete Entry?',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: Colors.white),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'This translation will be permanently removed from your history.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 13, color: Colors.white.withOpacity(0.5), height: 1.5),
+            ),
+            const SizedBox(height: 24),
+            Row(children: [
+              Expanded(
+                child: OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    side: BorderSide(color: Colors.white.withOpacity(0.15)),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                  ),
+                  onPressed: () => Navigator.of(ctx).pop(false),
+                  child: const Text('Cancel',
+                      style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w600)),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _red,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                    elevation: 0,
+                  ),
+                  onPressed: () => Navigator.of(ctx).pop(true),
+                  child: const Text('Delete',
+                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+                ),
+              ),
+            ]),
+          ]),
+        ),
+      ),
+    );
+ 
+    if (confirmed == true) {
+      await FirebaseFirestore.instance
+          .collection('translations')
+          .doc(doc.id)
+          .delete();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: const Row(children: [
+            Icon(Icons.check_circle_outline, color: Colors.white, size: 16),
+            SizedBox(width: 8),
+            Text('Entry deleted', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+          ]),
+          backgroundColor: _red,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          margin: const EdgeInsets.all(12),
+          duration: const Duration(seconds: 2),
+        ));
+      }
+    }
+  }
+ 
+  // ── Delete ALL for current user ──────────────────────────────────────────
+  Future<void> _deleteAll(String uid) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierColor: Colors.black.withOpacity(0.6),
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.transparent,
+        child: Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFF0D2B2B), Color(0xFF0E2233)],
+            ),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: _redBorder, width: 1.2),
+          ),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+              width: 60, height: 60,
+              decoration: BoxDecoration(
+                color: _redDim, shape: BoxShape.circle,
+                border: Border.all(color: _red.withOpacity(0.5)),
+              ),
+              child: const Icon(Icons.delete_sweep_rounded, color: _red, size: 28),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Clear All History?',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: Colors.white),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'All your translation history will be permanently deleted. This cannot be undone.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 13, color: Colors.white.withOpacity(0.5), height: 1.5),
+            ),
+            const SizedBox(height: 24),
+            Row(children: [
+              Expanded(
+                child: OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    side: BorderSide(color: Colors.white.withOpacity(0.15)),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                  ),
+                  onPressed: () => Navigator.of(ctx).pop(false),
+                  child: const Text('Cancel',
+                      style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w600)),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _red,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                    elevation: 0,
+                  ),
+                  onPressed: () => Navigator.of(ctx).pop(true),
+                  child: const Text('Clear All',
+                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+                ),
+              ),
+            ]),
+          ]),
+        ),
+      ),
+    );
+ 
+    if (confirmed == true) {
+      final batch = FirebaseFirestore.instance.batch();
+      final snap  = await FirebaseFirestore.instance
+          .collection('translations')
+          .where('userId', isEqualTo: uid)
+          .get();
+      for (final doc in snap.docs) {
+        batch.delete(doc.reference);
+      }
+      await batch.commit();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: const Row(children: [
+            Icon(Icons.check_circle_outline, color: Colors.white, size: 16),
+            SizedBox(width: 8),
+            Text('History cleared', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+          ]),
+          backgroundColor: _red,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          margin: const EdgeInsets.all(12),
+          duration: const Duration(seconds: 2),
+        ));
+      }
+    }
+  }
+ 
+  // ── BUILD ────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
-
+ 
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: CleftBackground(
         child: SafeArea(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final width        = constraints.maxWidth;
-              final padding      = width < 800 ? 16.0 : 40.0;
-              final contentWidth = width < 1000 ? width : 900.0;
-
-              return Center(
-                child: Container(
-                  width: contentWidth,
-                  padding: EdgeInsets.all(padding),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // ── HEADER ──────────────────────────────────────────
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Row(
-                            children: [
-                              Container(
-                                width: 32,
-                                height: 32,
-                                decoration: BoxDecoration(
-                                  color: _tealDim,
-                                  shape: BoxShape.circle,
-                                  border: Border.all(color: _tealBorder),
-                                ),
-                                child: const Icon(Icons.graphic_eq_rounded,
-                                    color: _teal, size: 16),
-                              ),
-                              const SizedBox(width: 10),
-                              const Text(
-                                'CleftTune',
-                                style: TextStyle(
-                                    color: _teal,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 16,
-                                    letterSpacing: 0.5),
-                              ),
-                            ],
-                          ),
-                          InkWell(
-                            borderRadius: BorderRadius.circular(30),
-                            onTap: () => Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                  builder: (_) => const ProfileScreen()),
-                            ),
-                            child: Container(
-                              width: 38,
-                              height: 38,
-                              decoration: BoxDecoration(
-                                color: _tealDim,
-                                shape: BoxShape.circle,
-                                border: Border.all(color: _tealBorder),
-                              ),
-                              child: const Icon(Icons.person,
-                                  color: _teal, size: 18),
-                            ),
-                          ),
-                        ],
-                      ),
-
-                      const SizedBox(height: 28),
-
-                      // ── TITLE ────────────────────────────────────────────
-                      Row(
-                        children: [
+          child: LayoutBuilder(builder: (context, constraints) {
+            final width        = constraints.maxWidth;
+            final padding      = width < 800 ? 16.0 : 40.0;
+            final contentWidth = width < 1000 ? width : 900.0;
+ 
+            return Center(
+              child: Container(
+                width: contentWidth,
+                padding: EdgeInsets.symmetric(horizontal: padding, vertical: padding),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // ── HEADER ────────────────────────────────────────────
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(children: [
                           Container(
-                            width: 4,
-                            height: 28,
+                            width: 32, height: 32,
+                            decoration: BoxDecoration(
+                              color: _tealDim, shape: BoxShape.circle,
+                              border: Border.all(color: _tealBorder),
+                            ),
+                            child: const Icon(Icons.graphic_eq_rounded, color: _teal, size: 16),
+                          ),
+                          const SizedBox(width: 10),
+                          const Text('CleftTune',
+                              style: TextStyle(
+                                  color: _teal, fontWeight: FontWeight.bold,
+                                  fontSize: 16, letterSpacing: 0.5)),
+                        ]),
+                        InkWell(
+                          borderRadius: BorderRadius.circular(30),
+                          onTap: () => Navigator.push(context,
+                              MaterialPageRoute(builder: (_) => const ProfileScreen())),
+                          child: Container(
+                            width: 38, height: 38,
+                            decoration: BoxDecoration(
+                              color: _tealDim, shape: BoxShape.circle,
+                              border: Border.all(color: _tealBorder),
+                            ),
+                            child: const Icon(Icons.person, color: _teal, size: 18),
+                          ),
+                        ),
+                      ],
+                    ),
+ 
+                    const SizedBox(height: 28),
+ 
+                    // ── TITLE + CLEAR ALL ─────────────────────────────────
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(children: [
+                          Container(
+                            width: 4, height: 28,
                             decoration: BoxDecoration(
                               color: _teal,
                               borderRadius: BorderRadius.circular(2),
                             ),
                           ),
                           const SizedBox(width: 12),
-                          const Text(
-                            'History',
-                            style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 28,
-                                fontWeight: FontWeight.bold),
-                          ),
-                        ],
-                      ),
-
-                      const SizedBox(height: 6),
-                      const Padding(
-                        padding: EdgeInsets.only(left: 16),
-                        child: Text(
-                          'Your recent vocal bridge captures.',
-                          style: TextStyle(color: _white40, fontSize: 13),
-                        ),
-                      ),
-
-                      const SizedBox(height: 20),
-
-                      // ── SEARCH BAR ───────────────────────────────────────
-                      Container(
-                        padding:
-                            const EdgeInsets.symmetric(horizontal: 16),
-                        decoration: BoxDecoration(
-                          color: _tealDim,
-                          borderRadius: BorderRadius.circular(30),
-                          border: Border.all(color: _tealBorder),
-                        ),
-                        child: TextField(
-                          style: const TextStyle(color: Colors.white),
-                          onChanged: (v) =>
-                              setState(() => searchQuery = v.toLowerCase()),
-                          decoration: const InputDecoration(
-                            icon: Icon(Icons.search_rounded, color: _teal),
-                            hintText: 'Search history...',
-                            hintStyle: TextStyle(color: _white40),
-                            border: InputBorder.none,
-                          ),
-                        ),
-                      ),
-
-                      const SizedBox(height: 24),
-
-                      // ── LIST ─────────────────────────────────────────────
-                      Expanded(
-                        child: user == null
-                            ? _emptyState(
-                                icon: Icons.person_off_outlined,
-                                message: 'User not initialized')
-                            : StreamBuilder<QuerySnapshot>(
-                                stream: FirebaseFirestore.instance
-                                    .collection('translations')
-                                    .where('userId', isEqualTo: user.uid)
-                                    .orderBy('time', descending: true)
-                                    .snapshots(),
-                                builder: (context, snapshot) {
-                                  if (!snapshot.hasData) {
-                                    return const Center(
-                                      child: CircularProgressIndicator(
-                                          color: _teal, strokeWidth: 2),
-                                    );
-                                  }
-
-                                  final docs =
-                                      snapshot.data!.docs.where((doc) {
-                                    final data =
-                                        doc.data() as Map<String, dynamic>;
-                                    return (data['text'] ?? '')
-                                        .toString()
-                                        .toLowerCase()
-                                        .contains(searchQuery);
-                                  }).toList();
-
-                                  if (docs.isEmpty) {
-                                    return _emptyState(
-                                        icon: Icons
-                                            .history_toggle_off_rounded,
-                                        message: 'No history found');
-                                  }
-
-                                  final now       = DateTime.now();
-                                  final today     = DateTime(now.year, now.month, now.day);
-                                  final yesterday = today.subtract(const Duration(days: 1));
-
-                                  final Map<String, List<QueryDocumentSnapshot>> grouped = {
-                                    'TODAY': [],
-                                    'YESTERDAY': [],
-                                  };
-
-                                  for (final doc in docs) {
-                                    final data =
-                                        doc.data() as Map<String, dynamic>;
-                                    final ts = data['time'];
-                                    if (ts == null) continue;
-                                    final dt   = (ts as Timestamp).toDate();
-                                    final date = DateTime(dt.year, dt.month, dt.day);
-                                    if (date == today) {
-                                      grouped['TODAY']!.add(doc);
-                                    } else if (date == yesterday) {
-                                      grouped['YESTERDAY']!.add(doc);
-                                    }
-                                  }
-
-                                  return ListView(
-                                    children: [
-                                      if (grouped['TODAY']!.isNotEmpty) ...[
-                                        _sectionLabel('TODAY'),
-                                        const SizedBox(height: 10),
-                                        ...grouped['TODAY']!
-                                            .map(_chatBubble),
-                                        const SizedBox(height: 20),
-                                      ],
-                                      if (grouped['YESTERDAY']!
-                                          .isNotEmpty) ...[
-                                        _sectionLabel('YESTERDAY'),
-                                        const SizedBox(height: 10),
-                                        ...grouped['YESTERDAY']!
-                                            .map(_chatBubble),
-                                      ],
-                                    ],
-                                  );
-                                },
+                          const Text('History',
+                              style: TextStyle(
+                                  color: Colors.white, fontSize: 28,
+                                  fontWeight: FontWeight.bold)),
+                        ]),
+                        if (user != null)
+                          GestureDetector(
+                            onTap: () => _deleteAll(user.uid),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                              decoration: BoxDecoration(
+                                color: _redDim,
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(color: _redBorder),
                               ),
+                              child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                                Icon(Icons.delete_sweep_rounded, color: _red, size: 14),
+                                SizedBox(width: 5),
+                                Text('Clear All',
+                                    style: TextStyle(
+                                        color: _red, fontSize: 12, fontWeight: FontWeight.w600)),
+                              ]),
+                            ),
+                          ),
+                      ],
+                    ),
+ 
+                    const SizedBox(height: 6),
+                    const Padding(
+                      padding: EdgeInsets.only(left: 16),
+                      child: Text('Your recent vocal bridge captures.',
+                          style: TextStyle(color: _white40, fontSize: 13)),
+                    ),
+ 
+                    const SizedBox(height: 20),
+ 
+                    // ── SEARCH BAR ────────────────────────────────────────
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      decoration: BoxDecoration(
+                        color: _tealDim,
+                        borderRadius: BorderRadius.circular(30),
+                        border: Border.all(color: _tealBorder),
                       ),
-                    ],
-                  ),
+                      child: Row(children: [
+                        const Icon(Icons.search_rounded, color: _teal),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: TextField(
+                            controller: _searchCtrl,
+                            style: const TextStyle(color: Colors.white),
+                            onChanged: (v) =>
+                                setState(() => _searchQuery = v.toLowerCase()),
+                            decoration: const InputDecoration(
+                              hintText: 'Search history...',
+                              hintStyle: TextStyle(color: _white40),
+                              border: InputBorder.none,
+                            ),
+                          ),
+                        ),
+                        if (_searchQuery.isNotEmpty)
+                          GestureDetector(
+                            onTap: () {
+                              _searchCtrl.clear();
+                              setState(() => _searchQuery = '');
+                            },
+                            child: const Icon(Icons.close_rounded, color: _white40, size: 18),
+                          ),
+                      ]),
+                    ),
+ 
+                    const SizedBox(height: 24),
+ 
+                    // ── LIST ──────────────────────────────────────────────
+                    Expanded(
+                      child: user == null
+                          ? _emptyState(
+                              icon: Icons.person_off_outlined,
+                              message: 'Sign in to view history')
+                          : StreamBuilder<QuerySnapshot>(
+                              stream: FirebaseFirestore.instance
+                                  .collection('translations')
+                                  .where('userId', isEqualTo: user.uid)
+                                  .orderBy('time', descending: true)
+                                  .snapshots(),
+                              builder: (context, snapshot) {
+                                if (snapshot.connectionState ==
+                                    ConnectionState.waiting) {
+                                  return const Center(
+                                    child: CircularProgressIndicator(
+                                        color: _teal, strokeWidth: 2),
+                                  );
+                                }
+ 
+                                if (snapshot.hasError) {
+                                  return _emptyState(
+                                    icon: Icons.error_outline,
+                                    message: 'Failed to load history',
+                                  );
+                                }
+ 
+                                final allDocs =
+                                    snapshot.data?.docs ?? [];
+ 
+                                // Filter by search
+                                final filtered = allDocs.where((doc) {
+                                  final data =
+                                      doc.data() as Map<String, dynamic>;
+                                  return (data['text'] ?? '')
+                                      .toString()
+                                      .toLowerCase()
+                                      .contains(_searchQuery);
+                                }).toList();
+ 
+                                if (filtered.isEmpty) {
+                                  return _emptyState(
+                                    icon: _searchQuery.isNotEmpty
+                                        ? Icons.search_off_rounded
+                                        : Icons.history_toggle_off_rounded,
+                                    message: _searchQuery.isNotEmpty
+                                        ? 'No results for "$_searchQuery"'
+                                        : 'No history yet',
+                                    subtitle: _searchQuery.isEmpty
+                                        ? 'Translated conversations will appear here.'
+                                        : null,
+                                  );
+                                }
+ 
+                                final grouped = _groupByDate(filtered);
+ 
+                                return ListView(
+                                  physics: const BouncingScrollPhysics(),
+                                  children: [
+                                    // Count badge
+                                    Padding(
+                                      padding: const EdgeInsets.only(bottom: 16),
+                                      child: Row(children: [
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 10, vertical: 4),
+                                          decoration: BoxDecoration(
+                                            color: _tealDim,
+                                            borderRadius: BorderRadius.circular(20),
+                                            border: Border.all(color: _tealBorder),
+                                          ),
+                                          child: Text(
+                                            '${filtered.length} ${filtered.length == 1 ? 'entry' : 'entries'}',
+                                            style: const TextStyle(
+                                                color: _teal,
+                                                fontSize: 11,
+                                                fontWeight: FontWeight.w600),
+                                          ),
+                                        ),
+                                      ]),
+                                    ),
+ 
+                                    for (final entry in grouped.entries) ...[
+                                      _sectionLabel(entry.key, entry.value.length),
+                                      const SizedBox(height: 10),
+                                      ...entry.value.map((doc) =>
+                                          _chatBubble(doc, user.uid)),
+                                      const SizedBox(height: 20),
+                                    ],
+ 
+                                    const SizedBox(height: 8),
+                                  ],
+                                );
+                              },
+                            ),
+                    ),
+                  ],
                 ),
-              );
-            },
-          ),
+              ),
+            );
+          }),
         ),
       ),
     );
   }
-
-  Widget _sectionLabel(String label) {
-    return Row(
-      children: [
-        Container(
-          width: 3,
-          height: 14,
-          decoration: BoxDecoration(
-            color: _teal.withOpacity(0.6),
-            borderRadius: BorderRadius.circular(2),
-          ),
+ 
+  // ── SECTION LABEL ────────────────────────────────────────────────────────
+  Widget _sectionLabel(String label, int count) {
+    return Row(children: [
+      Container(
+        width: 3, height: 14,
+        decoration: BoxDecoration(
+          color: _teal.withOpacity(0.6),
+          borderRadius: BorderRadius.circular(2),
         ),
-        const SizedBox(width: 8),
-        Text(label,
+      ),
+      const SizedBox(width: 8),
+      Text(label,
+          style: const TextStyle(
+              color: _white40, fontSize: 11,
+              fontWeight: FontWeight.w600, letterSpacing: 0.8)),
+      const SizedBox(width: 8),
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+        decoration: BoxDecoration(
+          color: _tealDim,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Text('$count',
             style: const TextStyle(
-                color: _white40,
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                letterSpacing: 0.8)),
-      ],
-    );
+                color: _teal, fontSize: 10, fontWeight: FontWeight.w700)),
+      ),
+    ]);
   }
-
-  Widget _chatBubble(QueryDocumentSnapshot doc) {
+ 
+  // ── CHAT BUBBLE WITH SWIPE-TO-DELETE ─────────────────────────────────────
+  Widget _chatBubble(QueryDocumentSnapshot doc, String uid) {
     final data = doc.data() as Map<String, dynamic>;
     final text = data['text'] ?? '';
     final dt   = (data['time'] as Timestamp).toDate();
-    final time =
-        '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: _white12,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _tealBorder),
+ 
+    // Full date + time label
+    final now      = DateTime.now();
+    final today    = DateTime(now.year, now.month, now.day);
+    final docDay   = DateTime(dt.year, dt.month, dt.day);
+    final timeStr  = DateFormat('hh:mm a').format(dt);
+    final dateStr  = docDay == today
+        ? timeStr
+        : '${DateFormat('MMM d').format(dt)} · $timeStr';
+ 
+    return Dismissible(
+      key: Key(doc.id),
+      direction: DismissDirection.endToStart,
+      background: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        decoration: BoxDecoration(
+          color: _red.withOpacity(0.15),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: _redBorder),
+        ),
+        alignment: Alignment.centerRight,
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('Delete', style: TextStyle(color: _red, fontWeight: FontWeight.w600, fontSize: 13)),
+            SizedBox(width: 8),
+            Icon(Icons.delete_outline_rounded, color: _red, size: 20),
+          ],
+        ),
       ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 34,
-            height: 34,
-            decoration: BoxDecoration(
-              color: _tealDim,
-              borderRadius: BorderRadius.circular(10),
+      confirmDismiss: (_) async {
+        await _deleteItem(doc);
+        return false; // Firestore stream handles removal
+      },
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        decoration: BoxDecoration(
+          color: _white12,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: _tealBorder),
+        ),
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(16),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onLongPress: () => _deleteItem(doc),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Icon
+                  Container(
+                    width: 36, height: 36,
+                    decoration: BoxDecoration(
+                      color: _tealDim,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.translate_rounded, color: _teal, size: 17),
+                  ),
+                  const SizedBox(width: 12),
+ 
+                  // Text + timestamp
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(text,
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w500,
+                                fontSize: 14,
+                                height: 1.4)),
+                        const SizedBox(height: 8),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            // Full date pill
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: _tealDim,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                                const Icon(Icons.access_time_rounded,
+                                    color: _teal, size: 11),
+                                const SizedBox(width: 4),
+                                Text(dateStr,
+                                    style: const TextStyle(
+                                        color: _teal,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w500)),
+                              ]),
+                            ),
+ 
+                            // Delete button
+                            GestureDetector(
+                              onTap: () => _deleteItem(doc),
+                              child: Container(
+                                padding: const EdgeInsets.all(5),
+                                decoration: BoxDecoration(
+                                  color: _redDim,
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: _redBorder),
+                                ),
+                                child: const Icon(Icons.delete_outline_rounded,
+                                    color: _red, size: 14),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
-            child: const Icon(Icons.translate_rounded,
-                color: _teal, size: 17),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(text,
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w500,
-                        fontSize: 14)),
-                const SizedBox(height: 6),
-                Align(
-                  alignment: Alignment.bottomRight,
-                  child: Text(time,
-                      style: const TextStyle(
-                          color: _white40, fontSize: 11)),
-                ),
-              ],
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
-
-  Widget _emptyState(
-      {required IconData icon, required String message}) {
+ 
+  // ── EMPTY STATE ───────────────────────────────────────────────────────────
+  Widget _emptyState({
+    required IconData icon,
+    required String message,
+    String? subtitle,
+  }) {
     return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 64,
-            height: 64,
-            decoration: BoxDecoration(
-              color: _tealDim,
-              shape: BoxShape.circle,
-              border: Border.all(color: _tealBorder),
-            ),
-            child: Icon(icon, color: _teal, size: 28),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Container(
+          width: 70, height: 70,
+          decoration: BoxDecoration(
+            color: _tealDim, shape: BoxShape.circle,
+            border: Border.all(color: _tealBorder),
           ),
-          const SizedBox(height: 14),
-          Text(message,
-              style: const TextStyle(
-                  color: Colors.white70, fontSize: 14)),
+          child: Icon(icon, color: _teal, size: 30),
+        ),
+        const SizedBox(height: 16),
+        Text(message,
+            style: const TextStyle(
+                color: Colors.white, fontSize: 15, fontWeight: FontWeight.w600)),
+        if (subtitle != null) ...[
+          const SizedBox(height: 6),
+          Text(subtitle,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: _white40, fontSize: 13)),
         ],
-      ),
+      ]),
     );
   }
 }
-
 // ─────────────────────────────────────────────────────────────────────────────
 // SETTINGS SCREEN
 // ─────────────────────────────────────────────────────────────────────────────
