@@ -25,7 +25,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
 
   bool _isListening     = false;
   bool _isInitialized   = false;
-  bool _userStopped     = false; // TRUE only when user taps Stop
+  bool _userStopped     = false;
   bool _showCorrections = false;
 
   // ── Premium gate ───────────────────────────────────────────────────────────
@@ -40,10 +40,16 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   // ── Free user: refining indicator ─────────────────────────────────────────
   bool _isRefiningFinal = false;
 
-  // ── Free user: countdown timer ─────────────────────────────────────────────
+  // ── Free user: countdown timer (60s session) ──────────────────────────────
   Timer?  _freeTimer;
   int     _freeSecondsLeft = 60;
   static const int _freeTotalSeconds = 60;
+
+  // ── Free user: 10-second silence delay before translating ─────────────────
+  Timer?  _freeDelayTimer;
+  static const int _freeSilenceDelay = 10;
+  String  _freeBufferedRaw    = '';
+  bool    _isWaitingToDisplay = false;
 
   // ── Premium: session duration tracker ─────────────────────────────────────
   Timer?  _premiumSessionTimer;
@@ -53,29 +59,18 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   Timer? _bgSaveTimer;
   Timer? _partialNlpDebounce;
 
-  // ── Premium: always-on watchdog ───────────────────────────────────────────
+  // ── Premium: always-on engine ─────────────────────────────────────────────
   //
-  // WHY THIS IS NEEDED:
-  // The Android/iOS STT engine hard-kills itself after ~5-8 seconds of silence
-  // regardless of what listenFor or pauseFor values are set. This is an OS-level
-  // restriction that cannot be overridden via the speech_to_text API.
+  // HOW ALWAYS-ON WORKS:
+  // Instead of a watchdog checking for silence, we use a much simpler approach:
+  // Every time the STT engine stops for ANY reason (pauseFor, OS kill, error),
+  // _alwaysOnLoop immediately restarts it — as long as _userStopped is false.
+  // We set pauseFor to 2 seconds so the engine cycles quickly and restarts
+  // before the user even notices a gap.  The committed text is preserved across
+  // restarts so the display never clears.
   //
-  // THE SOLUTION — proactive restart:
-  // Instead of waiting for the OS to kill the engine, we detect silence ourselves
-  // and restart the engine first. The watchdog polls every 250ms and triggers a
-  // restart after 3s of silence — well before the OS kill at ~5-8s.
-  //
-  // This makes the mic feel permanently on during silence. The user sees no gap.
-  //
-  // onStatus / onError remain as a safety net in case the OS still beats us.
-  Timer?    _watchdog;
-  DateTime? _lastActivityTime;
-
-  // Proactively restart at 3s silence (OS kills at ~5-8s — we beat it)
-  static const _proactiveRestartThreshold = Duration(seconds: 3);
-
-  // ── Restart lock (prevents overlapping restarts) ──────────────────────────
-  bool _isRestarting = false;
+  Timer? _alwaysOnRestartTimer;
+  bool   _isRestarting = false;
 
   // ── Free word cap ──────────────────────────────────────────────────────────
   static const int _maxWordsFree = 30;
@@ -139,21 +134,21 @@ class _TranslatorScreenState extends State<TranslatorScreen>
     _isInitialized = await _speech.initialize(
       onStatus: (status) {
         dev.log('STT STATUS: $status');
-        // Safety net: OS killed engine before our watchdog could restart it
-        if (!_userStopped && _isListening && _isPremium && !_isRestarting) {
+        // For premium: any stop status triggers an immediate restart loop
+        if (!_userStopped && _isListening && _isPremium) {
           if (status == 'done' ||
               status == 'notListening' ||
               status == 'doneNoResult') {
-            dev.log('OS killed STT (status: $status) — safety-net restart');
-            _scheduleRestart(delay: const Duration(milliseconds: 50));
+            dev.log('STT stopped (status: $status) — restarting...');
+            _scheduleAlwaysOnRestart();
           }
         }
       },
       onError: (error) {
         dev.log('STT ERROR: ${error.errorMsg}');
-        if (!_userStopped && _isListening && _isPremium && !_isRestarting) {
-          dev.log('STT error — safety-net restart');
-          _scheduleRestart(delay: const Duration(milliseconds: 80));
+        if (!_userStopped && _isListening && _isPremium) {
+          dev.log('STT error — restarting...');
+          _scheduleAlwaysOnRestart();
         }
       },
     );
@@ -197,51 +192,112 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // ALWAYS-ON WATCHDOG
-  // Polls every 250ms. Proactively restarts at 3s silence.
+  // ALWAYS-ON RESTART LOOP (premium only)
+  //
+  // Called whenever STT stops for any reason. Waits a tiny bit (80ms) so
+  // the engine fully releases, then fires _startRealtimeListening() again.
+  // _userStopped acts as the kill-switch — set it to true and the loop exits.
   // ══════════════════════════════════════════════════════════════════════════
 
-  void _startWatchdog() {
-    _watchdog?.cancel();
-    _heartbeat(); // seed the clock
-    _watchdog = Timer.periodic(const Duration(milliseconds: 250), (_) {
-      if (!_isListening || _userStopped || !_isPremium || _isRestarting) return;
-      if (_lastActivityTime == null) return;
-
-      final silence = DateTime.now().difference(_lastActivityTime!);
-      if (silence >= _proactiveRestartThreshold) {
-        dev.log('Proactive restart after ${silence.inMilliseconds}ms silence');
-        _lastActivityTime = null; // prevent double-trigger
-        _scheduleRestart(delay: Duration.zero);
-      }
-    });
-  }
-
-  void _stopWatchdog() {
-    _watchdog?.cancel();
-    _watchdog = null;
-  }
-
-  /// Call on every STT partial/final result to reset the silence clock.
-  void _heartbeat() => _lastActivityTime = DateTime.now();
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // SCHEDULE RESTART — single entry point, prevents overlapping restarts
-  // ══════════════════════════════════════════════════════════════════════════
-
-  void _scheduleRestart({Duration delay = const Duration(milliseconds: 80)}) {
-    if (_isRestarting || _userStopped || !_isListening || !_isPremium) return;
+  void _scheduleAlwaysOnRestart() {
+    if (_userStopped || !_isListening || !_isPremium || _isRestarting) return;
     _isRestarting = true;
-    Future.delayed(delay, () async {
-      if (!_userStopped && _isListening && _isPremium && mounted) {
-        await _restartListening();
+
+    _alwaysOnRestartTimer?.cancel();
+    _alwaysOnRestartTimer = Timer(const Duration(milliseconds: 80), () async {
+      if (_userStopped || !_isListening || !_isPremium || !mounted) {
+        _isRestarting = false;
+        return;
       }
+      dev.log('Always-on: restarting STT engine');
+      try { await _speech.stop(); } catch (_) {}
+      await Future.delayed(const Duration(milliseconds: 60));
+      if (_userStopped || !_isListening || !_isPremium || !mounted) {
+        _isRestarting = false;
+        return;
+      }
+      await _startRealtimeListening();
       _isRestarting = false;
     });
   }
 
+  void _stopAlwaysOnLoop() {
+    _alwaysOnRestartTimer?.cancel();
+    _alwaysOnRestartTimer = null;
+    _isRestarting = false;
+  }
+
   // ══════════════════════════════════════════════════════════════════════════
-  // FREE — Basic listening (completely unchanged)
+  // FREE — 10-SECOND SILENCE DELAY SYSTEM
+  // ══════════════════════════════════════════════════════════════════════════
+
+  void _resetFreeDelayTimer() {
+    _freeDelayTimer?.cancel();
+    _freeDelayTimer = Timer(
+      const Duration(seconds: _freeSilenceDelay),
+      _processFreeBufferedText,
+    );
+  }
+
+  Future<void> _processFreeBufferedText() async {
+    _freeDelayTimer?.cancel();
+    _freeDelayTimer = null;
+
+    final raw = _freeBufferedRaw.trim();
+    if (raw.isEmpty) return;
+
+    dev.log('Free user: 10s silence passed — processing "$raw"');
+
+    final localResult = _nlp.correctPartialSync(raw);
+    final appended    = _buildDisplay(_committedText, localResult);
+
+    if (mounted) setState(() {
+      _displayText        = appended;
+      _currentSegment     = '';
+      _isRefiningFinal    = true;
+      _isWaitingToDisplay = false;
+    });
+
+    try {
+      final correctionResult = await _nlp.correct(appended);
+      final corrected        = correctionResult['corrected'] as String;
+
+      if (mounted) {
+        setState(() {
+          _committedText   = corrected;
+          _currentSegment  = '';
+          _displayText     = corrected;
+          _isRefiningFinal = false;
+        });
+      }
+
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        FirebaseFirestore.instance.collection('translations').add({
+          'text':    corrected,
+          'rawText': raw,
+          'time':    FieldValue.serverTimestamp(),
+          'userId':  user.uid,
+          'mode':    'basic',
+        }).catchError((e) => dev.log('Firestore save error: $e'));
+      }
+    } catch (e) {
+      dev.log('Free correction error: $e');
+      if (mounted) {
+        setState(() {
+          _committedText   = appended;
+          _currentSegment  = '';
+          _displayText     = appended;
+          _isRefiningFinal = false;
+        });
+      }
+    }
+
+    _freeBufferedRaw = '';
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // FREE — Basic listening with 10-second silence delay
   // ══════════════════════════════════════════════════════════════════════════
 
   void _startFreeCountdown() {
@@ -254,9 +310,13 @@ class _TranslatorScreenState extends State<TranslatorScreen>
         t.cancel();
         _userStopped = true;
         _speech.stop();
+        if (_freeBufferedRaw.trim().isNotEmpty) {
+          _processFreeBufferedText();
+        }
         if (mounted) setState(() {
-          _isListening     = false;
-          _isRefiningFinal = false;
+          _isListening        = false;
+          _isRefiningFinal    = false;
+          _isWaitingToDisplay = false;
         });
       }
     });
@@ -273,60 +333,18 @@ class _TranslatorScreenState extends State<TranslatorScreen>
     await _speech.listen(
       localeId:       'en_US',
       listenFor:      const Duration(seconds: _freeTotalSeconds),
-      pauseFor:       const Duration(seconds: 5),
+      pauseFor:       const Duration(seconds: 12),
       partialResults: true,
       listenMode:     stt.ListenMode.dictation,
-      onResult: (result) async {
+      onResult: (result) {
         final words = result.recognizedWords.trim();
         if (words.isEmpty) return;
 
         if (result.finalResult) {
-          final localResult = _nlp.correctPartialSync(words);
-          final appended    = _buildDisplay(_committedText, localResult);
-
-          if (mounted) setState(() {
-            _displayText     = appended;
-            _currentSegment  = '';
-            _isRefiningFinal = true;
-          });
-
-          try {
-            final correctionResult = await _nlp.correct(appended);
-            final corrected        = correctionResult['corrected'] as String;
-
-            if (mounted) {
-              setState(() {
-                _committedText   = corrected;
-                _currentSegment  = '';
-                _displayText     = corrected;
-                _isRefiningFinal = false;
-              });
-            }
-
-            final user = FirebaseAuth.instance.currentUser;
-            if (user != null) {
-              FirebaseFirestore.instance.collection('translations').add({
-                'text':    corrected,
-                'rawText': words,
-                'time':    FieldValue.serverTimestamp(),
-                'userId':  user.uid,
-                'mode':    'basic',
-              }).catchError((e) => dev.log('Firestore save error: $e'));
-            }
-          } catch (e) {
-            dev.log('Basic correction error: $e');
-            if (mounted) {
-              setState(() {
-                _committedText   = appended;
-                _currentSegment  = '';
-                _displayText     = appended;
-                _isRefiningFinal = false;
-              });
-            }
-          }
-        } else {
-          final preview = _buildDisplay(_committedText, words);
-          if (mounted) setState(() => _displayText = preview);
+          final combined   = _buildDisplay(_committedText, words).trim();
+          _freeBufferedRaw = combined;
+          if (mounted) setState(() => _isWaitingToDisplay = true);
+          _resetFreeDelayTimer();
         }
       },
     );
@@ -335,8 +353,12 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   // ══════════════════════════════════════════════════════════════════════════
   // PREMIUM — ALWAYS-ON REAL-TIME LISTENING
   //
-  // pauseFor: 10s is just a backstop. The watchdog proactively restarts at
-  // 3s silence, so the user never notices the engine cycling.
+  // Key changes vs original:
+  // • pauseFor = 2 seconds — engine recycles fast so restarts are seamless.
+  // • listenFor = 30 seconds — short window so the OS never force-kills it;
+  //   the onStatus 'done' handler immediately restarts via _scheduleAlwaysOnRestart.
+  // • No watchdog timer needed — onStatus/onError covers every stop scenario.
+  // • _committedText is preserved across restarts so text never disappears.
   // ══════════════════════════════════════════════════════════════════════════
 
   Future<void> _startRealtimeListening() async {
@@ -345,13 +367,13 @@ class _TranslatorScreenState extends State<TranslatorScreen>
       if (!_isInitialized) return;
     }
 
+    // Do NOT clear _committedText here — we want to keep it across restarts
     _currentSegment = '';
-    _heartbeat();
 
     await _speech.listen(
       localeId:       'en_US',
-      listenFor:      const Duration(hours: 1),
-      pauseFor:       const Duration(seconds: 10),
+      listenFor:      const Duration(seconds: 30), // short window → fast recycle
+      pauseFor:       const Duration(seconds: 2),  // 2s silence → restart immediately
       partialResults: true,
       listenMode:     stt.ListenMode.dictation,
       onResult: (result) {
@@ -360,14 +382,10 @@ class _TranslatorScreenState extends State<TranslatorScreen>
         final words = result.recognizedWords.trim();
         if (words.isEmpty) return;
 
-        // Reset silence clock — engine is alive and hearing something
-        _heartbeat();
-
         final confidence = result.confidence > 0
             ? result.confidence.toDouble()
             : 0.6;
 
-        // Noise gate
         if (words.split(' ').length < 2 && confidence < 0.35) {
           dev.log('Noise filtered: "$words" ($confidence)');
           return;
@@ -395,7 +413,6 @@ class _TranslatorScreenState extends State<TranslatorScreen>
     );
   }
 
-  /// Async NLP refinement + Firestore — never awaited, never blocks UI.
   void _runBackgroundSave(String rawWords, String syncResult) {
     () async {
       String finalText = syncResult;
@@ -430,36 +447,30 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // RESTART
-  // ══════════════════════════════════════════════════════════════════════════
-
-  Future<void> _restartListening() async {
-    if (!_isListening || _userStopped || !_isPremium) return;
-    dev.log('Restarting STT engine...');
-    try { await _speech.stop(); } catch (_) {}
-    await Future.delayed(const Duration(milliseconds: 60));
-    if (!_isListening || _userStopped || !_isPremium || !mounted) return;
-    await _startRealtimeListening();
-  }
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // TOGGLE MIC — only place _userStopped becomes true
+  // TOGGLE MIC
   // ══════════════════════════════════════════════════════════════════════════
 
   Future<void> _toggleMic() async {
     if (_isListening) {
-      // ── STOP ──────────────────────────────────────────────────────────────
-      _userStopped  = true;
-      _isRestarting = false;
+      // ── STOP — user explicitly tapped off ─────────────────────────────────
+      _userStopped = true;         // kill-switch for the always-on loop
+      _stopAlwaysOnLoop();
       _freeTimer?.cancel();
+      _freeDelayTimer?.cancel();
+      _freeDelayTimer = null;
       _bgSaveTimer?.cancel();
       _partialNlpDebounce?.cancel();
       _stopPremiumSessionTimer();
-      _stopWatchdog();
       await _speech.stop();
+
+      if (!_isPremium && _freeBufferedRaw.trim().isNotEmpty) {
+        _processFreeBufferedText();
+      }
+
       if (mounted) setState(() {
-        _isListening     = false;
-        _isRefiningFinal = false;
+        _isListening        = false;
+        _isRefiningFinal    = false;
+        _isWaitingToDisplay = false;
       });
     } else {
       // ── START ─────────────────────────────────────────────────────────────
@@ -468,17 +479,18 @@ class _TranslatorScreenState extends State<TranslatorScreen>
       _displayText           = '';
       _committedText         = '';
       _currentSegment        = '';
+      _freeBufferedRaw       = '';
       _freeSecondsLeft       = _freeTotalSeconds;
       _isRefiningFinal       = false;
+      _isWaitingToDisplay    = false;
       _premiumSessionSeconds = 0;
-      _lastActivityTime      = null;
       if (mounted) setState(() => _isListening = true);
       _nlp.beginSession();
 
       if (_isPremium) {
         _startPremiumSessionTimer();
-        _startWatchdog();
         await _startRealtimeListening();
+        // The onStatus callback handles all restarts from here — no watchdog needed
       } else {
         await _startBasicListening();
       }
@@ -491,10 +503,8 @@ class _TranslatorScreenState extends State<TranslatorScreen>
     if (!_isListening && _displayText.isEmpty) {
       return 'Tap the mic to start speaking...';
     }
-    if (_isListening && _displayText.isEmpty) {
-      return _isPremium
-          ? 'Listening... speak now'
-          : 'Listening... (translates after 5s silence)';
+    if (_isListening && _displayText.isEmpty && !_isWaitingToDisplay) {
+      return 'Listening... speak now';
     }
     return '';
   }
@@ -622,10 +632,11 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   @override
   void dispose() {
     _freeTimer?.cancel();
+    _freeDelayTimer?.cancel();
     _bgSaveTimer?.cancel();
     _premiumSessionTimer?.cancel();
     _partialNlpDebounce?.cancel();
-    _watchdog?.cancel();
+    _alwaysOnRestartTimer?.cancel();
     _premiumSub.cancel();
     _nlp.onRealtimeCorrection = null;
     _speech.stop();
@@ -807,6 +818,30 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                 ),
               ),
             ],
+            if (_isWaitingToDisplay && !_isPremium) ...[
+              const SizedBox(width: 16),
+              AnimatedBuilder(
+                animation: _dotAnim,
+                builder: (_, __) => Opacity(
+                  opacity: _dotAnim.value,
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 6, height: 6,
+                        decoration: const BoxDecoration(
+                            color: _teal, shape: BoxShape.circle),
+                      ),
+                      const SizedBox(width: 5),
+                      const Text(
+                        'processing in 10s...',
+                        style: TextStyle(
+                            color: _teal, fontSize: 11, letterSpacing: 0.5),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
             if (_isRefiningFinal && !_isPremium) ...[
               const SizedBox(width: 16),
               AnimatedBuilder(
@@ -822,7 +857,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                       ),
                       const SizedBox(width: 5),
                       const Text(
-                        'translating (basic mode)...',
+                        'translating...',
                         style: TextStyle(
                             color: _teal, fontSize: 11, letterSpacing: 0.5),
                       ),
@@ -861,7 +896,34 @@ class _TranslatorScreenState extends State<TranslatorScreen>
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (hint.isNotEmpty)
+                if (_isWaitingToDisplay && !_isPremium && _displayText.isEmpty)
+                  Column(
+                    children: [
+                      const SizedBox(height: 8),
+                      AnimatedBuilder(
+                        animation: _dotAnim,
+                        builder: (_, __) => Opacity(
+                          opacity: _dotAnim.value,
+                          child: const Icon(
+                            Icons.hourglass_top_rounded,
+                            color: _teal,
+                            size: 32,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      const Text(
+                        'Speech captured.\nTranslation appears after 10s of silence.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: _white40,
+                          height: 1.6,
+                        ),
+                      ),
+                    ],
+                  )
+                else if (hint.isNotEmpty)
                   Text(hint,
                       textAlign: TextAlign.center,
                       style: const TextStyle(
@@ -1024,7 +1086,6 @@ class _TranslatorScreenState extends State<TranslatorScreen>
             ],
           ),
 
-        // ── Upgrade banner (free, not listening) ──────────────────────────
         if (!_isPremium && !_isListening) ...[
           const SizedBox(height: 20),
           GestureDetector(

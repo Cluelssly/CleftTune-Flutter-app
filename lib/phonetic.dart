@@ -10,8 +10,8 @@ import 'notifications.dart';
 // ─────────────────────────────────────────────────────────────────────────────
 
 class PhonemeIssue {
-  final String original;
-  final String expected;
+  final String original;     // what STT heard (raw)
+  final String expected;     // what it should be (corrected)
   final String substitution;
   final String description;
   final String severity; // 'high' | 'medium' | 'low'
@@ -37,6 +37,8 @@ class PhonemeAnalysisResult {
   final String overallFeedback;
   final Map<String, int> categoryBreakdown;
   final List<String> drillSuggestions;
+  // NEW: word-level pairs showing (rawHeard, corrected) for every word
+  final List<WordPair> wordPairs;
 
   const PhonemeAnalysisResult({
     required this.clarityScore,
@@ -45,13 +47,26 @@ class PhonemeAnalysisResult {
     required this.overallFeedback,
     required this.categoryBreakdown,
     required this.drillSuggestions,
+    required this.wordPairs,
+  });
+}
+
+/// Represents one word: what STT heard vs what the NLP corrected it to.
+class WordPair {
+  final String heard;      // raw STT word
+  final String corrected;  // NLP-corrected word
+  final bool wasChanged;   // true if they differ
+
+  const WordPair({
+    required this.heard,
+    required this.corrected,
+    required this.wasChanged,
   });
 }
 
 class PhonemeAnalyzer {
-  // Common phoneme substitution patterns (what STT hears vs what was likely said)
+  // Common phoneme substitution patterns
   static const Map<String, Map<String, String>> _substitutionPatterns = {
-    // Consonant substitutions
     'th_to_d': {'pattern': r'\b(d)(e|is|at|em|ey|ere|ose|ough)\b', 'expected': 'th', 'category': 'consonant'},
     'th_to_t': {'pattern': r'\b(t)(ink|ing|ings|ree|ree|rone)\b', 'expected': 'th', 'category': 'consonant'},
     'v_to_b': {'pattern': r'\b(b)(ery|ideo|oice|alue|ision)\b', 'expected': 'v', 'category': 'consonant'},
@@ -63,22 +78,18 @@ class PhonemeAnalyzer {
     'ch_to_s': {'pattern': r'\b(s)(eck|air|ance|ange)\b', 'expected': 'ch', 'category': 'consonant'},
     'j_to_y': {'pattern': r'\b(y)(ust|ob|ump|oin)\b', 'expected': 'j', 'category': 'consonant'},
     'ng_drop': {'pattern': r'\b(\w+)(in)\b', 'expected': 'ing', 'category': 'consonant'},
-    // Vowel substitutions
     'i_to_e': {'pattern': r'\b(\w*)(e)(t|s|ll|n|nd)\b', 'expected': 'i', 'category': 'vowel'},
     'e_to_a': {'pattern': r'\b(\w*)(a)(nd|n|t|s)\b', 'expected': 'e', 'category': 'vowel'},
     'u_to_o': {'pattern': r'\b(o)(p|t|n|s|b)\b', 'expected': 'u', 'category': 'vowel'},
-    // Cluster reductions
     'str_to_st': {'pattern': r'\b(st)(ong|eet|ing|ike)\b', 'expected': 'str', 'category': 'cluster'},
     'spr_to_sp': {'pattern': r'\b(sp)(ing|ead|ay)\b', 'expected': 'spr', 'category': 'cluster'},
     'pl_to_p': {'pattern': r'\b(p)(ay|ace|an|ant)\b', 'expected': 'pl', 'category': 'cluster'},
     'bl_to_b': {'pattern': r'\b(b)(ue|ack|ock|ow)\b', 'expected': 'bl', 'category': 'cluster'},
     'gr_to_g': {'pattern': r'\b(g)(een|eat|ow|ab)\b', 'expected': 'gr', 'category': 'cluster'},
-    // Final consonant drops
     'final_t_drop': {'pattern': r'\b(\w+[aeiou])\b(?=\s|$)', 'expected': 't', 'category': 'consonant'},
     'final_d_drop': {'pattern': r'\b(\w+[aeiou])\b(?=\s|$)', 'expected': 'd', 'category': 'consonant'},
   };
 
-  // Known homophones and common mishearings
   static const Map<String, List<String>> _commonMishearings = {
     'there': ['their', 'they\'re', 'dare'],
     'your': ['you\'re', 'yer'],
@@ -121,7 +132,6 @@ class PhonemeAnalyzer {
     'particularly': ['particuly', 'partiularly'],
   };
 
-  // Drill suggestions per category
   static const Map<String, List<String>> _drillMap = {
     'consonant': [
       'Practice "th" sounds: "the, this, that, there, think"',
@@ -159,10 +169,25 @@ class PhonemeAnalyzer {
       'stress': 0,
     };
 
-    final rawWords = rawInput.toLowerCase().split(RegExp(r'\s+'));
+    final rawWords  = rawInput.toLowerCase().split(RegExp(r'\s+'));
     final corrWords = correctedOutput.toLowerCase().split(RegExp(r'\s+'));
 
-    // Check for known mishearings
+    // ── Build word pairs (raw STT heard vs NLP corrected) ──────────────────
+    final wordPairs = <WordPair>[];
+    final maxLen = rawWords.length > corrWords.length ? rawWords.length : corrWords.length;
+    for (int i = 0; i < maxLen; i++) {
+      final raw = i < rawWords.length ? rawWords[i] : '';
+      final cor = i < corrWords.length ? corrWords[i] : '';
+      final rawClean = raw.replaceAll(RegExp(r'[^a-z]'), '');
+      final corClean = cor.replaceAll(RegExp(r'[^a-z]'), '');
+      wordPairs.add(WordPair(
+        heard:      rawClean.isNotEmpty ? rawClean : raw,
+        corrected:  corClean.isNotEmpty ? corClean : cor,
+        wasChanged: rawClean != corClean,
+      ));
+    }
+
+    // ── Check for known mishearings ────────────────────────────────────────
     for (int i = 0; i < rawWords.length; i++) {
       final word = rawWords[i].replaceAll(RegExp(r'[^a-z]'), '');
       if (word.isEmpty) continue;
@@ -171,12 +196,12 @@ class PhonemeAnalyzer {
         if (variants.contains(word) || _levenshtein(word, target) == 1) {
           final severity = variants.contains(word) ? 'high' : 'medium';
           issues.add(PhonemeIssue(
-            original: word,
-            expected: target,
+            original:     word,
+            expected:     target,
             substitution: word,
-            description: _describeMishearing(word, target),
-            severity: severity,
-            category: _classifyMishearing(word, target),
+            description:  _describeMishearing(word, target),
+            severity:     severity,
+            category:     _classifyMishearing(word, target),
           ));
           categoryCount[_classifyMishearing(word, target)] =
               (categoryCount[_classifyMishearing(word, target)] ?? 0) + 1;
@@ -184,10 +209,8 @@ class PhonemeAnalyzer {
       });
     }
 
-    // Word-level comparison between raw and corrected
-    final minLen = rawWords.length < corrWords.length
-        ? rawWords.length
-        : corrWords.length;
+    // ── Word-level comparison between raw and corrected ────────────────────
+    final minLen = rawWords.length < corrWords.length ? rawWords.length : corrWords.length;
     for (int i = 0; i < minLen; i++) {
       final raw = rawWords[i].replaceAll(RegExp(r'[^a-z]'), '');
       final cor = corrWords[i].replaceAll(RegExp(r'[^a-z]'), '');
@@ -200,12 +223,12 @@ class PhonemeAnalyzer {
         final alreadyReported = issues.any((iss) => iss.original == raw);
         if (!alreadyReported) {
           issues.add(PhonemeIssue(
-            original: raw,
-            expected: cor,
+            original:     raw,
+            expected:     cor,
             substitution: raw,
-            description: _describeSubstitution(raw, cor, category),
-            severity: severity,
-            category: category,
+            description:  _describeSubstitution(raw, cor, category),
+            severity:     severity,
+            category:     category,
           ));
           categoryCount[category] = (categoryCount[category] ?? 0) + 1;
         }
@@ -213,25 +236,21 @@ class PhonemeAnalyzer {
     }
 
     // Remove duplicates
-    final seen = <String>{};
+    final seen         = <String>{};
     final uniqueIssues = issues.where((i) => seen.add(i.original)).toList();
 
-    // Clarity score calculation
-    final baseScore = (confidence * 100).round().clamp(30, 100);
-    final penaltyHigh = uniqueIssues.where((i) => i.severity == 'high').length * 8;
-    final penaltyMed  = uniqueIssues.where((i) => i.severity == 'medium').length * 4;
-    final penaltyLow  = uniqueIssues.where((i) => i.severity == 'low').length * 2;
+    // Clarity score
+    final baseScore    = (confidence * 100).round().clamp(30, 100);
+    final penaltyHigh  = uniqueIssues.where((i) => i.severity == 'high').length * 8;
+    final penaltyMed   = uniqueIssues.where((i) => i.severity == 'medium').length * 4;
+    final penaltyLow   = uniqueIssues.where((i) => i.severity == 'low').length * 2;
     final patternBonus = (patternCount * 0.5).round().clamp(0, 15);
     final clarityScore = (baseScore - penaltyHigh - penaltyMed - penaltyLow + patternBonus)
         .clamp(0, 100);
 
-    // Similarity
     final similarity = _stringSimilarity(rawInput.toLowerCase(), correctedOutput.toLowerCase());
+    final feedback   = _buildFeedback(clarityScore, uniqueIssues, categoryCount);
 
-    // Feedback
-    final feedback = _buildFeedback(clarityScore, uniqueIssues, categoryCount);
-
-    // Drill suggestions
     final drills = <String>{};
     for (final cat in categoryCount.keys) {
       if ((categoryCount[cat] ?? 0) > 0 && _drillMap.containsKey(cat)) {
@@ -244,32 +263,29 @@ class PhonemeAnalyzer {
     }
 
     return PhonemeAnalysisResult(
-      clarityScore: clarityScore,
-      similarity: similarity,
-      issues: uniqueIssues,
-      overallFeedback: feedback,
+      clarityScore:      clarityScore,
+      similarity:        similarity,
+      issues:            uniqueIssues,
+      overallFeedback:   feedback,
       categoryBreakdown: categoryCount,
-      drillSuggestions: drills.toList(),
+      drillSuggestions:  drills.toList(),
+      wordPairs:         wordPairs,
     );
   }
 
   static String _classifyMishearing(String heard, String target) {
-    final heardL = heard.toLowerCase();
+    final heardL  = heard.toLowerCase();
     final targetL = target.toLowerCase();
-
-    // Consonant substitutions
     if ((heardL.startsWith('d') && targetL.startsWith('th')) ||
         (heardL.startsWith('t') && targetL.startsWith('th')) ||
-        (heardL.startsWith('b') && targetL.startsWith('v')) ||
+        (heardL.startsWith('b') && targetL.startsWith('v'))  ||
         (heardL.startsWith('v') && targetL.startsWith('w'))) {
       return 'consonant';
     }
-    // Vowel substitutions
     final vowelPairs = [['e', 'i'], ['a', 'e'], ['o', 'u']];
     for (final pair in vowelPairs) {
       if (heardL.contains(pair[0]) && targetL.contains(pair[1])) return 'vowel';
     }
-    // Cluster reductions
     if (targetL.length - heardL.length >= 1 &&
         RegExp(r'^[bcdfghjklmnpqrstvwxyz]{2}').hasMatch(targetL)) {
       return 'cluster';
@@ -278,46 +294,29 @@ class PhonemeAnalyzer {
   }
 
   static String _describeMishearing(String heard, String target) {
-    if (heard.startsWith('d') && target.startsWith('th')) {
-      return '/d/ substituted for /ð/ — dental fricative not formed';
-    }
-    if (heard.startsWith('t') && target.startsWith('th')) {
-      return '/t/ substituted for /θ/ — tongue not between teeth';
-    }
-    if (heard.startsWith('b') && target.startsWith('v')) {
-      return '/b/ substituted for /v/ — labiodental friction missing';
-    }
-    if (heard.startsWith('v') && target.startsWith('w')) {
-      return '/v/ substituted for /w/ — lip rounding inconsistent';
-    }
+    if (heard.startsWith('d') && target.startsWith('th')) return '/d/ substituted for /ð/ — dental fricative not formed';
+    if (heard.startsWith('t') && target.startsWith('th')) return '/t/ substituted for /θ/ — tongue not between teeth';
+    if (heard.startsWith('b') && target.startsWith('v'))  return '/b/ substituted for /v/ — labiodental friction missing';
+    if (heard.startsWith('v') && target.startsWith('w'))  return '/v/ substituted for /w/ — lip rounding inconsistent';
     return 'Phoneme substitution detected — review articulation';
   }
 
   static String _detectSubstitutionCategory(String raw, String cor) {
-    // Cluster check
     if (RegExp(r'^[bcdfghjklmnpqrstvwxyz]{2}').hasMatch(cor) &&
-        !RegExp(r'^[bcdfghjklmnpqrstvwxyz]{2}').hasMatch(raw)) {
-      return 'cluster';
-    }
-    // Vowel-only diff
+        !RegExp(r'^[bcdfghjklmnpqrstvwxyz]{2}').hasMatch(raw)) return 'cluster';
     final rawC = raw.replaceAll(RegExp(r'[aeiou]'), '');
     final corC = cor.replaceAll(RegExp(r'[aeiou]'), '');
     if (rawC == corC) return 'vowel';
-    // Stress (length difference)
     if ((raw.length - cor.length).abs() >= 2) return 'stress';
     return 'consonant';
   }
 
   static String _describeSubstitution(String raw, String cor, String category) {
     switch (category) {
-      case 'cluster':
-        return 'Consonant cluster /${_getCluster(cor)}/ reduced — blend both sounds';
-      case 'vowel':
-        return 'Vowel quality shift in "$raw" → "$cor" — check tongue height/position';
-      case 'stress':
-        return 'Syllable stress pattern off in "$raw" — emphasize the stressed syllable';
-      default:
-        return 'Consonant substitution: "$raw" heard instead of "$cor"';
+      case 'cluster': return 'Consonant cluster /${_getCluster(cor)}/ reduced — blend both sounds';
+      case 'vowel':   return 'Vowel quality shift in "$raw" → "$cor" — check tongue height/position';
+      case 'stress':  return 'Syllable stress pattern off in "$raw" — emphasize the stressed syllable';
+      default:        return 'Consonant substitution: "$raw" heard instead of "$cor"';
     }
   }
 
@@ -326,11 +325,7 @@ class PhonemeAnalyzer {
     return match?.group(0) ?? word.substring(0, 2);
   }
 
-  static String _buildFeedback(
-    int score,
-    List<PhonemeIssue> issues,
-    Map<String, int> cats,
-  ) {
+  static String _buildFeedback(int score, List<PhonemeIssue> issues, Map<String, int> cats) {
     if (score >= 85) return 'Excellent clarity! Minor refinements may improve precision.';
     if (score >= 70) {
       final dominant = _dominantCategory(cats);
@@ -350,32 +345,28 @@ class PhonemeAnalyzer {
     return top;
   }
 
-  // Levenshtein distance
   static int _levenshtein(String a, String b) {
     if (a == b) return 0;
     if (a.isEmpty) return b.length;
     if (b.isEmpty) return a.length;
     final rows = List.generate(
-      a.length + 1, (i) => List.generate(b.length + 1, (j) => i == 0 ? j : (j == 0 ? i : 0)),
+      a.length + 1,
+      (i) => List.generate(b.length + 1, (j) => i == 0 ? j : (j == 0 ? i : 0)),
     );
     for (int i = 1; i <= a.length; i++) {
       for (int j = 1; j <= b.length; j++) {
         final cost = a[i - 1] == b[j - 1] ? 0 : 1;
-        rows[i][j] = [
-          rows[i - 1][j] + 1,
-          rows[i][j - 1] + 1,
-          rows[i - 1][j - 1] + cost,
-        ].reduce((x, y) => x < y ? x : y);
+        rows[i][j] = [rows[i - 1][j] + 1, rows[i][j - 1] + 1, rows[i - 1][j - 1] + cost]
+            .reduce((x, y) => x < y ? x : y);
       }
     }
     return rows[a.length][b.length];
   }
 
-  // String similarity 0.0–1.0
   static double _stringSimilarity(String a, String b) {
     if (a == b) return 1.0;
     if (a.isEmpty || b.isEmpty) return 0.0;
-    final dist = _levenshtein(a, b);
+    final dist   = _levenshtein(a, b);
     final maxLen = a.length > b.length ? a.length : b.length;
     return 1.0 - (dist / maxLen);
   }
@@ -387,7 +378,6 @@ class PhonemeAnalyzer {
 
 class TrainedVoiceApp extends StatelessWidget {
   const TrainedVoiceApp({super.key});
-
   @override
   Widget build(BuildContext context) {
     return const MaterialApp(
@@ -399,7 +389,6 @@ class TrainedVoiceApp extends StatelessWidget {
 
 class TrainedVoiceScreen extends StatefulWidget {
   const TrainedVoiceScreen({super.key});
-
   @override
   State<TrainedVoiceScreen> createState() => _TrainedVoiceScreenState();
 }
@@ -409,11 +398,9 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
   final _nlp = NlpService();
   final stt.SpeechToText _speech = stt.SpeechToText();
 
-  // ── User data ──────────────────────────────────────────────────────────────
-  String _userName = '';
-  bool _isLoadingUser = true;
+  String _userName      = '';
+  bool   _isLoadingUser = true;
 
-  // ── Training state ─────────────────────────────────────────────────────────
   String _rawOutput        = '';
   String _correctedOutput  = '';
   bool   _isProcessing     = false;
@@ -425,19 +412,17 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
   double _trainedHours     = 0.0;
   double _lastConfidence   = 0.6;
 
-  // ── Phoneme analysis ───────────────────────────────────────────────────────
   PhonemeAnalysisResult? _phonemeResult;
 
   late AnimationController _pulseController;
 
-  // ── Color constants ────────────────────────────────────────────────────────
-  static const _bg        = Color(0xFF060F1A);
-  static const _surface   = Color(0xFF0D1F2D);
-  static const _card      = Color(0xFF112233);
-  static const _teal      = Color(0xFF0ECFB0);
-  static const _tealDark  = Color(0xFF0A8A78);
-  static const _tealDeep  = Color(0xFF0B5D5E);
-  static const _accent    = Color(0xFF1AE5C8);
+  static const _bg       = Color(0xFF060F1A);
+  static const _surface  = Color(0xFF0D1F2D);
+  static const _card     = Color(0xFF112233);
+  static const _teal     = Color(0xFF0ECFB0);
+  static const _tealDark = Color(0xFF0A8A78);
+  static const _tealDeep = Color(0xFF0B5D5E);
+  static const _accent   = Color(0xFF1AE5C8);
 
   @override
   void initState() {
@@ -456,13 +441,11 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
     super.dispose();
   }
 
-  // ── Load user data ─────────────────────────────────────────────────────────
   Future<void> _loadUserData() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) { setState(() => _isLoadingUser = false); return; }
     try {
-      final doc = await FirebaseFirestore.instance
-          .collection('users').doc(user.uid).get();
+      final doc  = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
       final data = doc.data();
       setState(() {
         _userName         = data?['name'] ?? user.displayName ?? 'Aljhen';
@@ -480,7 +463,6 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
     }
   }
 
-  // ── Save training progress ─────────────────────────────────────────────────
   Future<void> _saveTrainingProgress() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
@@ -504,7 +486,6 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
     setState(() {});
   }
 
-  // ── Toggle mic ─────────────────────────────────────────────────────────────
   Future<void> _toggleListening() async {
     if (_isListening) {
       await _speech.stop();
@@ -554,12 +535,10 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
     );
   }
 
-  // ── Run NLP + phoneme analysis ─────────────────────────────────────────────
   Future<void> _runCorrection(String raw) async {
-    final result = await _nlp.correct(raw);
+    final result        = await _nlp.correct(raw);
     final correctedText = result['corrected'] as String;
 
-    // Full phoneme analysis
     final phoneme = PhonemeAnalyzer.analyze(
       rawInput:        raw,
       correctedOutput: correctedText,
@@ -580,9 +559,11 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
     await NotificationHelper.trainingCompleted(accuracy: _trainingProgress * 100);
   }
 
-  // ── Word correction sheet ──────────────────────────────────────────────────
-  void _showWordCorrectionSheet(String word) {
-    final controller = TextEditingController(text: word);
+  // ── Word correction sheet — accepts both heard word and its index ──────────
+  void _showWordCorrectionSheet(String heardWord, {String? correctedHint}) {
+    // Pre-fill with what the AI corrected it to (if available), else the heard word
+    final controller = TextEditingController(text: correctedHint ?? heardWord);
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -604,23 +585,40 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
               decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
             )),
             const SizedBox(height: 20),
+
+            // Header shows what AI heard
             Row(children: [
-              const Icon(Icons.edit_note_rounded, color: _teal, size: 20),
+              const Icon(Icons.hearing_rounded, color: _teal, size: 20),
               const SizedBox(width: 8),
-              Text('Correct "$word"',
-                  style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'AI heard: "$heardWord"',
+                      style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                    if (correctedHint != null && correctedHint != heardWord)
+                      Text(
+                        'NLP corrected to: "$correctedHint"',
+                        style: const TextStyle(color: _teal, fontSize: 12),
+                      ),
+                  ],
+                ),
+              ),
             ]),
             const SizedBox(height: 6),
-            const Text('What did you mean to say?',
+            const Text('What did you actually mean to say?',
                 style: TextStyle(color: Colors.white54, fontSize: 13)),
             const SizedBox(height: 16),
+
             TextField(
               controller: controller,
               autofocus: true,
               style: const TextStyle(color: Colors.white),
               decoration: InputDecoration(
                 filled: true, fillColor: _surface,
-                hintText: 'Correct word...',
+                hintText: 'Type the correct word...',
                 hintStyle: const TextStyle(color: Colors.white38),
                 prefixIcon: const Icon(Icons.record_voice_over_rounded, color: _teal, size: 18),
                 border: OutlineInputBorder(
@@ -638,6 +636,7 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
               ),
             ),
             const SizedBox(height: 16),
+
             ElevatedButton.icon(
               style: ElevatedButton.styleFrom(
                 backgroundColor: _tealDeep,
@@ -650,8 +649,11 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
                   style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
               onPressed: () async {
                 final correctWord = controller.text.trim();
-                if (correctWord.isNotEmpty && correctWord != word) {
-                  await _nlp.learnPattern(word, correctWord);
+                // Teach the NLP: heard word → correct word
+                if (correctWord.isNotEmpty && correctWord != heardWord) {
+                  await _nlp.learnPattern(heardWord, correctWord);
+
+                  // Re-run correction on the original raw input
                   final r       = await _nlp.correct(_rawOutput);
                   final updated = r['corrected'] as String;
 
@@ -692,7 +694,6 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
         body: Center(child: CircularProgressIndicator(color: _teal)),
       );
     }
-
     return Scaffold(
       backgroundColor: _bg,
       body: SafeArea(
@@ -717,7 +718,6 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
     );
   }
 
-  // ── Top bar ────────────────────────────────────────────────────────────────
   Widget _buildTopBar() {
     return Row(
       children: [
@@ -747,21 +747,16 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
         ),
         Container(
           padding: const EdgeInsets.all(9),
-          decoration: BoxDecoration(
-            color: _tealDeep,
-            borderRadius: BorderRadius.circular(10),
-          ),
+          decoration: BoxDecoration(color: _tealDeep, borderRadius: BorderRadius.circular(10)),
           child: const Icon(Icons.settings_rounded, color: Colors.white, size: 18),
         ),
       ],
     );
   }
 
-  // ── Status card ────────────────────────────────────────────────────────────
   Widget _buildStatusCard() {
     final statusLabel = _isListening ? 'LISTENING...' : _isProcessing ? 'PROCESSING...' : 'ACTIVE';
     final pct = (_trainingProgress * 100).toStringAsFixed(1);
-
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -781,24 +776,19 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
             children: [
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.black26,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 6, height: 6,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: _isListening ? Colors.redAccent : Colors.greenAccent,
-                      ),
+                decoration: BoxDecoration(color: Colors.black26, borderRadius: BorderRadius.circular(20)),
+                child: Row(children: [
+                  Container(
+                    width: 6, height: 6,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: _isListening ? Colors.redAccent : Colors.greenAccent,
                     ),
-                    const SizedBox(width: 6),
-                    Text('STATUS: $statusLabel',
-                        style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 0.8)),
-                  ],
-                ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text('STATUS: $statusLabel',
+                      style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 0.8)),
+                ]),
               ),
               Text('$pct%',
                   style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900)),
@@ -835,17 +825,14 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
     );
   }
 
-  // ── Stats row ──────────────────────────────────────────────────────────────
   Widget _buildStatsRow() {
     return Row(
       children: [
         _statChip(Icons.mic_rounded, '$_sessionCount', 'Sessions'),
         const SizedBox(width: 10),
-        _statChip(Icons.track_changes_rounded,
-            '${(_trainingProgress * 100).toStringAsFixed(0)}%', 'Accuracy'),
+        _statChip(Icons.track_changes_rounded, '${(_trainingProgress * 100).toStringAsFixed(0)}%', 'Accuracy'),
         const SizedBox(width: 10),
-        _statChip(Icons.timer_outlined,
-            '${_trainedHours.toStringAsFixed(1)}h', 'Trained'),
+        _statChip(Icons.timer_outlined, '${_trainedHours.toStringAsFixed(1)}h', 'Trained'),
       ],
     );
   }
@@ -863,8 +850,7 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
           children: [
             Icon(icon, color: _teal, size: 18),
             const SizedBox(height: 6),
-            Text(value,
-                style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: Colors.white)),
+            Text(value, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: Colors.white)),
             const SizedBox(height: 2),
             Text(label, style: const TextStyle(fontSize: 10, color: Colors.white38)),
           ],
@@ -873,7 +859,6 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
     );
   }
 
-  // ── Vocal profile card (only trained) ─────────────────────────────────────
   Widget _buildVocalProfileCard() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -930,7 +915,6 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
     );
   }
 
-  // ── Analysis panel ─────────────────────────────────────────────────────────
   Widget _buildAnalysisPanel() {
     final clarity = _phonemeResult?.clarityScore ?? 0;
     final match   = _phonemeResult != null
@@ -947,7 +931,6 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Header
           Row(children: [
             const Icon(Icons.analytics_rounded, color: _teal, size: 18),
             const SizedBox(width: 8),
@@ -957,21 +940,19 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
           const SizedBox(height: 4),
           const Text('Focusing on high-frequency stability and phoneme precision.',
               style: TextStyle(color: Colors.white38, fontSize: 12)),
-
           const SizedBox(height: 16),
 
-          // Clarity + Match chips
           Row(
             children: [
               _analyticsChip(
-                icon: Icons.graphic_eq_rounded,
+                icon:  Icons.graphic_eq_rounded,
                 label: 'Clarity',
                 value: clarity > 0 ? '$clarity%' : '—',
                 color: clarity > 0 ? _clarityColor(clarity) : Colors.white38,
               ),
               const SizedBox(width: 10),
               _analyticsChip(
-                icon: Icons.compare_arrows_rounded,
+                icon:  Icons.compare_arrows_rounded,
                 label: 'Match',
                 value: match,
                 color: _teal,
@@ -980,19 +961,17 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
           ),
 
           const SizedBox(height: 16),
-
-          // Waveform
           _buildWaveform(),
-
           const SizedBox(height: 20),
 
-          // Mic button
           Center(child: _buildMicButton()),
           const SizedBox(height: 8),
           Center(
             child: Text(
-              _isListening ? 'Tap to stop' : _isProcessing ? 'Processing...'
-                  : _speechAvailable ? 'Tap mic to start speaking' : 'Microphone unavailable',
+              _isListening   ? 'Tap to stop'
+                  : _isProcessing  ? 'Processing...'
+                  : _speechAvailable ? 'Tap mic to start speaking'
+                  : 'Microphone unavailable',
               style: TextStyle(
                 color: _isListening ? Colors.redAccent : Colors.white38,
                 fontSize: 12, fontWeight: FontWeight.w500,
@@ -1002,7 +981,6 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
 
           const SizedBox(height: 20),
 
-          // Raw STT
           if (_rawOutput.isNotEmpty) ...[
             _sectionLabel('What the AI Heard'),
             const SizedBox(height: 6),
@@ -1020,7 +998,6 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
             const SizedBox(height: 14),
           ],
 
-          // Processing spinner
           if (_isProcessing)
             const Center(
               child: Padding(
@@ -1029,8 +1006,7 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
               ),
             )
           else if (_correctedOutput.isNotEmpty) ...[
-            _buildCorrectedWordsSection(),
-            const SizedBox(height: 16),
+            // ── PHONEME CLARITY CHIPS (only section shown) ─────────────────
             _buildPhonemePanel(),
             const SizedBox(height: 8),
             Text('${_nlp.patternCount} patterns learned',
@@ -1044,7 +1020,6 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
     );
   }
 
-  // ── Waveform ───────────────────────────────────────────────────────────────
   Widget _buildWaveform() {
     return Container(
       height: 56,
@@ -1077,16 +1052,12 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
     );
   }
 
-  // ── Mic button ─────────────────────────────────────────────────────────────
   Widget _buildMicButton() {
     return AnimatedBuilder(
       animation: _pulseController,
       builder: (context, _) {
-        final scale = _isListening
-            ? 1.0 + (_pulseController.value * 0.12) + (_soundLevel * 0.07)
-            : 1.0;
+        final scale       = _isListening ? 1.0 + (_pulseController.value * 0.12) + (_soundLevel * 0.07) : 1.0;
         final glowOpacity = _isListening ? 0.3 + (_pulseController.value * 0.3) : 0.0;
-
         return GestureDetector(
           onTap: _isProcessing ? null : _toggleListening,
           child: Stack(
@@ -1114,9 +1085,7 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
                   width: 80, height: 80,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: _isListening ? Colors.redAccent
-                        : _isProcessing ? Colors.white24
-                        : _tealDeep,
+                    color: _isListening ? Colors.redAccent : _isProcessing ? Colors.white24 : _tealDeep,
                     boxShadow: [
                       BoxShadow(
                         color: (_isListening ? Colors.redAccent : _teal).withOpacity(0.4),
@@ -1137,35 +1106,10 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
     );
   }
 
-  // ── Corrected words (tappable) ─────────────────────────────────────────────
-  Widget _buildCorrectedWordsSection() {
-    if (_correctedOutput.isEmpty) return const SizedBox.shrink();
-    final words = _correctedOutput.split(' ');
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _sectionLabel('AI Corrected Output — tap any word to fix'),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 6, runSpacing: 6,
-          children: words.map((word) => GestureDetector(
-            onTap: () => _showWordCorrectionSheet(word),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
-              decoration: BoxDecoration(
-                color: _teal.withOpacity(0.08),
-                borderRadius: BorderRadius.circular(9),
-                border: Border.all(color: _teal.withOpacity(0.25)),
-              ),
-              child: Text(word, style: const TextStyle(color: Colors.white, fontSize: 14)),
-            ),
-          )).toList(),
-        ),
-      ],
-    );
-  }
+  // ─────────────────────────────────────────────────────────────────────────
+  // PHONEME PANEL — only chips, showing what AI heard so user can correct
+  // ─────────────────────────────────────────────────────────────────────────
 
-  // ── Phoneme panel (fully functional) ──────────────────────────────────────
   Widget _buildPhonemePanel() {
     final r = _phonemeResult;
     if (r == null) return const SizedBox.shrink();
@@ -1181,156 +1125,135 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Header
-          Row(children: [
-            const Icon(Icons.spatial_audio_off_rounded, color: _teal, size: 16),
-            const SizedBox(width: 6),
-            const Text('Phoneme Analysis', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
-          ]),
-
-          const SizedBox(height: 10),
-
-          // Overall feedback
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: _clarityColor(r.clarityScore).withOpacity(0.08),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: _clarityColor(r.clarityScore).withOpacity(0.2)),
-            ),
-            child: Text(r.overallFeedback,
-                style: TextStyle(color: _clarityColor(r.clarityScore), fontSize: 12, fontWeight: FontWeight.w500)),
-          ),
-
-          const SizedBox(height: 12),
-
-          // Category breakdown
-          if (r.categoryBreakdown.values.any((v) => v > 0)) ...[
-            _sectionLabel('Substitution Categories'),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 6, runSpacing: 6,
-              children: r.categoryBreakdown.entries
-                  .where((e) => e.value > 0)
-                  .map((e) => _categoryBadge(e.key, e.value))
-                  .toList(),
-            ),
-            const SizedBox(height: 12),
-          ],
-
-          // Detected issues
-          if (r.issues.isNotEmpty) ...[
-            _sectionLabel('Detected Substitutions'),
-            const SizedBox(height: 8),
-            ...r.issues.map((issue) => _issueRow(issue)),
-            const SizedBox(height: 12),
-          ] else ...[
-            Row(children: const [
-              Icon(Icons.check_circle_rounded, color: Colors.greenAccent, size: 14),
-              SizedBox(width: 6),
-              Text('No phoneme substitutions detected',
-                  style: TextStyle(color: Colors.greenAccent, fontSize: 12)),
-            ]),
-            const SizedBox(height: 12),
-          ],
-
-          // Drill suggestions
-          if (r.drillSuggestions.isNotEmpty) ...[
-            _sectionLabel('Practice Drills'),
-            const SizedBox(height: 8),
-            ...r.drillSuggestions.map((drill) => Padding(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Icon(Icons.fitness_center_rounded, color: _teal, size: 13),
-                  const SizedBox(width: 6),
-                  Expanded(child: Text(drill,
-                      style: const TextStyle(color: Colors.white60, fontSize: 11))),
-                ],
-              ),
-            )),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _issueRow(PhonemeIssue issue) {
-    final color = issue.severity == 'high' ? Colors.redAccent
-        : issue.severity == 'medium' ? Colors.orangeAccent
-        : Colors.yellowAccent;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.05),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: color.withOpacity(0.2)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
           Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Icon(Icons.warning_amber_rounded, color: color, size: 13),
-              const SizedBox(width: 5),
-              Text('"${issue.original}" → "${issue.expected}"',
-                  style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.bold)),
-              const Spacer(),
+              Row(children: [
+                const Icon(Icons.spatial_audio_off_rounded, color: _teal, size: 16),
+                const SizedBox(width: 6),
+                const Text('Phoneme Clarity',
+                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+              ]),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
-                  color: color.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(10),
+                  color: _clarityColor(r.clarityScore).withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: _clarityColor(r.clarityScore).withOpacity(0.3)),
                 ),
-                child: Text(issue.severity.toUpperCase(),
-                    style: TextStyle(color: color, fontSize: 8, fontWeight: FontWeight.bold, letterSpacing: 0.8)),
+                child: Text('${r.clarityScore}%',
+                    style: TextStyle(
+                      color: _clarityColor(r.clarityScore),
+                      fontSize: 11, fontWeight: FontWeight.bold,
+                    )),
               ),
             ],
           ),
-          const SizedBox(height: 4),
-          Text(issue.description,
-              style: const TextStyle(color: Colors.white54, fontSize: 11)),
+
+          const SizedBox(height: 6),
+          const Text('Tap any word the AI heard to correct it',
+              style: TextStyle(color: Colors.white38, fontSize: 11)),
+
+          const SizedBox(height: 14),
+
+          // ── WORD CHIPS ──────────────────────────────────────────────────
+          // Each chip shows the RAW word the AI heard.
+          // Changed words get a highlighted border + small "→ corrected" label.
+          // Tap opens correction sheet.
+          if (r.wordPairs.isEmpty)
+            const Text('No words captured.', style: TextStyle(color: Colors.white38, fontSize: 12))
+          else
+            Wrap(
+              spacing: 8,
+              runSpacing: 10,
+              children: r.wordPairs.map((pair) {
+                if (pair.heard.isEmpty) return const SizedBox.shrink();
+                return _heardWordChip(pair);
+              }).toList(),
+            ),
+
+          // ── Legend ──────────────────────────────────────────────────────
+          const SizedBox(height: 14),
+          Row(children: [
+            _legendDot(Colors.orangeAccent),
+            const SizedBox(width: 4),
+            const Text('AI changed this word', style: TextStyle(color: Colors.white38, fontSize: 10)),
+            const SizedBox(width: 12),
+            _legendDot(Colors.white24),
+            const SizedBox(width: 4),
+            const Text('Heard correctly', style: TextStyle(color: Colors.white38, fontSize: 10)),
+          ]),
         ],
       ),
     );
   }
 
-  Widget _categoryBadge(String category, int count) {
-    const colors = {
-      'consonant': Colors.blueAccent,
-      'vowel':     Colors.purpleAccent,
-      'cluster':   Colors.orangeAccent,
-      'stress':    Colors.pinkAccent,
-    };
-    final color = colors[category] ?? Colors.white38;
-    final icons = {
-      'consonant': Icons.keyboard_rounded,
-      'vowel':     Icons.record_voice_over_rounded,
-      'cluster':   Icons.link_rounded,
-      'stress':    Icons.bar_chart_rounded,
-    };
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withOpacity(0.3)),
+  /// A chip showing exactly what the STT heard.
+  /// If NLP changed it, shows orange border + small corrected hint below.
+  /// Tapping always opens the correction sheet with the heard word.
+  Widget _heardWordChip(WordPair pair) {
+    final borderColor = pair.wasChanged
+        ? Colors.orangeAccent.withOpacity(0.6)
+        : Colors.white12;
+    final bgColor = pair.wasChanged
+        ? Colors.orangeAccent.withOpacity(0.06)
+        : Colors.white.withOpacity(0.04);
+    final textColor = pair.wasChanged ? Colors.orangeAccent : Colors.white70;
+
+    return GestureDetector(
+      onTap: () => _showWordCorrectionSheet(
+        pair.heard,
+        correctedHint: pair.wasChanged ? pair.corrected : null,
       ),
-      child: Row(
+      child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icons[category] ?? Icons.circle, color: color, size: 11),
-          const SizedBox(width: 5),
-          Text('${category[0].toUpperCase()}${category.substring(1)} ($count)',
-              style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w600)),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            decoration: BoxDecoration(
+              color: bgColor,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: borderColor, width: pair.wasChanged ? 1.4 : 1.0),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (pair.wasChanged) ...[
+                  const Icon(Icons.warning_amber_rounded, color: Colors.orangeAccent, size: 11),
+                  const SizedBox(width: 4),
+                ],
+                Text(
+                  pair.heard,
+                  style: TextStyle(color: textColor, fontSize: 14, fontWeight: FontWeight.w500),
+                ),
+              ],
+            ),
+          ),
+          // Show what NLP corrected it to, right below the chip
+          if (pair.wasChanged) ...[
+            const SizedBox(height: 3),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.arrow_downward_rounded, color: _teal, size: 9),
+                const SizedBox(width: 2),
+                Text(
+                  pair.corrected,
+                  style: const TextStyle(color: _teal, fontSize: 10, fontWeight: FontWeight.w500),
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );
   }
 
-  // ── Reset button ───────────────────────────────────────────────────────────
+  Widget _legendDot(Color color) => Container(
+    width: 8, height: 8,
+    decoration: BoxDecoration(shape: BoxShape.circle, color: color),
+  );
+
   Widget _buildResetButton() {
     return OutlinedButton.icon(
       style: OutlinedButton.styleFrom(
@@ -1385,7 +1308,6 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
     );
   }
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
   Widget _sectionLabel(String text) => Text(
     text,
     style: const TextStyle(color: Colors.white38, fontSize: 10, letterSpacing: 0.6, fontWeight: FontWeight.w600),

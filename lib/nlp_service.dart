@@ -8,18 +8,9 @@ import 'package:firebase_auth/firebase_auth.dart';
 
 /// NlpService — corrects cleft-palate speech patterns in real-time.
 ///
-/// Real-time pipeline:
-/// 1. Partial results → debounced Claude call (600 ms idle window).
-/// 2. Final result   → immediate full correction + Firestore save.
-/// 3. Local patterns applied first in both paths for instant substitution.
-///
-/// Upgraded features:
-/// - Pronunciation similarity scoring (Levenshtein-based)
-/// - Phoneme error detection for common cleft-palate substitutions
-/// - Confidence filtering to reject unreliable speech results
-/// - Analytics tracking (score, issues, original vs corrected)
-/// - Safer correction flow returning structured result maps
-/// - Removed hardcoded API key (use _resolveApiKey() instead)
+/// Patterns are stored in BOTH Firestore (account-level) and SharedPreferences
+/// (local cache). On init, Firestore is the source of truth — so corrections
+/// persist across logout/login and across devices.
 class NlpService {
   static final NlpService _instance = NlpService._internal();
   factory NlpService() => _instance;
@@ -45,12 +36,10 @@ class NlpService {
   // ── Session timing ────────────────────────────────────────────────────────
   DateTime? _sessionStart;
 
+  // ── Auth listener — reloads patterns when user signs in ───────────────────
+  StreamSubscription<User?>? _authSub;
+
   // ── Phoneme substitution patterns (cleft-palate specific) ─────────────────
-  //
-  // Key   = the CORRECT sound the speaker is trying to produce.
-  // Value = list of sounds that a cleft-palate speaker might substitute.
-  //
-  // Used by analyzePronunciation() to surface detected errors in the result.
   final Map<String, List<String>> _phonemePatterns = {
     'k':  ['t', 'g'],
     't':  ['k', 'd'],
@@ -61,16 +50,72 @@ class NlpService {
   };
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Init
+  // Init — loads from Firestore first, falls back to local cache
   // ─────────────────────────────────────────────────────────────────────────
 
   Future<void> init() async {
+    // Listen for auth state changes so patterns reload on every login
+    _authSub?.cancel();
+    _authSub = FirebaseAuth.instance.authStateChanges().listen((user) async {
+      if (user != null) {
+        await _loadPatternsFromFirestore();
+      }
+    });
+
+    // Load immediately for the current session
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      await _loadPatternsFromFirestore();
+    } else {
+      // Not signed in — fall back to local cache
+      await _loadPatternsFromLocal();
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Load patterns: Firestore (source of truth) → merge into local cache
+  // ─────────────────────────────────────────────────────────────────────────
+
+  Future<void> _loadPatternsFromFirestore() async {
+    final col = _correctionsCol;
+    if (col == null) {
+      await _loadPatternsFromLocal();
+      return;
+    }
+
+    try {
+      final snapshot = await col.get();
+      _patterns.clear();
+
+      for (final doc in snapshot.docs) {
+        final data    = doc.data() as Map<String, dynamic>;
+        final wrong   = data['wrong']   as String?;
+        final correct = data['correct'] as String?;
+        if (wrong != null && correct != null) {
+          _patterns[wrong] = correct;
+        }
+      }
+
+      // Mirror to local cache so the app works offline too
+      await _persistLocal();
+    } catch (_) {
+      // Firestore unavailable — fall back to local
+      await _loadPatternsFromLocal();
+    }
+  }
+
+  Future<void> _loadPatternsFromLocal() async {
     final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_prefKey);
+    final raw   = prefs.getString(_prefKey);
     if (raw != null) {
       final Map<String, dynamic> decoded = jsonDecode(raw);
       _patterns.addAll(decoded.map((k, v) => MapEntry(k, v as String)));
     }
+  }
+
+  Future<void> _persistLocal() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_prefKey, jsonEncode(_patterns));
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -97,9 +142,9 @@ class NlpService {
   // ─────────────────────────────────────────────────────────────────────────
 
   void beginSession() {
-    _sessionStart          = DateTime.now();
-    _lastCorrectedText     = '';
-    _lastRawPartial        = '';
+    _sessionStart      = DateTime.now();
+    _lastCorrectedText = '';
+    _lastRawPartial    = '';
     _debounceTimer?.cancel();
   }
 
@@ -127,13 +172,6 @@ class NlpService {
   // Confidence filtering
   // ─────────────────────────────────────────────────────────────────────────
 
-  /// Returns false when a speech recognition result is too unreliable to use.
-  ///
-  /// Use this before calling [correctPartialSync] or [correct] to avoid
-  /// wasting API calls and showing junk corrections to the user.
-  ///
-  /// [text]       — the recognised text.
-  /// [confidence] — value in [0.0, 1.0] reported by the speech engine.
   bool isReliableSpeechResult(String text, double confidence) {
     if (confidence < 0.55) return false;
     if (text.trim().length < 2) return false;
@@ -144,17 +182,9 @@ class NlpService {
   // Pronunciation analysis
   // ─────────────────────────────────────────────────────────────────────────
 
-  /// Compares [original] (raw speech) with [corrected] (AI-fixed text) and
-  /// returns a structured map with:
-  ///   - `similarity`   : double 0.0–1.0
-  ///   - `clarityScore` : int 0–100
-  ///   - `issues`       : List<String> of detected phoneme substitutions
-  Map<String, dynamic> analyzePronunciation(
-    String original,
-    String corrected,
-  ) {
-    final similarity      = calculateSimilarity(original, corrected);
-    final detectedIssues  = <String>[];
+  Map<String, dynamic> analyzePronunciation(String original, String corrected) {
+    final similarity     = calculateSimilarity(original, corrected);
+    final detectedIssues = <String>[];
 
     final lowerOriginal  = original.toLowerCase();
     final lowerCorrected = corrected.toLowerCase();
@@ -179,9 +209,6 @@ class NlpService {
   // Levenshtein similarity
   // ─────────────────────────────────────────────────────────────────────────
 
-  /// Returns a normalised similarity score in [0.0, 1.0].
-  ///
-  ///   Similarity = 1 − (LevenshteinDistance / max(|s1|, |s2|))
   double calculateSimilarity(String s1, String s2) {
     if (s1.isEmpty && s2.isEmpty) return 1.0;
     final distance  = _levenshtein(s1.toLowerCase(), s2.toLowerCase());
@@ -190,10 +217,8 @@ class NlpService {
   }
 
   int _levenshtein(String s, String t) {
-    final m = s.length;
-    final n = t.length;
-
-    // Build (m+1) × (n+1) DP table.
+    final m  = s.length;
+    final n  = t.length;
     final dp = List.generate(m + 1, (_) => List.filled(n + 1, 0));
 
     for (int i = 0; i <= m; i++) dp[i][0] = i;
@@ -203,13 +228,12 @@ class NlpService {
       for (int j = 1; j <= n; j++) {
         final cost = s[i - 1] == t[j - 1] ? 0 : 1;
         dp[i][j] = [
-          dp[i - 1][j] + 1,        // deletion
-          dp[i][j - 1] + 1,        // insertion
-          dp[i - 1][j - 1] + cost, // substitution
+          dp[i - 1][j] + 1,
+          dp[i][j - 1] + 1,
+          dp[i - 1][j - 1] + cost,
         ].reduce(min);
       }
     }
-
     return dp[m][n];
   }
 
@@ -217,11 +241,6 @@ class NlpService {
   // Real-time partial correction (debounced)
   // ─────────────────────────────────────────────────────────────────────────
 
-  /// Call this with every partial speech result.
-  ///
-  /// - Applies local patterns immediately and returns the fast local result.
-  /// - Schedules a debounced Claude call; when ready it fires
-  ///   [onRealtimeCorrection] with a full result map.
   String correctPartialSync(String rawPartial) {
     _lastRawPartial = rawPartial;
 
@@ -247,25 +266,16 @@ class NlpService {
           'issues':     analysis['issues'],
           'similarity': analysis['similarity'],
         });
-      } catch (_) {
-        // Fall back to local-only result — already displayed synchronously.
-      }
+      } catch (_) {}
     });
 
     return localResult;
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Final correction (called on finalResult)
+  // Final correction
   // ─────────────────────────────────────────────────────────────────────────
 
-  /// Full correction pipeline for a final (committed) speech result.
-  ///
-  /// Returns a map with:
-  ///   - `corrected`  : String — the corrected text
-  ///   - `score`      : int   — clarity score 0–100
-  ///   - `issues`     : List<String> — detected phoneme substitutions
-  ///   - `similarity` : double — raw similarity 0.0–1.0
   Future<Map<String, dynamic>> correct(String raw) async {
     _debounceTimer?.cancel();
 
@@ -309,17 +319,11 @@ class NlpService {
   // Analytics tracking
   // ─────────────────────────────────────────────────────────────────────────
 
-  /// Saves a speech correction event to Firestore for admin dashboard analysis.
-  ///
-  /// Enables reporting on:
-  ///   - Average clarity scores over time
-  ///   - Most difficult phonemes / sounds
-  ///   - Improvement trends per user
   Future<void> saveSpeechAnalytics({
     required String original,
     required String corrected,
-    required int score,
-    required List issues,
+    required int    score,
+    required List   issues,
   }) async {
     final col = _correctionsCol;
     if (col == null) return;
@@ -334,18 +338,20 @@ class NlpService {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Pattern management
+  // Pattern management — always writes to BOTH Firestore + local cache
   // ─────────────────────────────────────────────────────────────────────────
 
   Future<void> learnPattern(String wrong, String correct) async {
     final key = wrong.toLowerCase().trim();
     final val = correct.trim();
 
+    // 1. Update in-memory map
     _patterns[key] = val;
 
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_prefKey, jsonEncode(_patterns));
+    // 2. Persist locally (offline support)
+    await _persistLocal();
 
+    // 3. Save to Firestore (account-level, survives logout)
     final col = _correctionsCol;
     if (col != null) {
       await col.doc(key).set({
@@ -356,6 +362,7 @@ class NlpService {
       });
     }
 
+    // 4. Update user stats
     final doc = _userDoc;
     if (doc == null) return;
     await doc.set({
@@ -369,6 +376,12 @@ class NlpService {
 
   Future<void> _saveAiCorrection(String wrong, String correct) async {
     final key = wrong.toLowerCase().trim();
+
+    // Update in-memory + local cache
+    _patterns[key] = correct.trim();
+    await _persistLocal();
+
+    // Save to Firestore
     final col = _correctionsCol;
     if (col == null) return;
 
@@ -382,9 +395,23 @@ class NlpService {
 
   Future<void> clearPatterns() async {
     _patterns.clear();
+
+    // Clear local cache
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_prefKey);
 
+    // Clear Firestore patterns for this account
+    final col = _correctionsCol;
+    if (col != null) {
+      final snapshot = await col.get();
+      final batch = FirebaseFirestore.instance.batch();
+      for (final doc in snapshot.docs) {
+        batch.delete(doc.reference);
+      }
+      await batch.commit();
+    }
+
+    // Reset user stats
     final doc = _userDoc;
     if (doc == null) return;
     await doc.set({
@@ -415,36 +442,7 @@ class NlpService {
   // API key resolution
   // ─────────────────────────────────────────────────────────────────────────
 
-  /// ⚠️  SECURITY: Never hardcode your API key in Flutter source code.
-  ///     The compiled APK/IPA can be reverse-engineered and the key stolen.
-  ///
-  /// Recommended approaches (choose one):
-  ///
-  ///   Option A — Firebase Cloud Functions (recommended):
-  ///     Deploy a Cloud Function that proxies the Claude API call server-side.
-  ///     Your Flutter app calls YOUR function endpoint, not Anthropic directly.
-  ///     The API key lives only in your Cloud Function environment variables.
-  ///
-  ///   Option B — Your own backend API:
-  ///     Same concept — a backend endpoint that holds the key and forwards
-  ///     the request to Anthropic. Add auth (e.g. Firebase ID token) so only
-  ///     your app users can call it.
-  ///
-  ///   Option C — flutter_dotenv (dev/testing only, NOT for production):
-  ///     Store the key in a .env file (gitignored) and load at startup.
-  ///     Still ships inside the app bundle — only suitable for prototypes.
-  ///
-  /// Replace the placeholder below with your chosen strategy.
   Future<String> _resolveApiKey() async {
-    // TODO: Replace with a secure key-fetch from your backend or Cloud Function.
-    // Example using Flutter Secure Storage:
-    //   final storage = FlutterSecureStorage();
-    //   return await storage.read(key: 'anthropic_api_key') ?? '';
-    //
-    // Example fetching a short-lived token from your own backend:
-    //   final resp = await http.get(Uri.parse('https://your-api.example.com/nlp-token'),
-    //       headers: {'Authorization': 'Bearer ${await getFirebaseIdToken()}'});
-    //   return jsonDecode(resp.body)['token'] as String;
     throw UnimplementedError(
       '_resolveApiKey() must be implemented before using Claude API calls. '
       'See the security notes in the source code above this method.',
@@ -528,5 +526,14 @@ Your job:
         .trim();
 
     return corrected.isEmpty ? text : corrected;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Dispose
+  // ─────────────────────────────────────────────────────────────────────────
+
+  void dispose() {
+    _authSub?.cancel();
+    _debounceTimer?.cancel();
   }
 }
