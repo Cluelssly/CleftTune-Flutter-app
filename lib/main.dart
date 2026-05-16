@@ -14,6 +14,9 @@ import 'landing_page.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:intl/intl.dart';
 
+import 'paymongo_service.dart';
+import 'payment_webview_screen.dart';
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
@@ -1010,36 +1013,39 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
-
+ 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
-
+ 
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _isPremium    = false;
   bool _isLoading    = true;
   bool _isUpgrading  = false;
   bool _isCancelling = false;
-
+ 
   static const _teal       = Color(0xFF1D9E75);
   static const _tealDim    = Color(0x261D9E75);
   static const _tealBorder = Color(0x401D9E75);
   static const _cardColor  = Color(0x0DFFFFFF);
   static const _white40    = Color(0x66FFFFFF);
-
-  // ── PAYMENT DEEP LINKS ─────────────────────────────────────────────────────
-  static const _gcashDeepLink = 'gcash://';
-  static const _gcashFallback = 'https://gcash.com';
-  static const _mayaDeepLink  = 'maya://';
-  static const _mayaFallback  = 'https://app.maya.ph';
-  static const _gotymUrl      = 'https://gotyme.com';
-
+ 
+  // ── PayMongo redirect URLs ──────────────────────────────────────────────────
+  // These are the URLs PayMongo sends the user back to after paying.
+  // Use your real domain or a Firebase Hosting URL in production.
+  // In test mode any URL works fine.
+ // ✅ Replace with your real Firebase URLs
+static const _successUrl = 'https://appcleft2026-55337.web.app/payment/success';
+static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
+  // ─────────────────────────────────────────────────────────────────────────────
+ 
   @override
   void initState() {
     super.initState();
     _loadPlanStatus();
   }
-
+ 
+  // ── LOAD PLAN STATUS ────────────────────────────────────────────────────────
   Future<void> _loadPlanStatus() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
@@ -1051,12 +1057,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
           .collection('users')
           .doc(user.uid)
           .get();
-
+ 
       final data = doc.data() ?? {};
-
       final isPremiumByPlan = (data['plan'] ?? '') == 'premium';
       final isPremiumByFlag = data['isPremium'] == true;
-
+ 
       setState(() {
         _isPremium = isPremiumByPlan || isPremiumByFlag;
         _isLoading = false;
@@ -1065,47 +1070,98 @@ class _SettingsScreenState extends State<SettingsScreen> {
       setState(() => _isLoading = false);
     }
   }
-
-  // ── LAUNCH PAYMENT APP ─────────────────────────────────────────────────────
-  Future<void> _launchPaymentUrl(String method) async {
-    String deepLink;
-    String fallback;
-
-    switch (method) {
-      case 'gcash':
-        deepLink = _gcashDeepLink;
-        fallback = _gcashFallback;
-        break;
-      case 'maya':
-        deepLink = _mayaDeepLink;
-        fallback = _mayaFallback;
-        break;
-      case 'gotyme':
-        deepLink = _gotymUrl;
-        fallback = _gotymUrl;
-        break;
-      default:
-        return;
-    }
-
-    final deepUri     = Uri.parse(deepLink);
-    final fallbackUri = Uri.parse(fallback);
-
-    if (await canLaunchUrl(deepUri)) {
-      await launchUrl(deepUri, mode: LaunchMode.externalApplication);
-    } else {
-      await launchUrl(fallbackUri, mode: LaunchMode.externalApplication);
-    }
-  }
-
-  // ── UPGRADE ────────────────────────────────────────────────────────────────
+ 
+  // ── UPGRADE TO PREMIUM (PayMongo flow) ─────────────────────────────────────
   Future<void> _upgradeToPremium(String method) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
-
-    await _launchPaymentUrl(method);
-
+ 
     setState(() => _isUpgrading = true);
+ 
+    try {
+      // Map UI method name → PayMongo source type
+      final String paymongoType;
+      switch (method) {
+        case 'gcash':
+          paymongoType = 'gcash';
+          break;
+        case 'maya':
+          paymongoType = 'maya';
+          break;
+        case 'gotyme':
+          // GoTyme does not have a dedicated PayMongo type yet.
+          // Fall back to opening GoTyme website.
+          setState(() => _isUpgrading = false);
+          await _launchGoTymeFallback();
+          return;
+        default:
+          setState(() => _isUpgrading = false);
+          return;
+      }
+ 
+      // Build billing info from Firebase user
+      final email = user.email?.isNotEmpty == true
+          ? user.email!
+          : 'noemail@yourapp.com';
+      final name  = user.displayName?.isNotEmpty == true
+          ? user.displayName!
+          : 'App User';
+ 
+      // ₱99 = 9900 centavos
+      // NOTE: PayMongo minimum is ₱100 (10000 centavos).
+      // If you keep the price at ₱99, PayMongo will return an error.
+      // Either raise price to ₱100 or set amountCentavos: 10000.
+      const int amountCentavos = 10000; // ← change to 10000 for ₱100 if needed
+ 
+      // Create source — this hits PayMongo API
+      final source = await PaymongoService.createSource(
+        type: paymongoType,
+        amountCentavos: amountCentavos,
+        successUrl: _successUrl,
+        failedUrl: _failedUrl,
+        name: name,
+        email: email,
+      );
+ 
+      final checkoutUrl = PaymongoService.checkoutUrlFrom(source);
+ 
+      setState(() => _isUpgrading = false);
+ 
+      if (!mounted) return;
+ 
+      // Open the PayMongo-hosted checkout page in a WebView.
+      // The WebView will handle the GCash / Maya deep link automatically.
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => PaymentWebViewScreen(
+            checkoutUrl: checkoutUrl,
+            successUrl: _successUrl,
+            failedUrl: _failedUrl,
+            onSuccess: () => _onPaymentSuccess(method),
+            onFailed: _onPaymentFailed,
+          ),
+        ),
+      );
+    } catch (e) {
+      setState(() => _isUpgrading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Payment error: $e'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12)),
+        ));
+      }
+    }
+  }
+ 
+  // ── PAYMENT SUCCESS CALLBACK ────────────────────────────────────────────────
+  Future<void> _onPaymentSuccess(String method) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+ 
     try {
       await FirebaseFirestore.instance
           .collection('users')
@@ -1116,14 +1172,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
         'paymentMethod': method,
         'upgradedAt':    FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
-
-      await NotificationHelper.premiumActivated(method: method);
-
-      setState(() {
-        _isPremium   = true;
-        _isUpgrading = false;
-      });
-
+ 
+      // await NotificationHelper.premiumActivated(method: method);
+ 
+      setState(() => _isPremium = true);
+ 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: const Row(children: [
@@ -1138,17 +1191,39 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ));
       }
     } catch (e) {
-      setState(() => _isUpgrading = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Upgrade failed: $e'),
+          content: Text('Could not activate premium: $e'),
           backgroundColor: Colors.red,
         ));
       }
     }
   }
-
-  // ── CANCEL PREMIUM ─────────────────────────────────────────────────────────
+ 
+  // ── PAYMENT FAILED CALLBACK ─────────────────────────────────────────────────
+  void _onPaymentFailed() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: const Row(children: [
+        Icon(Icons.cancel_outlined, color: Colors.white, size: 18),
+        SizedBox(width: 8),
+        Text('Payment was not completed. Please try again.'),
+      ]),
+      backgroundColor: Colors.redAccent,
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    ));
+  }
+ 
+  // ── GOTYME FALLBACK (no PayMongo support yet) ───────────────────────────────
+  Future<void> _launchGoTymeFallback() async {
+    final uri = Uri.parse('https://gotyme.com');
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+ 
+  // ── CANCEL PREMIUM ──────────────────────────────────────────────────────────
   Future<void> _cancelPremium() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
@@ -1162,14 +1237,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
         'isPremium':   false,
         'cancelledAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
-
-      await NotificationHelper.premiumCancelled();
-
+ 
+      // await NotificationHelper.premiumCancelled();
+ 
       setState(() {
         _isPremium    = false;
         _isCancelling = false;
       });
-
+ 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: const Row(children: [
@@ -1193,16 +1268,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
       }
     }
   }
-
-  // ── DIALOGS ────────────────────────────────────────────────────────────────
-
+ 
+  // ── DIALOGS ─────────────────────────────────────────────────────────────────
+ 
   void _showPaymentMethodDialog() {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
         backgroundColor: const Color(0xFF0A2020),
-        shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Row(children: [
           Icon(Icons.payment_rounded, color: _teal, size: 22),
           SizedBox(width: 8),
@@ -1215,12 +1289,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('Select how you\'d like to pay for Premium:',
+            const Text("Select how you'd like to pay for Premium:",
                 style: TextStyle(color: _white40, fontSize: 13)),
             const SizedBox(height: 20),
             _paymentMethodTile(
               label: 'GCash',
-              subtitle: 'Opens the GCash app directly',
+              subtitle: 'Opens the GCash app to pay ₱99',
               icon: Icons.account_balance_wallet_rounded,
               iconColor: const Color(0xFF007DFF),
               onTap: () {
@@ -1231,7 +1305,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             const SizedBox(height: 10),
             _paymentMethodTile(
               label: 'Maya',
-              subtitle: 'Opens the Maya app directly',
+              subtitle: 'Opens the Maya app to pay ₱99',
               icon: Icons.credit_card_rounded,
               iconColor: const Color(0xFF6C3BE8),
               onTap: () {
@@ -1242,7 +1316,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             const SizedBox(height: 10),
             _paymentMethodTile(
               label: 'GoTyme',
-              subtitle: 'Pay via GoTyme Bank',
+              subtitle: 'Opens GoTyme Bank website',
               icon: Icons.account_balance_rounded,
               iconColor: const Color(0xFFE63946),
               onTap: () {
@@ -1255,21 +1329,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel',
-                style: TextStyle(color: _white40)),
+            child: const Text('Cancel', style: TextStyle(color: _white40)),
           ),
         ],
       ),
     );
   }
-
+ 
   void _confirmPayment(String method, String label) {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
         backgroundColor: const Color(0xFF0A2020),
-        shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: Row(children: [
           const Icon(Icons.star_rounded, color: _teal, size: 22),
           const SizedBox(width: 8),
@@ -1308,7 +1380,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             const SizedBox(height: 12),
             Text(
-              'Tapping "Pay with $label" will open the $label app on your phone.',
+              method == 'gotyme'
+                  ? 'Tapping "Pay with GoTyme" will open the GoTyme website.'
+                  : 'Tapping "Pay with $label" will open a secure checkout page. '
+                    'You\'ll then be taken to the $label app to confirm payment.',
               style: const TextStyle(color: _white40, fontSize: 12),
             ),
           ],
@@ -1323,8 +1398,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               backgroundColor: _teal,
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12)),
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 20, vertical: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
             ),
             onPressed: () async {
               Navigator.pop(context);
@@ -1338,14 +1412,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
   }
-
+ 
   void _showCancelWarningDialog() {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
         backgroundColor: const Color(0xFF1A0A0A),
-        shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Row(children: [
           Icon(Icons.warning_amber_rounded,
               color: Colors.orangeAccent, size: 24),
@@ -1362,8 +1435,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           children: [
             const Text(
               'Are you sure you want to cancel your Premium subscription?',
-              style:
-                  TextStyle(color: Colors.white70, fontSize: 13, height: 1.5),
+              style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.5),
             ),
             const SizedBox(height: 14),
             _lossItem('Real-time Translation'),
@@ -1397,16 +1469,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('Keep Premium',
-                style: TextStyle(
-                    color: _teal, fontWeight: FontWeight.bold)),
+                style: TextStyle(color: _teal, fontWeight: FontWeight.bold)),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.redAccent,
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12)),
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 20, vertical: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
             ),
             onPressed: () async {
               Navigator.pop(context);
@@ -1420,21 +1490,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
   }
-
-  // ── HELPERS ────────────────────────────────────────────────────────────────
-
+ 
+  // ── HELPERS ─────────────────────────────────────────────────────────────────
+ 
   Widget _lossItem(String text) => Padding(
         padding: const EdgeInsets.only(bottom: 6),
         child: Row(children: [
           const Icon(Icons.remove_circle_outline_rounded,
               color: Colors.redAccent, size: 15),
           const SizedBox(width: 8),
-          Text(text,
-              style:
-                  const TextStyle(color: Colors.white60, fontSize: 12)),
+          Text(text, style: const TextStyle(color: Colors.white60, fontSize: 12)),
         ]),
       );
-
+ 
   Widget _paymentMethodTile({
     required String label,
     required String subtitle,
@@ -1445,8 +1513,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
           color: const Color(0x1AFFFFFF),
           borderRadius: BorderRadius.circular(14),
@@ -1473,8 +1540,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         fontSize: 14,
                         fontWeight: FontWeight.w600)),
                 Text(subtitle,
-                    style:
-                        const TextStyle(color: _white40, fontSize: 11)),
+                    style: const TextStyle(color: _white40, fontSize: 11)),
               ],
             ),
           ),
@@ -1484,18 +1550,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
   }
-
+ 
   Widget _dialogFeature(String text) => Padding(
         padding: const EdgeInsets.only(bottom: 8),
         child: Row(children: [
           const Icon(Icons.check_circle_rounded, color: _teal, size: 16),
           const SizedBox(width: 8),
           Text(text,
-              style: const TextStyle(
-                  color: Colors.white70, fontSize: 13)),
+              style: const TextStyle(color: Colors.white70, fontSize: 13)),
         ]),
       );
-
+ 
   Widget _notificationsTile() {
     final user = FirebaseAuth.instance.currentUser;
     return StreamBuilder<QuerySnapshot>(
@@ -1537,8 +1602,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(width: 12),
               const Expanded(
                 child: Text('Notifications',
-                    style:
-                        TextStyle(color: Colors.white, fontSize: 14)),
+                    style: TextStyle(color: Colors.white, fontSize: 14)),
               ),
               if (unread > 0)
                 Container(
@@ -1549,24 +1613,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     color: _teal,
                     borderRadius: BorderRadius.circular(20),
                   ),
-                  child: Text(
-                    '$unread',
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700),
-                  ),
+                  child: Text('$unread',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700)),
                 ),
-              const Icon(Icons.arrow_forward_ios,
-                  size: 13, color: _white40),
+              const Icon(Icons.arrow_forward_ios, size: 13, color: _white40),
             ]),
           ),
         );
       },
     );
   }
-
-  // ── BUILD ──────────────────────────────────────────────────────────────────
+ 
+  // ── BUILD ────────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1578,7 +1639,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               final width        = constraints.maxWidth;
               final padding      = width < 800 ? 16.0 : 40.0;
               final contentWidth = width < 1000 ? width : 900.0;
-
+ 
               return Center(
                 child: Container(
                   width: contentWidth,
@@ -1588,10 +1649,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           child: CircularProgressIndicator(
                               color: _teal, strokeWidth: 2))
                       : ListView(children: [
-                          // ── HEADER ──────────────────────────────────────
+                          // ── HEADER ─────────────────────────────────────
                           Row(
-                            mainAxisAlignment:
-                                MainAxisAlignment.spaceBetween,
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
                               Row(children: [
                                 GestureDetector(
@@ -1602,8 +1662,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                     decoration: BoxDecoration(
                                       color: _tealDim,
                                       shape: BoxShape.circle,
-                                      border:
-                                          Border.all(color: _tealBorder),
+                                      border: Border.all(color: _tealBorder),
                                     ),
                                     child: const Icon(
                                         Icons.arrow_back_ios_new,
@@ -1624,42 +1683,38 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 decoration: BoxDecoration(
                                   color: _tealDim,
                                   shape: BoxShape.circle,
-                                  border:
-                                      Border.all(color: _tealBorder),
+                                  border: Border.all(color: _tealBorder),
                                 ),
                                 child: const Icon(Icons.person,
                                     color: _teal, size: 18),
                               ),
                             ],
                           ),
-
+ 
                           const SizedBox(height: 24),
-
-                          // ── PREMIUM CARD ─────────────────────────────────
+ 
+                          // ── PREMIUM CARD ──────────────────────────────
                           _isPremium
                               ? _buildPremiumActiveCard()
                               : _buildUpgradeCard(),
-
+ 
                           const SizedBox(height: 28),
-
-                          // ── GENERAL ──────────────────────────────────────
+ 
+                          // ── GENERAL ───────────────────────────────────
                           _sectionLabel('GENERAL'),
                           const SizedBox(height: 10),
-                          _optionTile(
-                              'Trained Voice', Icons.graphic_eq_rounded),
-                          _optionTile(
-                              'Cloud Based', Icons.cloud_outlined),
+                          _optionTile('Trained Voice', Icons.graphic_eq_rounded),
+                          _optionTile('Cloud Based', Icons.cloud_outlined),
                           _notificationsTile(),
-
+ 
                           const SizedBox(height: 28),
-
-                          // ── ABOUT ─────────────────────────────────────────
+ 
+                          // ── ABOUT ──────────────────────────────────────
                           _sectionLabel('ABOUT'),
                           const SizedBox(height: 10),
                           _card(
                             child: Row(
-                              mainAxisAlignment:
-                                  MainAxisAlignment.spaceBetween,
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
                                 Row(children: [
                                   Container(
@@ -1667,8 +1722,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                     height: 32,
                                     decoration: BoxDecoration(
                                       color: _tealDim,
-                                      borderRadius:
-                                          BorderRadius.circular(8),
+                                      borderRadius: BorderRadius.circular(8),
                                     ),
                                     child: const Icon(
                                         Icons.info_outline_rounded,
@@ -1678,8 +1732,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                   const SizedBox(width: 12),
                                   const Text('App Version',
                                       style: TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 14)),
+                                          color: Colors.white, fontSize: 14)),
                                 ]),
                                 const Text('v1.0.0',
                                     style: TextStyle(
@@ -1687,7 +1740,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               ],
                             ),
                           ),
-
+ 
                           const SizedBox(height: 40),
                         ]),
                 ),
@@ -1698,7 +1751,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
   }
-
+ 
   // ── PREMIUM ACTIVE CARD ────────────────────────────────────────────────────
   Widget _buildPremiumActiveCard() {
     return Container(
@@ -1723,8 +1776,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         children: [
           Row(children: [
             Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 10, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               decoration: BoxDecoration(
                 color: Colors.white.withOpacity(0.2),
                 borderRadius: BorderRadius.circular(20),
@@ -1741,28 +1793,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ]),
             ),
             const Spacer(),
-            const Icon(Icons.verified_rounded,
-                color: Colors.white, size: 22),
+            const Icon(Icons.verified_rounded, color: Colors.white, size: 22),
           ]),
-
+ 
           const SizedBox(height: 16),
-
+ 
           const Text("You're a Premium\nMember! 🎉",
               style: TextStyle(
                   fontSize: 22,
                   color: Colors.white,
                   fontWeight: FontWeight.bold,
                   height: 1.25)),
-
+ 
           const SizedBox(height: 10),
-
+ 
           const Text(
               'Enjoy unlimited subtitles, voice calibration,\nand an ad-free experience.',
               style: TextStyle(
                   color: Colors.white70, fontSize: 13, height: 1.5)),
-
+ 
           const SizedBox(height: 16),
-
+ 
           Wrap(
             spacing: 8,
             runSpacing: 8,
@@ -1773,20 +1824,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _premiumChip('History'),
             ],
           ),
-
+ 
           const SizedBox(height: 16),
-
+ 
           const Row(children: [
             Icon(Icons.check_circle_rounded,
                 color: Colors.white70, size: 14),
             SizedBox(width: 6),
             Text('₱99 / month · Cancel anytime',
-                style:
-                    TextStyle(color: Colors.white70, fontSize: 12)),
+                style: TextStyle(color: Colors.white70, fontSize: 12)),
           ]),
-
+ 
           const SizedBox(height: 18),
-
+ 
           GestureDetector(
             onTap: _showCancelWarningDialog,
             child: Container(
@@ -1795,8 +1845,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               decoration: BoxDecoration(
                 color: Colors.white.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                    color: Colors.redAccent.withOpacity(0.5)),
+                border: Border.all(color: Colors.redAccent.withOpacity(0.5)),
               ),
               child: _isCancelling
                   ? const Center(
@@ -1826,10 +1875,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
   }
-
+ 
   Widget _premiumChip(String label) => Container(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(
           color: Colors.white.withOpacity(0.15),
           borderRadius: BorderRadius.circular(20),
@@ -1841,8 +1889,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 fontSize: 11,
                 fontWeight: FontWeight.w500)),
       );
-
-  // ── UPGRADE CARD ───────────────────────────────────────────────────────────
+ 
+  // ── UPGRADE CARD ────────────────────────────────────────────────────────────
   Widget _buildUpgradeCard() {
     return GestureDetector(
       onTap: _showPaymentMethodDialog,
@@ -1857,8 +1905,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 10, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               decoration: BoxDecoration(
                 color: _tealDim,
                 borderRadius: BorderRadius.circular(20),
@@ -1881,10 +1928,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             const SizedBox(height: 8),
             const Text(
                 'Unlimited offline translations\nand ad-free experience.',
-                style: TextStyle(
-                    color: _white40, fontSize: 13, height: 1.5)),
+                style: TextStyle(color: _white40, fontSize: 13, height: 1.5)),
             const SizedBox(height: 16),
-
+ 
             Row(children: [
               _miniPayBadge(Icons.account_balance_wallet_rounded,
                   const Color(0xFF007DFF), 'GCash'),
@@ -1895,9 +1941,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _miniPayBadge(Icons.account_balance_rounded,
                   const Color(0xFFE63946), 'GoTyme'),
             ]),
-
+ 
             const SizedBox(height: 16),
-
+ 
             Align(
               alignment: Alignment.centerRight,
               child: _isUpgrading
@@ -1925,11 +1971,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
   }
-
-  Widget _miniPayBadge(IconData icon, Color color, String label) =>
-      Container(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+ 
+  Widget _miniPayBadge(IconData icon, Color color, String label) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
         decoration: BoxDecoration(
           color: color.withOpacity(0.12),
           borderRadius: BorderRadius.circular(8),
@@ -1940,12 +1984,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(width: 4),
           Text(label,
               style: TextStyle(
-                  color: color,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w600)),
+                  color: color, fontSize: 10, fontWeight: FontWeight.w600)),
         ]),
       );
-
+ 
   Widget _sectionLabel(String label) => Row(children: [
         Container(
           width: 3,
@@ -1963,7 +2005,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 fontWeight: FontWeight.w600,
                 letterSpacing: 0.8)),
       ]);
-
+ 
   Widget _card({required Widget child}) => Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
@@ -1973,18 +2015,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         child: child,
       );
-
+ 
   Widget _optionTile(String title, IconData icon) {
     return GestureDetector(
       onTap: () {
         if (title == 'Trained Voice') {
-          Navigator.push(
-              context,
-              MaterialPageRoute(
-                  builder: (_) => const TrainedVoiceScreen()));
-        } else if (title == 'Cloud Based') {
           Navigator.push(context,
-              MaterialPageRoute(builder: (_) => const Cloud()));
+              MaterialPageRoute(builder: (_) => const TrainedVoiceScreen()));
+        } else if (title == 'Cloud Based') {
+          Navigator.push(
+              context, MaterialPageRoute(builder: (_) => const Cloud()));
         }
       },
       child: Container(
@@ -2008,13 +2048,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(width: 12),
           Expanded(
             child: Text(title,
-                style: const TextStyle(
-                    color: Colors.white, fontSize: 14)),
+                style: const TextStyle(color: Colors.white, fontSize: 14)),
           ),
-          const Icon(Icons.arrow_forward_ios,
-              size: 13, color: _white40),
+          const Icon(Icons.arrow_forward_ios, size: 13, color: _white40),
         ]),
       ),
     );
   }
 }
+ 
