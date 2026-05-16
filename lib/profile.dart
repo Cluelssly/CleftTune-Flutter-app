@@ -1,40 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'premium.dart';
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HOW THE LOGOUT → LOGIN → TRANSLATOR FLOW WORKS
-// ─────────────────────────────────────────────────────────────────────────────
-//
-// Your main.dart should have a StreamBuilder<User?> at the root, like this:
-//
-//   MaterialApp(
-//     home: StreamBuilder<User?>(
-//       stream: FirebaseAuth.instance.authStateChanges(),
-//       builder: (context, snapshot) {
-//         if (snapshot.connectionState == ConnectionState.waiting) {
-//           return const SplashScreen(); // or a loader
-//         }
-//         if (snapshot.hasData) {
-//           return const TranslatorScreen(); // ← your main app screen
-//         }
-//         return PremiumScreen(           // ← login screen
-//           onLogin: () {},               //   stream handles navigation
-//           onBack: () {},
-//         );
-//       },
-//     ),
-//   )
-//
-// With that in place:
-//   • Logout  → FirebaseAuth.signOut() → stream emits null → shows PremiumScreen
-//   • Login   → FirebaseAuth signs in  → stream emits User → shows Translator
-//   No manual Navigator calls needed for the auth transition at all.
-//
-// The _logout() below simply signs out and pops back to root. The stream does
-// the rest automatically.
-// ─────────────────────────────────────────────────────────────────────────────
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -54,7 +20,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   double _trainingProgress = 0.0;
   double _trainedHours     = 0.0;
 
-  // ── Theme ──────────────────────────────────────────────────────────────────
   static const _bg         = Color(0xFF0D2B2B);
   static const _bgMid      = Color(0xFF0E2233);
   static const _bgDark     = Color(0xFF0B1A28);
@@ -148,29 +113,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
     });
   }
 
-  // ── LOGOUT ─────────────────────────────────────────────────────────────────
-  //
-  // Steps:
-  //   1. Close the confirm dialog.
-  //   2. Sign out — this triggers FirebaseAuth.authStateChanges() to emit null.
-  //   3. Your root StreamBuilder sees null → automatically shows PremiumScreen.
-  //   4. User logs in → stream emits User → automatically shows TranslatorScreen.
-  //
-  // We do NOT manually push PremiumScreen here. The stream handles everything.
-  // All we do after sign-out is pop back to the root so the stream can rebuild.
-  //
   Future<void> _logout() async {
-    // 1. Close the confirm dialog
     if (mounted) Navigator.of(context).pop();
-
-    // 2. Sign out from Firebase — triggers authStateChanges stream
     await FirebaseAuth.instance.signOut();
-
-    // 3. Guard against unmounted widget
     if (!mounted) return;
-
-    // 4. Pop all the way back to root (the StreamBuilder in main.dart).
-    //    The stream now sees no user → renders PremiumScreen automatically.
     Navigator.of(context).popUntil((route) => route.isFirst);
   }
 
@@ -323,10 +269,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // BUILD
-  // ══════════════════════════════════════════════════════════════════════════
-
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
@@ -360,8 +302,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ),
     );
   }
-
-  // ── LAYOUTS ────────────────────────────────────────────────────────────────
 
   Widget _buildMobileLayout() {
     return SingleChildScrollView(
@@ -430,7 +370,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  // ── TOP BAR ────────────────────────────────────────────────────────────────
   Widget _buildTopBar() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -467,7 +406,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  // ── AVATAR SECTION ─────────────────────────────────────────────────────────
+  // ── AVATAR SECTION — camera overlay removed ────────────────────────────────
   Widget _buildAvatarSection() {
     final initials = _name.isNotEmpty
         ? _name.trim().split(' ').map((w) => w[0]).take(2).join().toUpperCase()
@@ -475,46 +414,31 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     return Column(
       children: [
-        Stack(
-          alignment: Alignment.bottomRight,
-          children: [
-            Container(
-              width: 88, height: 88,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF1D9E75), Color(0xFF0E5C47)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                border: Border.all(color: _teal, width: 2),
-                boxShadow: [
-                  BoxShadow(
-                    color: _teal.withOpacity(0.3),
-                    blurRadius: 20,
-                    spreadRadius: 2,
-                  ),
-                ],
-              ),
-              child: Center(
-                child: Text(initials,
-                    style: const TextStyle(
-                        fontSize: 28,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white)),
-              ),
+        Container(
+          width: 88, height: 88,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: const LinearGradient(
+              colors: [Color(0xFF1D9E75), Color(0xFF0E5C47)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
             ),
-            Container(
-              width: 26, height: 26,
-              decoration: BoxDecoration(
-                color: _teal,
-                shape: BoxShape.circle,
-                border: Border.all(color: _bgDark, width: 2),
+            border: Border.all(color: _teal, width: 2),
+            boxShadow: [
+              BoxShadow(
+                color: _teal.withOpacity(0.3),
+                blurRadius: 20,
+                spreadRadius: 2,
               ),
-              child: const Icon(Icons.camera_alt_rounded,
-                  size: 13, color: Colors.white),
-            ),
-          ],
+            ],
+          ),
+          child: Center(
+            child: Text(initials,
+                style: const TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white)),
+          ),
         ),
         const SizedBox(height: 14),
         Text(_name,
@@ -576,7 +500,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  // ── STATS ROW ──────────────────────────────────────────────────────────────
   Widget _buildStatsRow() {
     return Row(
       children: [
@@ -615,7 +538,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  // ── PREMIUM ACTIVE CARD ────────────────────────────────────────────────────
   Widget _buildPremiumActiveCard() {
     return Container(
       width: double.infinity,
@@ -717,7 +639,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  // ── ACCOUNT INFO CARD ──────────────────────────────────────────────────────
   Widget _buildInfoCard() {
     return Container(
       padding: const EdgeInsets.all(16),
@@ -798,7 +719,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  // ── LOGOUT BUTTON ──────────────────────────────────────────────────────────
   Widget _buildLogoutButton() {
     return GestureDetector(
       onTap: _confirmLogout,

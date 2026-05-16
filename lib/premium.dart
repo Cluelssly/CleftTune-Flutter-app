@@ -549,9 +549,9 @@ class _PremiumScreenState extends State<PremiumScreen> {
         style: TextStyle(fontSize: 13, color: _white40, height: 1.6),
       ),
       const SizedBox(height: 24),
-      _featureCard(Icons.closed_caption_rounded, "Unlimited Real-time Subtitles", "No time limit when translating speech"),
-      _featureCard(Icons.graphic_eq_rounded,     "Voice Calibration",             "System adapts to your speech pattern"),
-      _featureCard(Icons.history_rounded,         "Conversation History",           "Save and review past translations"),
+      _featureCard(Icons.closed_caption_rounded, "Real-time speech translation", "Instantly translates speech while you talk naturally"),
+      _featureCard(Icons.graphic_eq_rounded,     "Noise Cancellation",             "Reduces background noise for clearer voice recognition."),
+      _featureCard(Icons.history_rounded,         "Unlimited Words",           "Translate without limits or interruptions."),
       _featureCard(Icons.block_rounded,           "Ad-Free Experience",             "No interruptions while using the app"),
       const SizedBox(height: 24),
       Container(

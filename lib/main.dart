@@ -1016,9 +1016,9 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  bool _isPremium   = false;
-  bool _isLoading   = true;
-  bool _isUpgrading = false;
+  bool _isPremium    = false;
+  bool _isLoading    = true;
+  bool _isUpgrading  = false;
   bool _isCancelling = false;
 
   static const _teal       = Color(0xFF1D9E75);
@@ -1027,10 +1027,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   static const _cardColor  = Color(0x0DFFFFFF);
   static const _white40    = Color(0x66FFFFFF);
 
-  static const _gcashUrl =
-    'https://raw.githubusercontent.com/Cluelssly/CleftTune-Flutter-app/main/QR.jpg';
-  static const _mayaUrl  = 'https://raw.githubusercontent.com/Cluelssly/CleftTune-Flutter-app/main/maya.jpg';
-  static const _gotymUrl = 'https://gotyme.com';
+  // ── PAYMENT DEEP LINKS ─────────────────────────────────────────────────────
+  static const _gcashDeepLink = 'gcash://';
+  static const _gcashFallback = 'https://gcash.com';
+  static const _mayaDeepLink  = 'maya://';
+  static const _mayaFallback  = 'https://app.maya.ph';
+  static const _gotymUrl      = 'https://gotyme.com';
 
   @override
   void initState() {
@@ -1052,9 +1054,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
       final data = doc.data() ?? {};
 
-      // ── Support both field formats ─────────────────────────────────────
-      // 'plan' == 'premium'  (SettingsScreen format)
-      // 'isPremium' == true  (PremiumGate / TranslatorScreen format)
       final isPremiumByPlan = (data['plan'] ?? '') == 'premium';
       final isPremiumByFlag = data['isPremium'] == true;
 
@@ -1067,30 +1066,44 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  // ── UPGRADE ────────────────────────────────────────────────────────────────
-  Future<void> _upgradeToPremium(String method) async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
+  // ── LAUNCH PAYMENT APP ─────────────────────────────────────────────────────
+  Future<void> _launchPaymentUrl(String method) async {
+    String deepLink;
+    String fallback;
 
-    String url;
     switch (method) {
       case 'gcash':
-        url = _gcashUrl;
+        deepLink = _gcashDeepLink;
+        fallback = _gcashFallback;
         break;
-      case 'paypal':
-        url = _mayaUrl;
+      case 'maya':
+        deepLink = _mayaDeepLink;
+        fallback = _mayaFallback;
         break;
       case 'gotyme':
-        url = _gotymUrl;
+        deepLink = _gotymUrl;
+        fallback = _gotymUrl;
         break;
       default:
         return;
     }
 
-    final uri = Uri.parse(url);
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    final deepUri     = Uri.parse(deepLink);
+    final fallbackUri = Uri.parse(fallback);
+
+    if (await canLaunchUrl(deepUri)) {
+      await launchUrl(deepUri, mode: LaunchMode.externalApplication);
+    } else {
+      await launchUrl(fallbackUri, mode: LaunchMode.externalApplication);
     }
+  }
+
+  // ── UPGRADE ────────────────────────────────────────────────────────────────
+  Future<void> _upgradeToPremium(String method) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    await _launchPaymentUrl(method);
 
     setState(() => _isUpgrading = true);
     try {
@@ -1098,9 +1111,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           .collection('users')
           .doc(user.uid)
           .set({
-        // ── Both fields written so ALL screens read correctly ──────────────
-        'plan':          'premium',   // read by SettingsScreen
-        'isPremium':     true,        // read by PremiumGate / TranslatorScreen
+        'plan':          'premium',
+        'isPremium':     true,
         'paymentMethod': method,
         'upgradedAt':    FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
@@ -1146,9 +1158,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           .collection('users')
           .doc(user.uid)
           .set({
-        // ── Both fields written so ALL screens read correctly ──────────────
-        'plan':        'free',   // read by SettingsScreen
-        'isPremium':   false,    // read by PremiumGate / TranslatorScreen
+        'plan':        'free',
+        'isPremium':   false,
         'cancelledAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
@@ -1190,7 +1201,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       context: context,
       builder: (_) => AlertDialog(
         backgroundColor: const Color(0xFF0A2020),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Row(children: [
           Icon(Icons.payment_rounded, color: _teal, size: 22),
           SizedBox(width: 8),
@@ -1208,7 +1220,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             const SizedBox(height: 20),
             _paymentMethodTile(
               label: 'GCash',
-              subtitle: 'Pay via GCash e-wallet',
+              subtitle: 'Opens the GCash app directly',
               icon: Icons.account_balance_wallet_rounded,
               iconColor: const Color(0xFF007DFF),
               onTap: () {
@@ -1218,13 +1230,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             const SizedBox(height: 10),
             _paymentMethodTile(
-              label: 'PayPal',
-              subtitle: 'Pay via PayPal',
-              icon: Icons.paypal_rounded,
-              iconColor: const Color(0xFF003087),
+              label: 'Maya',
+              subtitle: 'Opens the Maya app directly',
+              icon: Icons.credit_card_rounded,
+              iconColor: const Color(0xFF6C3BE8),
               onTap: () {
                 Navigator.pop(context);
-                _confirmPayment('paypal', 'PayPal');
+                _confirmPayment('maya', 'Maya');
               },
             ),
             const SizedBox(height: 10),
@@ -1271,9 +1283,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _dialogFeature('Unlimited real-time subtitles'),
-            _dialogFeature('Voice calibration & training'),
-            _dialogFeature('Conversation history'),
+            _dialogFeature('Real-time Translation'),
+            _dialogFeature('Noise Cancellation'),
+            _dialogFeature('Unlimited Words'),
             _dialogFeature('Ad-free experience'),
             const SizedBox(height: 16),
             Container(
@@ -1296,7 +1308,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             const SizedBox(height: 12),
             Text(
-              'You will be redirected to $label to complete your payment.',
+              'Tapping "Pay with $label" will open the $label app on your phone.',
               style: const TextStyle(color: _white40, fontSize: 12),
             ),
           ],
@@ -1304,8 +1316,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Back',
-                style: TextStyle(color: _white40)),
+            child: const Text('Back', style: TextStyle(color: _white40)),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
@@ -1351,12 +1362,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
           children: [
             const Text(
               'Are you sure you want to cancel your Premium subscription?',
-              style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.5),
+              style:
+                  TextStyle(color: Colors.white70, fontSize: 13, height: 1.5),
             ),
             const SizedBox(height: 14),
-            _lossItem('Unlimited real-time subtitles'),
-            _lossItem('Voice calibration & training'),
-            _lossItem('Full conversation history'),
+            _lossItem('Real-time Translation'),
+            _lossItem('Noise Cancellation'),
+            _lossItem('Unlimited Words'),
             _lossItem('Ad-free experience'),
             const SizedBox(height: 14),
             Container(
@@ -1374,9 +1386,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   child: Text(
                     'You will lose access to all Premium features immediately after cancellation.',
                     style: TextStyle(
-                        color: Colors.redAccent,
-                        fontSize: 11,
-                        height: 1.4),
+                        color: Colors.redAccent, fontSize: 11, height: 1.4),
                   ),
                 ),
               ]),
@@ -1411,6 +1421,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  // ── HELPERS ────────────────────────────────────────────────────────────────
+
   Widget _lossItem(String text) => Padding(
         padding: const EdgeInsets.only(bottom: 6),
         child: Row(children: [
@@ -1418,7 +1430,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               color: Colors.redAccent, size: 15),
           const SizedBox(width: 8),
           Text(text,
-              style: const TextStyle(color: Colors.white60, fontSize: 12)),
+              style:
+                  const TextStyle(color: Colors.white60, fontSize: 12)),
         ]),
       );
 
@@ -1432,7 +1445,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        padding:
+            const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
           color: const Color(0x1AFFFFFF),
           borderRadius: BorderRadius.circular(14),
@@ -1459,8 +1473,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         fontSize: 14,
                         fontWeight: FontWeight.w600)),
                 Text(subtitle,
-                    style: const TextStyle(
-                        color: _white40, fontSize: 11)),
+                    style:
+                        const TextStyle(color: _white40, fontSize: 11)),
               ],
             ),
           ),
@@ -1481,297 +1495,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   color: Colors.white70, fontSize: 13)),
         ]),
       );
-
-  // ── BUILD ──────────────────────────────────────────────────────────────────
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      body: CleftBackground(
-        child: SafeArea(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final width        = constraints.maxWidth;
-              final padding      = width < 800 ? 16.0 : 40.0;
-              final contentWidth = width < 1000 ? width : 900.0;
-
-              return Center(
-                child: Container(
-                  width: contentWidth,
-                  padding: EdgeInsets.all(padding),
-                  child: _isLoading
-                      ? const Center(
-                          child: CircularProgressIndicator(
-                              color: _teal, strokeWidth: 2))
-                      : ListView(children: [
-                          // ── HEADER ──────────────────────────────────────
-                          Row(
-                            mainAxisAlignment:
-                                MainAxisAlignment.spaceBetween,
-                            children: [
-                              Row(children: [
-                                GestureDetector(
-                                  onTap: () => Navigator.pop(context),
-                                  child: Container(
-                                    width: 36,
-                                    height: 36,
-                                    decoration: BoxDecoration(
-                                      color: _tealDim,
-                                      shape: BoxShape.circle,
-                                      border: Border.all(
-                                          color: _tealBorder),
-                                    ),
-                                    child: const Icon(
-                                        Icons.arrow_back_ios_new,
-                                        color: _teal,
-                                        size: 15),
-                                  ),
-                                ),
-                                const SizedBox(width: 12),
-                                const Text('Settings',
-                                    style: TextStyle(
-                                        fontSize: 20,
-                                        fontWeight: FontWeight.w700,
-                                        color: Colors.white)),
-                              ]),
-                              Container(
-                                width: 36,
-                                height: 36,
-                                decoration: BoxDecoration(
-                                  color: _tealDim,
-                                  shape: BoxShape.circle,
-                                  border: Border.all(color: _tealBorder),
-                                ),
-                                child: const Icon(Icons.person,
-                                    color: _teal, size: 18),
-                              ),
-                            ],
-                          ),
-
-                          const SizedBox(height: 24),
-
-                          // ── PREMIUM CARD ─────────────────────────────────
-                          _isPremium
-                              ? _buildPremiumActiveCard()
-                              : _buildUpgradeCard(),
-
-                          const SizedBox(height: 28),
-
-                          // ── GENERAL ──────────────────────────────────────
-                          _sectionLabel('GENERAL'),
-                          const SizedBox(height: 10),
-                          _optionTile(
-                              'Trained Voice', Icons.graphic_eq_rounded),
-                          _optionTile(
-                              'Cloud Based', Icons.cloud_outlined),
-
-                          _notificationsTile(),
-
-                          const SizedBox(height: 28),
-
-                          // ── ABOUT ─────────────────────────────────────────
-                          _sectionLabel('ABOUT'),
-                          const SizedBox(height: 10),
-                          _card(
-                              child: Row(
-                            mainAxisAlignment:
-                                MainAxisAlignment.spaceBetween,
-                            children: [
-                              Row(children: [
-                                Container(
-                                  width: 32,
-                                  height: 32,
-                                  decoration: BoxDecoration(
-                                    color: _tealDim,
-                                    borderRadius:
-                                        BorderRadius.circular(8),
-                                  ),
-                                  child: const Icon(
-                                      Icons.info_outline_rounded,
-                                      color: _teal,
-                                      size: 16),
-                                ),
-                                const SizedBox(width: 12),
-                                const Text('App Version',
-                                    style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 14)),
-                              ]),
-                              const Text('v1.0.0',
-                                  style: TextStyle(
-                                      color: _white40, fontSize: 13)),
-                            ],
-                          )),
-
-                          const SizedBox(height: 28),
-
-                          // ── FIRESTORE PREMIUM USER LIST (admin debug) ─────
-                          _sectionLabel('PREMIUM USERS'),
-                          const SizedBox(height: 10),
-                          _buildPremiumUserList(),
-
-                          const SizedBox(height: 40),
-                        ]),
-                ),
-              );
-            },
-          ),
-        ),
-      ),
-    );
-  }
-
-  // ── PREMIUM USER LIST ──────────────────────────────────────────────────────
-  // Shows all users where isPremium == true, pulled live from Firestore.
-  // Useful for admin/debug; remove this section in production if not needed.
-  Widget _buildPremiumUserList() {
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('users')
-          .where('isPremium', isEqualTo: true)
-          .snapshots(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(
-            child: Padding(
-              padding: EdgeInsets.all(16),
-              child: CircularProgressIndicator(color: _teal, strokeWidth: 2),
-            ),
-          );
-        }
-
-        final docs = snapshot.data?.docs ?? [];
-
-        if (docs.isEmpty) {
-          return Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: _cardColor,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: _tealBorder),
-            ),
-            child: const Row(children: [
-              Icon(Icons.star_outline_rounded, color: _white40, size: 18),
-              SizedBox(width: 10),
-              Text('No premium users yet',
-                  style: TextStyle(color: _white40, fontSize: 13)),
-            ]),
-          );
-        }
-
-        return Column(
-          children: docs.map((doc) {
-            final data          = doc.data() as Map<String, dynamic>;
-            final uid           = doc.id;
-            final email         = data['email']         as String? ?? 'Unknown';
-            final paymentMethod = data['paymentMethod'] as String? ?? '—';
-            final upgradedAt    = data['upgradedAt']    as Timestamp?;
-            final upgradeDate   = upgradedAt != null
-                ? _formatDate(upgradedAt.toDate())
-                : 'Unknown date';
-
-            return Container(
-              margin: const EdgeInsets.only(bottom: 8),
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: _tealDim,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: _tealBorder),
-              ),
-              child: Row(
-                children: [
-                  // ── Avatar ───────────────────────────────────────────────
-                  Container(
-                    width: 38,
-                    height: 38,
-                    decoration: BoxDecoration(
-                      color: _teal.withOpacity(0.2),
-                      shape: BoxShape.circle,
-                      border: Border.all(color: _tealBorder),
-                    ),
-                    child: const Icon(Icons.star_rounded,
-                        color: _teal, size: 18),
-                  ),
-                  const SizedBox(width: 12),
-
-                  // ── Info ─────────────────────────────────────────────────
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          email,
-                          style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: 3),
-                        Text(
-                          'UID: ${uid.substring(0, 8)}...',
-                          style: const TextStyle(
-                              color: _white40, fontSize: 10),
-                        ),
-                        const SizedBox(height: 3),
-                        Row(children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: _teal.withOpacity(0.15),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Text(
-                              paymentMethod.toUpperCase(),
-                              style: const TextStyle(
-                                  color: _teal,
-                                  fontSize: 9,
-                                  fontWeight: FontWeight.w700),
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            upgradeDate,
-                            style: const TextStyle(
-                                color: _white40, fontSize: 10),
-                          ),
-                        ]),
-                      ],
-                    ),
-                  ),
-
-                  // ── Premium badge ─────────────────────────────────────────
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: _teal,
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: const Text('PREMIUM',
-                        style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 9,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 0.5)),
-                  ),
-                ],
-              ),
-            );
-          }).toList(),
-        );
-      },
-    );
-  }
-
-  String _formatDate(DateTime date) {
-    final months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
-    ];
-    return '${months[date.month - 1]} ${date.day}, ${date.year}';
-  }
 
   Widget _notificationsTile() {
     final user = FirebaseAuth.instance.currentUser;
@@ -1814,7 +1537,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(width: 12),
               const Expanded(
                 child: Text('Notifications',
-                    style: TextStyle(color: Colors.white, fontSize: 14)),
+                    style:
+                        TextStyle(color: Colors.white, fontSize: 14)),
               ),
               if (unread > 0)
                 Container(
@@ -1842,6 +1566,140 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  // ── BUILD ──────────────────────────────────────────────────────────────────
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: CleftBackground(
+        child: SafeArea(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final width        = constraints.maxWidth;
+              final padding      = width < 800 ? 16.0 : 40.0;
+              final contentWidth = width < 1000 ? width : 900.0;
+
+              return Center(
+                child: Container(
+                  width: contentWidth,
+                  padding: EdgeInsets.all(padding),
+                  child: _isLoading
+                      ? const Center(
+                          child: CircularProgressIndicator(
+                              color: _teal, strokeWidth: 2))
+                      : ListView(children: [
+                          // ── HEADER ──────────────────────────────────────
+                          Row(
+                            mainAxisAlignment:
+                                MainAxisAlignment.spaceBetween,
+                            children: [
+                              Row(children: [
+                                GestureDetector(
+                                  onTap: () => Navigator.pop(context),
+                                  child: Container(
+                                    width: 36,
+                                    height: 36,
+                                    decoration: BoxDecoration(
+                                      color: _tealDim,
+                                      shape: BoxShape.circle,
+                                      border:
+                                          Border.all(color: _tealBorder),
+                                    ),
+                                    child: const Icon(
+                                        Icons.arrow_back_ios_new,
+                                        color: _teal,
+                                        size: 15),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                const Text('Settings',
+                                    style: TextStyle(
+                                        fontSize: 20,
+                                        fontWeight: FontWeight.w700,
+                                        color: Colors.white)),
+                              ]),
+                              Container(
+                                width: 36,
+                                height: 36,
+                                decoration: BoxDecoration(
+                                  color: _tealDim,
+                                  shape: BoxShape.circle,
+                                  border:
+                                      Border.all(color: _tealBorder),
+                                ),
+                                child: const Icon(Icons.person,
+                                    color: _teal, size: 18),
+                              ),
+                            ],
+                          ),
+
+                          const SizedBox(height: 24),
+
+                          // ── PREMIUM CARD ─────────────────────────────────
+                          _isPremium
+                              ? _buildPremiumActiveCard()
+                              : _buildUpgradeCard(),
+
+                          const SizedBox(height: 28),
+
+                          // ── GENERAL ──────────────────────────────────────
+                          _sectionLabel('GENERAL'),
+                          const SizedBox(height: 10),
+                          _optionTile(
+                              'Trained Voice', Icons.graphic_eq_rounded),
+                          _optionTile(
+                              'Cloud Based', Icons.cloud_outlined),
+                          _notificationsTile(),
+
+                          const SizedBox(height: 28),
+
+                          // ── ABOUT ─────────────────────────────────────────
+                          _sectionLabel('ABOUT'),
+                          const SizedBox(height: 10),
+                          _card(
+                            child: Row(
+                              mainAxisAlignment:
+                                  MainAxisAlignment.spaceBetween,
+                              children: [
+                                Row(children: [
+                                  Container(
+                                    width: 32,
+                                    height: 32,
+                                    decoration: BoxDecoration(
+                                      color: _tealDim,
+                                      borderRadius:
+                                          BorderRadius.circular(8),
+                                    ),
+                                    child: const Icon(
+                                        Icons.info_outline_rounded,
+                                        color: _teal,
+                                        size: 16),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  const Text('App Version',
+                                      style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 14)),
+                                ]),
+                                const Text('v1.0.0',
+                                    style: TextStyle(
+                                        color: _white40, fontSize: 13)),
+                              ],
+                            ),
+                          ),
+
+                          const SizedBox(height: 40),
+                        ]),
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── PREMIUM ACTIVE CARD ────────────────────────────────────────────────────
   Widget _buildPremiumActiveCard() {
     return Container(
       padding: const EdgeInsets.all(20),
@@ -1984,6 +1842,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 fontWeight: FontWeight.w500)),
       );
 
+  // ── UPGRADE CARD ───────────────────────────────────────────────────────────
   Widget _buildUpgradeCard() {
     return GestureDetector(
       onTap: _showPaymentMethodDialog,
@@ -2030,8 +1889,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _miniPayBadge(Icons.account_balance_wallet_rounded,
                   const Color(0xFF007DFF), 'GCash'),
               const SizedBox(width: 8),
-              _miniPayBadge(Icons.paypal_rounded,
-                  const Color(0xFF003087), 'PayPal'),
+              _miniPayBadge(Icons.credit_card_rounded,
+                  const Color(0xFF6C3BE8), 'Maya'),
               const SizedBox(width: 8),
               _miniPayBadge(Icons.account_balance_rounded,
                   const Color(0xFFE63946), 'GoTyme'),
@@ -2069,7 +1928,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Widget _miniPayBadge(IconData icon, Color color, String label) =>
       Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+        padding:
+            const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
         decoration: BoxDecoration(
           color: color.withOpacity(0.12),
           borderRadius: BorderRadius.circular(8),
