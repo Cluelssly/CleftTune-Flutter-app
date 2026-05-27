@@ -997,8 +997,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   static const _textSub      = Color(0xFF5A7A96);
   static const _cardColor    = Color(0x1A0077B6);
 
-  static const _successUrl = 'https://appcleft2026-55337.web.app/payment/success';
-  static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
+static const _successUrl = 'https://example.com/success';
+static const _failedUrl  = 'https://example.com/failed';
 
   @override
   void initState() {

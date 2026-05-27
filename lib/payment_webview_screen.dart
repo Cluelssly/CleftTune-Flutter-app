@@ -1,16 +1,12 @@
 // lib/screens/payment_webview_screen.dart
-//
-// Opens the PayMongo checkout URL in a WebView.
-// Handles GCash / Maya deep links so the e-wallet app opens automatically.
-// Calls onSuccess / onFailed when PayMongo redirects back.
-//
-// FIX: Maya returns to the app via an app-switch, not a WebView navigation,
-// so onNavigationRequest never fires. We now also check the URL in
-// onPageStarted and onPageFinished to catch those redirects.
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+
+// ignore: avoid_web_libraries_in_flutter
+import 'dart:html' as html;
 
 class PaymentWebViewScreen extends StatefulWidget {
   final String checkoutUrl;
@@ -29,13 +25,16 @@ class PaymentWebViewScreen extends StatefulWidget {
   });
 
   @override
-  State<PaymentWebViewScreen> createState() => _PaymentWebViewScreenState();
+  State<PaymentWebViewScreen> createState() =>
+      _PaymentWebViewScreenState();
 }
 
-class _PaymentWebViewScreenState extends State<PaymentWebViewScreen> {
+class _PaymentWebViewScreenState
+    extends State<PaymentWebViewScreen> {
   late final WebViewController _controller;
-  bool _isLoading  = true;
-  bool _didFinish  = false; // guard: fire callbacks only once
+
+  bool _isLoading = true;
+  bool _didFinish = false;
 
   static const _teal = Color(0xFF1D9E75);
 
@@ -43,28 +42,41 @@ class _PaymentWebViewScreenState extends State<PaymentWebViewScreen> {
   void initState() {
     super.initState();
 
+    // ── WEB FIX ───────────────────────────────────────────────────────
+    if (kIsWeb) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final url = widget.checkoutUrl;
+
+        // ✅ Open PayMongo in new tab
+        html.window.open(url, '_blank');
+      });
+
+      return;
+    }
+
+    // ── MOBILE WEBVIEW ────────────────────────────────────────────────
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setNavigationDelegate(
         NavigationDelegate(
 
-          // ── Fires when the WebView starts loading any URL ──────────────
-          // Maya sometimes lands here instead of onNavigationRequest
+          // ── PAGE START ───────────────────────────────────────────────
           onPageStarted: (url) {
             setState(() => _isLoading = true);
             _handleUrl(url);
           },
 
-          // ── Fires when a page fully loads ─────────────────────────────
-          // Catches the case where Maya redirects and the page loads blank
+          // ── PAGE FINISH ──────────────────────────────────────────────
           onPageFinished: (url) {
             setState(() => _isLoading = false);
             _handleUrl(url);
           },
 
-          onWebResourceError: (_) => setState(() => _isLoading = false),
+          onWebResourceError: (_) {
+            setState(() => _isLoading = false);
+          },
 
-          // ── Fires before navigation — catches most redirects ───────────
+          // ── NAVIGATION ───────────────────────────────────────────────
           onNavigationRequest: (request) {
             final url = request.url;
 
@@ -72,7 +84,7 @@ class _PaymentWebViewScreenState extends State<PaymentWebViewScreen> {
               return NavigationDecision.prevent;
             }
 
-            // ── GCash / Maya / PayMaya deep links ────────────────────────
+            // ── GCash / Maya deep links ────────────────────────────────
             if (url.startsWith('gcash://') ||
                 url.startsWith('maya://') ||
                 url.startsWith('paymaya://') ||
@@ -88,21 +100,28 @@ class _PaymentWebViewScreenState extends State<PaymentWebViewScreen> {
       ..loadRequest(Uri.parse(widget.checkoutUrl));
   }
 
-  /// Checks if [url] is a success or failed redirect.
-  /// Returns true if handled (so the caller can prevent navigation).
+  /// SUCCESS / FAILED REDIRECTS
   bool _handleUrl(String url) {
-    if (_didFinish) return true; // already handled, swallow everything
+    if (_didFinish) return true;
 
     if (url.startsWith(widget.successUrl)) {
       _didFinish = true;
-      if (mounted) Navigator.of(context).pop();
+
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+
       widget.onSuccess();
       return true;
     }
 
     if (url.startsWith(widget.failedUrl)) {
       _didFinish = true;
-      if (mounted) Navigator.of(context).pop();
+
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+
       widget.onFailed();
       return true;
     }
@@ -112,15 +131,30 @@ class _PaymentWebViewScreenState extends State<PaymentWebViewScreen> {
 
   Future<void> _openDeepLink(String url) async {
     final uri = Uri.parse(url);
+
     if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
+      await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+      );
     }
-    // If the wallet app isn't installed the WebView stays on the checkout
-    // page so the user can still pay via QR code.
   }
 
   @override
   Widget build(BuildContext context) {
+
+    // ── WEB UI ────────────────────────────────────────────────────────
+    if (kIsWeb) {
+      return const Scaffold(
+        backgroundColor: Color(0xFF0A1F1A),
+        body: Center(
+          child: CircularProgressIndicator(
+            color: _teal,
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: const Color(0xFF0A1F1A),
       appBar: AppBar(
@@ -136,17 +170,27 @@ class _PaymentWebViewScreenState extends State<PaymentWebViewScreen> {
           ),
         ),
         leading: IconButton(
-          icon: const Icon(Icons.close_rounded, color: Colors.white70),
+          icon: const Icon(
+            Icons.close_rounded,
+            color: Colors.white70,
+          ),
           onPressed: () => Navigator.of(context).pop(),
         ),
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
-          child: Container(height: 1, color: const Color(0x401D9E75)),
+          child: Container(
+            height: 1,
+            color: const Color(0x401D9E75),
+          ),
         ),
       ),
       body: Stack(
         children: [
+
+          // ── PAYMENT WEBVIEW ──────────────────────────────────────────
           WebViewWidget(controller: _controller),
+
+          // ── LOADING OVERLAY ─────────────────────────────────────────
           if (_isLoading)
             Container(
               color: const Color(0xFF0A1F1A),
@@ -154,11 +198,19 @@ class _PaymentWebViewScreenState extends State<PaymentWebViewScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    CircularProgressIndicator(color: _teal, strokeWidth: 2),
+                    CircularProgressIndicator(
+                      color: _teal,
+                      strokeWidth: 2,
+                    ),
+
                     SizedBox(height: 16),
+
                     Text(
                       'Loading payment page…',
-                      style: TextStyle(color: Colors.white54, fontSize: 13),
+                      style: TextStyle(
+                        color: Colors.white54,
+                        fontSize: 13,
+                      ),
                     ),
                   ],
                 ),

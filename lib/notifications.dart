@@ -142,12 +142,14 @@ class NotificationsScreen extends StatefulWidget {
 }
 
 class _NotificationsScreenState extends State<NotificationsScreen> {
-  // ── Design tokens (matches trained_voice_screen) ────────────────────────
-  static const _bg      = Color(0xFF060F1A);
-  static const _surface = Color(0xFF0D1F2D);
-  static const _card    = Color(0xFF112233);
-  static const _teal    = Color(0xFF0ECFB0);
-  static const _tealDeep = Color(0xFF0B5D5E);
+  // ── Design tokens (Sky Blue / Navy palette) ─────────────────────────────
+  static const _bg        = Color(0xFFEAF4FB); // Ice blue light
+  static const _surface   = Color(0xFFD6EEFF); // Soft sky blue
+  static const _card      = Color(0xFFBFDEF7); // Slightly deeper card surface
+  static const _accent    = Color(0xFF0077B6); // Bright teal blue
+  static const _accentDim = Color(0xFF005F8E); // Accent darker (shadows)
+  static const _textDark  = Color(0xFF0D2B4E); // Dark Navy
+  static const _textSub   = Color(0xFF5A7A96); // Subtle gray-blue
 
   List<NotifItem> _items   = [];
   bool            _loading = true;
@@ -239,13 +241,13 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         backgroundColor: _card,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
         title: const Text('Clear all notifications?',
-            style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
+            style: TextStyle(color: _textDark, fontSize: 16, fontWeight: FontWeight.w700)),
         content: const Text('All notifications will be permanently deleted.',
-            style: TextStyle(color: Colors.white54, fontSize: 13, height: 1.5)),
+            style: TextStyle(color: _textSub, fontSize: 13, height: 1.5)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel', style: TextStyle(color: Colors.white38)),
+            child: const Text('Cancel', style: TextStyle(color: _textSub)),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
@@ -312,14 +314,14 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     switch (t) {
       case 'training':
       case 'word_added':
-      case 'sync':           return const Color(0xFF0ECFB0);  // teal
+      case 'sync':           return const Color(0xFF0077B6); // accent blue
       case 'word_deleted':
-      case 'premium_cancel': return const Color(0xFFFF6B6B);  // red
+      case 'premium_cancel': return const Color(0xFFD62839); // red
       case 'premium_active':
-      case 'premium_pay':    return const Color(0xFFFFB74D);  // amber
+      case 'premium_pay':    return const Color(0xFF0096C7); // lighter blue
       case 'app_update':
-      case 'cloud':          return const Color(0xFF64B5F6);  // blue
-      default:               return const Color(0xFFFF8A65);  // orange
+      case 'cloud':          return const Color(0xFF005F8E); // accentDim
+      default:               return const Color(0xFF0077B6); // accent blue
     }
   }
 
@@ -327,14 +329,14 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     switch (t) {
       case 'training':
       case 'word_added':
-      case 'sync':           return const Color(0xFF0B2A20);
+      case 'sync':           return const Color(0xFFCCE8F6); // light accent wash
       case 'word_deleted':
-      case 'premium_cancel': return const Color(0xFF2A0C0C);
+      case 'premium_cancel': return const Color(0xFFF8D7DA); // soft red wash
       case 'premium_active':
-      case 'premium_pay':    return const Color(0xFF2A1C06);
+      case 'premium_pay':    return const Color(0xFFBFE8F7); // lighter blue wash
       case 'app_update':
-      case 'cloud':          return const Color(0xFF081828);
-      default:               return const Color(0xFF241008);
+      case 'cloud':          return const Color(0xFFB8D8EE); // muted blue wash
+      default:               return const Color(0xFFD6EEFF); // surface
     }
   }
 
@@ -349,7 +351,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           _buildFilterRow(),
           Expanded(
             child: _loading
-                ? const Center(child: CircularProgressIndicator(color: _teal, strokeWidth: 2))
+                ? const Center(child: CircularProgressIndicator(color: _accent, strokeWidth: 2))
                 : _error != null
                     ? _buildErrorView()
                     : _visible.isEmpty
@@ -384,21 +386,21 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                       decoration: BoxDecoration(
                         color: _card,
                         borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: Colors.white12),
+                        border: Border.all(color: _accent.withOpacity(0.2)),
                       ),
-                      child: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 15),
+                      child: const Icon(Icons.arrow_back_ios_new_rounded, color: _textDark, size: 15),
                     ),
                   ),
                   const SizedBox(width: 12),
-                  const Expanded(
+                  Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
+                      children: const [
                         Text('Notifications',
-                            style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
+                            style: TextStyle(color: _textDark, fontSize: 18, fontWeight: FontWeight.w700)),
                         Text('Activity & alerts',
-                            style: TextStyle(color: Colors.white38, fontSize: 11)),
+                            style: TextStyle(color: _textSub, fontSize: 11)),
                       ],
                     ),
                   ),
@@ -406,7 +408,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                       decoration: BoxDecoration(
-                        color: _teal,
+                        color: _accent,
                         borderRadius: BorderRadius.circular(20),
                       ),
                       child: Text('$_unread new',
@@ -418,12 +420,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                       child: Container(
                         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                         decoration: BoxDecoration(
-                          color: _teal.withOpacity(0.1),
+                          color: _accent.withOpacity(0.1),
                           borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: _teal.withOpacity(0.25)),
+                          border: Border.all(color: _accent.withOpacity(0.35)),
                         ),
                         child: const Text('Read all',
-                            style: TextStyle(color: _teal, fontSize: 11, fontWeight: FontWeight.w600)),
+                            style: TextStyle(color: _accent, fontSize: 11, fontWeight: FontWeight.w600)),
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -436,16 +438,16 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                         decoration: BoxDecoration(
                           color: _card,
                           borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: Colors.white12),
+                          border: Border.all(color: _accent.withOpacity(0.2)),
                         ),
-                        child: const Icon(Icons.delete_outline_rounded, color: Colors.white38, size: 18),
+                        child: const Icon(Icons.delete_outline_rounded, color: _textSub, size: 18),
                       ),
                     ),
                 ],
               ),
             ),
           ),
-          const Divider(color: Colors.white10, thickness: 0.8, height: 0.8),
+          Divider(color: _accent.withOpacity(0.15), thickness: 0.8, height: 0.8),
         ],
       ),
     );
@@ -471,10 +473,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               duration: const Duration(milliseconds: 180),
               padding: const EdgeInsets.symmetric(horizontal: 14),
               decoration: BoxDecoration(
-                color: selected ? _teal.withOpacity(0.15) : _card,
+                color: selected ? _accent.withOpacity(0.12) : _card,
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(
-                  color: selected ? _teal.withOpacity(0.5) : Colors.white12,
+                  color: selected ? _accent.withOpacity(0.6) : _accent.withOpacity(0.15),
                   width: selected ? 1.2 : 1.0,
                 ),
               ),
@@ -482,7 +484,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 child: Text(
                   label,
                   style: TextStyle(
-                    color: selected ? _teal : Colors.white38,
+                    color: selected ? _accent : _textSub,
                     fontSize: 12,
                     fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
                   ),
@@ -514,12 +516,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           const SizedBox(height: 18),
           const Text('Could not load notifications',
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w700)),
+              style: TextStyle(color: _textDark, fontSize: 17, fontWeight: FontWeight.w700)),
           const SizedBox(height: 6),
           const Text(
             'Check your Firestore security rules\nallow reads for authenticated users.',
             textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.white38, fontSize: 13, height: 1.5),
+            style: TextStyle(color: _textSub, fontSize: 13, height: 1.5),
           ),
           const SizedBox(height: 20),
           GestureDetector(
@@ -530,12 +532,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
               decoration: BoxDecoration(
-                color: _teal.withOpacity(0.1),
+                color: _accent.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: _teal.withOpacity(0.3)),
+                border: Border.all(color: _accent.withOpacity(0.35)),
               ),
               child: const Text('Retry',
-                  style: TextStyle(color: _teal, fontSize: 14, fontWeight: FontWeight.w600)),
+                  style: TextStyle(color: _accent, fontSize: 14, fontWeight: FontWeight.w600)),
             ),
           ),
         ],
@@ -551,18 +553,18 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         Container(
           width: 72, height: 72,
           decoration: BoxDecoration(
-            color: _teal.withOpacity(0.08),
+            color: _accent.withOpacity(0.08),
             shape: BoxShape.circle,
-            border: Border.all(color: _teal.withOpacity(0.2), width: 1.5),
+            border: Border.all(color: _accent.withOpacity(0.25), width: 1.5),
           ),
-          child: const Icon(Icons.notifications_off_outlined, color: _teal, size: 30),
+          child: const Icon(Icons.notifications_off_outlined, color: _accent, size: 30),
         ),
         const SizedBox(height: 18),
         const Text('No notifications',
-            style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w700)),
+            style: TextStyle(color: _textDark, fontSize: 17, fontWeight: FontWeight.w700)),
         const SizedBox(height: 6),
         const Text("You're all caught up!",
-            style: TextStyle(color: Colors.white38, fontSize: 14)),
+            style: TextStyle(color: _textSub, fontSize: 14)),
       ],
     ),
   );
@@ -595,14 +597,14 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       children: [
         Text(label,
             style: const TextStyle(
-              color: Colors.white24, fontSize: 10,
+              color: _textSub, fontSize: 10,
               fontWeight: FontWeight.w700, letterSpacing: 1.5,
             )),
         if (showMark)
           GestureDetector(
             onTap: _markAllRead,
             child: const Text('Mark all read',
-                style: TextStyle(color: _teal, fontSize: 11, fontWeight: FontWeight.w600)),
+                style: TextStyle(color: _accent, fontSize: 11, fontWeight: FontWeight.w600)),
           ),
       ],
     ),
@@ -633,12 +635,15 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       child: Container(
         margin: const EdgeInsets.fromLTRB(18, 0, 18, 10),
         decoration: BoxDecoration(
-          color: item.isRead ? _surface : _card,
+          color: item.isRead ? _surface : Colors.white,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: item.isRead ? Colors.white10 : accent.withOpacity(0.2),
+            color: item.isRead ? _accent.withOpacity(0.12) : accent.withOpacity(0.35),
             width: item.isRead ? 1.0 : 1.2,
           ),
+          boxShadow: item.isRead
+              ? null
+              : [BoxShadow(color: accent.withOpacity(0.08), blurRadius: 8, offset: const Offset(0, 2))],
         ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(15),
@@ -662,7 +667,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                           decoration: BoxDecoration(
                             color: _iconBg(item.type),
                             borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: accent.withOpacity(0.15)),
+                            border: Border.all(color: accent.withOpacity(0.2)),
                           ),
                           child: Icon(_icon(item.type), color: accent, size: 19),
                         ),
@@ -676,7 +681,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                               Text(
                                 item.title,
                                 style: TextStyle(
-                                  color: item.isRead ? Colors.white54 : Colors.white,
+                                  color: item.isRead ? _textSub : _textDark,
                                   fontSize: 13,
                                   fontWeight: item.isRead ? FontWeight.w500 : FontWeight.w700,
                                 ),
@@ -685,7 +690,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                               Text(
                                 item.body,
                                 style: const TextStyle(
-                                  color: Colors.white38, fontSize: 12, height: 1.5,
+                                  color: _textSub, fontSize: 12, height: 1.5,
                                 ),
                               ),
                             ],
@@ -698,7 +703,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                           crossAxisAlignment: CrossAxisAlignment.end,
                           children: [
                             Text(_time(item.timestamp),
-                                style: const TextStyle(color: Colors.white24, fontSize: 10)),
+                                style: const TextStyle(color: _textSub, fontSize: 10)),
                             const SizedBox(height: 8),
                             AnimatedOpacity(
                               duration: const Duration(milliseconds: 300),

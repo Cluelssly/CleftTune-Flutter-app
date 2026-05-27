@@ -29,11 +29,15 @@ class _CloudState extends State<Cloud> {
 
   double get _storageUsed => _translationsMB + _correctionsMB + _otherMB;
 
-  static const _bg       = Color(0xFF060F1A);
-  static const _surface  = Color(0xFF0D1F2D);
-  static const _card     = Color(0xFF112233);
-  static const _teal     = Color(0xFF0ECFB0);
-  static const _tealDeep = Color(0xFF0B5D5E);
+  // ─── PALETTE (Sky Blue / Navy) ───────────────────────────────────────────
+  static const Color _bg        = Color(0xFFEAF4FB);
+  static const Color _surface   = Color(0xFFD6EEFF);
+  static const Color _card      = Color(0xFFC2E0F8);
+  static const Color _accent    = Color(0xFF0077B6);
+  static const Color _accentDim = Color(0xFF005F8E);
+  static const Color _textDark  = Color(0xFF0D2B4E);
+  static const Color _textSub   = Color(0xFF5A7A96);
+  static const Color _label     = Color(0xFF0077B6);
 
   static const _deviceIdKey = 'clefttune_device_id';
 
@@ -156,8 +160,8 @@ class _CloudState extends State<Cloud> {
         setState(() => _isSyncing = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Sync failed: $e'),
-            backgroundColor: Colors.redAccent,
+            content: Text('Sync failed: $e', style: const TextStyle(color: _textDark)),
+            backgroundColor: Colors.redAccent.shade100,
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           ),
@@ -198,33 +202,76 @@ class _CloudState extends State<Cloud> {
       backgroundColor: _bg,
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // ── Top Bar ──────────────────────────────────────────────────
               _buildTopBar(),
-              const SizedBox(height: 20),
+              const SizedBox(height: 18),
 
-              const Text('Dashboard',
-                  style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: Colors.white)),
-              const SizedBox(height: 6),
-              const Text(
-                'Your audio ecosystem is synchronized\nand secured across all active devices.',
-                style: TextStyle(color: Colors.white38, fontSize: 13, height: 1.5),
+              // ── Page heading ─────────────────────────────────────────────
+              Text('Dashboard',
+                  style: TextStyle(
+                      fontSize: 24, fontWeight: FontWeight.bold, color: _textDark)),
+              const SizedBox(height: 4),
+              Text(
+                'Synchronized and secured across all active devices.',
+                style: TextStyle(color: _textSub, fontSize: 12, height: 1.5),
               ),
-              const SizedBox(height: 22),
+              const SizedBox(height: 18),
 
-              _buildSyncCard(),
-              const SizedBox(height: 16),
-
-              _buildStorageCard(),
-              const SizedBox(height: 22),
-
-              _sectionLabel('Connected Devices'),
+              // ── ROW 1: Sync  |  Storage ──────────────────────────────────
+              IntrinsicHeight(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(child: _buildSyncCard()),
+                    const SizedBox(width: 12),
+                    Expanded(child: _buildStorageCard()),
+                  ],
+                ),
+              ),
               const SizedBox(height: 12),
 
+              // ── ROW 2: Stats  |  Stats ───────────────────────────────────
+              if (_translationCount > 0 || _correctionCount > 0)
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildStatCard(
+                        icon: Icons.translate_rounded,
+                        value: '$_translationCount',
+                        label: 'Translations',
+                        color: _accent,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _buildStatCard(
+                        icon: Icons.tune_rounded,
+                        value: '$_correctionCount',
+                        label: 'Corrections',
+                        color: const Color(0xFF0096C7),
+                      ),
+                    ),
+                  ],
+                ),
+
+              if (_translationCount > 0 || _correctionCount > 0)
+                const SizedBox(height: 12),
+
+              // ── Storage category breakdown (full-width) ──────────────────
+              _buildStorageCategoriesCard(),
+              const SizedBox(height: 20),
+
+              // ── Connected Devices heading ────────────────────────────────
+              _sectionLabel('Connected Devices'),
+              const SizedBox(height: 10),
+
+              // ── ROW 3+: Device cards — two per row ───────────────────────
               if (uid == null)
-                const Text('Not signed in', style: TextStyle(color: Colors.white38))
+                Text('Not signed in', style: TextStyle(color: _textSub))
               else
                 StreamBuilder<QuerySnapshot>(
                   stream: _db
@@ -235,10 +282,11 @@ class _CloudState extends State<Cloud> {
                       .snapshots(),
                   builder: (context, snapshot) {
                     if (snapshot.connectionState == ConnectionState.waiting) {
-                      return const Center(
+                      return Center(
                         child: Padding(
-                          padding: EdgeInsets.all(20),
-                          child: CircularProgressIndicator(color: _teal, strokeWidth: 2),
+                          padding: const EdgeInsets.all(20),
+                          child: CircularProgressIndicator(
+                              color: _accent, strokeWidth: 2),
                         ),
                       );
                     }
@@ -246,18 +294,18 @@ class _CloudState extends State<Cloud> {
                     final docs = snapshot.data?.docs ?? [];
                     if (docs.isEmpty) {
                       return Container(
-                        padding: const EdgeInsets.all(16),
+                        padding: const EdgeInsets.all(14),
                         decoration: BoxDecoration(
                           color: _surface,
                           borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: Colors.white10),
+                          border: Border.all(color: _accent.withOpacity(0.15)),
                         ),
-                        child: const Row(
+                        child: Row(
                           children: [
-                            Icon(Icons.devices_rounded, color: Colors.white24, size: 18),
-                            SizedBox(width: 10),
-                            Text('No devices registered yet. Tap Sync Now.',
-                                style: TextStyle(color: Colors.white38, fontSize: 13)),
+                            Icon(Icons.devices_rounded, color: _textSub, size: 16),
+                            const SizedBox(width: 10),
+                            Text('No devices yet. Tap Sync Now.',
+                                style: TextStyle(color: _textSub, fontSize: 12)),
                           ],
                         ),
                       );
@@ -267,39 +315,67 @@ class _CloudState extends State<Cloud> {
                         .where((d) => (d['isActive'] as bool?) == true)
                         .length;
 
+                    // Build rows of 2 device cards
+                    final deviceWidgets = docs.map((doc) {
+                      final data     = doc.data() as Map<String, dynamic>;
+                      final name     = data['name']     as String? ?? 'Unknown Device';
+                      final platform = data['platform'] as String? ?? '';
+                      final isActive = data['isActive'] as bool?   ?? false;
+                      final ts       = data['lastSeen'] as Timestamp?;
+                      final subtitle = isActive
+                          ? 'This device'
+                          : ts != null
+                              ? 'Last seen ${_formatTime(ts.toDate())}'
+                              : 'Unknown';
+                      return _deviceCard(
+                          _deviceIcon(platform), name, subtitle, isActive);
+                    }).toList();
+
+                    final rows = <Widget>[];
+                    for (int i = 0; i < deviceWidgets.length; i += 2) {
+                      rows.add(
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(child: deviceWidgets[i]),
+                            const SizedBox(width: 12),
+                            if (i + 1 < deviceWidgets.length)
+                              Expanded(child: deviceWidgets[i + 1])
+                            else
+                              const Expanded(child: SizedBox()),
+                          ],
+                        ),
+                      );
+                      rows.add(const SizedBox(height: 10));
+                    }
+
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 4),
                           decoration: BoxDecoration(
-                            color: _teal.withOpacity(0.1),
+                            color: _accent.withOpacity(0.1),
                             borderRadius: BorderRadius.circular(20),
-                            border: Border.all(color: _teal.withOpacity(0.2)),
+                            border: Border.all(color: _accent.withOpacity(0.25)),
                           ),
                           child: Text(
                             '$activeCount Active Session${activeCount == 1 ? '' : 's'}',
-                            style: const TextStyle(color: _teal, fontSize: 11, fontWeight: FontWeight.w600),
+                            style: TextStyle(
+                                color: _label,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600),
                           ),
                         ),
                         const SizedBox(height: 10),
-                        ...docs.map((doc) {
-                          final data     = doc.data() as Map<String, dynamic>;
-                          final name     = data['name']     as String? ?? 'Unknown Device';
-                          final platform = data['platform'] as String? ?? '';
-                          final isActive = data['isActive'] as bool?   ?? false;
-                          final ts       = data['lastSeen'] as Timestamp?;
-                          final subtitle = isActive
-                              ? 'This device'
-                              : ts != null ? 'Last seen ${_formatTime(ts.toDate())}' : 'Unknown';
-                          return _deviceCard(_deviceIcon(platform), name, subtitle, isActive);
-                        }),
+                        ...rows,
                       ],
                     );
                   },
                 ),
 
-              const SizedBox(height: 40),
+              const SizedBox(height: 36),
             ],
           ),
         ),
@@ -318,132 +394,147 @@ class _CloudState extends State<Cloud> {
             decoration: BoxDecoration(
               color: _surface,
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: Colors.white12),
+              border: Border.all(color: _accent.withOpacity(0.2)),
             ),
-            child: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 16),
+            child: Icon(Icons.arrow_back_ios_new_rounded,
+                color: _textDark, size: 16),
           ),
         ),
         const SizedBox(width: 12),
-        // ✅ Profile icon removed — title fills the remaining space
-        const Column(
+        Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('Cloud Sync',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white)),
+                style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: _textDark)),
             Text('Data & Device Management',
-                style: TextStyle(fontSize: 11, color: Colors.white38)),
+                style: TextStyle(fontSize: 11, color: _textSub)),
           ],
         ),
       ],
     );
   }
 
-  // ── Sync card ─────────────────────────────────────────────────────────────
+  // ── Sync card (left column) ───────────────────────────────────────────────
   Widget _buildSyncCard() {
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: _syncSuccess
-              ? [const Color(0xFF0A5E4A), const Color(0xFF0B6E58)]
-              : [const Color(0xFF0A3040), const Color(0xFF0C3A4A)],
+              ? [const Color(0xFFB8EAD8), const Color(0xFFA2DFC8)]
+              : [const Color(0xFFBEDDF5), const Color(0xFF9DCFEE)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(20),
         border: Border.all(
-          color: _syncSuccess ? _teal.withOpacity(0.5) : Colors.white10,
+          color: _syncSuccess
+              ? Colors.green.withOpacity(0.4)
+              : _accent.withOpacity(0.3),
           width: 1.2,
         ),
         boxShadow: [
           BoxShadow(
-            color: (_syncSuccess ? _teal : Colors.transparent).withOpacity(0.12),
-            blurRadius: 20, offset: const Offset(0, 6),
+            color: (_syncSuccess ? Colors.green : _accent).withOpacity(0.10),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Status pill
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
-              color: Colors.black26,
+              color: Colors.white.withOpacity(0.45),
               borderRadius: BorderRadius.circular(20),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
-                  width: 6, height: 6,
+                  width: 6,
+                  height: 6,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: _syncSuccess ? Colors.greenAccent : _teal,
+                    color: _syncSuccess ? Colors.green : _accent,
                   ),
                 ),
-                const SizedBox(width: 6),
+                const SizedBox(width: 5),
                 Text(
-                  _syncSuccess ? 'Cloud Sync: Up to date' : 'Cloud Sync: Ready',
+                  _syncSuccess ? 'Up to date' : 'Ready',
                   style: TextStyle(
-                    color: _syncSuccess ? Colors.greenAccent : _teal,
-                    fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 0.8,
+                    color: _syncSuccess
+                        ? Colors.green.shade700
+                        : _accentDim,
+                    fontSize: 9,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 0.6,
                   ),
                 ),
               ],
             ),
           ),
+          const SizedBox(height: 10),
+
+          // Headline
+          Text(
+            _syncSuccess ? 'All Synced!' : "Ready.",
+            style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w900,
+                color: _textDark),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            'Last: $_lastSynced',
+            style: TextStyle(color: _textSub, fontSize: 11),
+          ),
+          const Spacer(),
           const SizedBox(height: 14),
-          Text(
-            _syncSuccess ? 'All Synced!' : "Everything's Ready.",
-            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: Colors.white),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Last synced: $_lastSynced',
-            style: const TextStyle(color: Colors.white54, fontSize: 13),
-          ),
 
-          if (_translationCount > 0 || _correctionCount > 0) ...[
-            const SizedBox(height: 14),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: Colors.black26,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                  _statPill(Icons.translate_rounded, '$_translationCount', 'Translations'),
-                  _vertDivider(),
-                  _statPill(Icons.tune_rounded, '$_correctionCount', 'Corrections'),
-                ],
-              ),
-            ),
-          ],
-
-          const SizedBox(height: 18),
+          // Sync button
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
               style: ElevatedButton.styleFrom(
-                backgroundColor: _syncSuccess ? Colors.greenAccent.withOpacity(0.85) : _tealDeep,
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                backgroundColor:
+                    _syncSuccess ? Colors.green.shade400 : _accent,
+                padding: const EdgeInsets.symmetric(vertical: 11),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
                 elevation: 0,
               ),
               icon: _isSyncing
                   ? const SizedBox(
-                      width: 18, height: 18,
-                      child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                          color: Colors.white, strokeWidth: 2),
                     )
                   : Icon(
-                      _syncSuccess ? Icons.check_rounded : Icons.sync_rounded,
-                      color: Colors.white, size: 18,
+                      _syncSuccess
+                          ? Icons.check_rounded
+                          : Icons.sync_rounded,
+                      color: Colors.white,
+                      size: 15,
                     ),
               label: Text(
-                _isSyncing ? 'Syncing...' : _syncSuccess ? 'Synced!' : 'Sync Now',
-                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+                _isSyncing
+                    ? 'Syncing...'
+                    : _syncSuccess
+                        ? 'Synced!'
+                        : 'Sync Now',
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13),
               ),
               onPressed: _isSyncing ? null : _syncNow,
             ),
@@ -453,41 +544,313 @@ class _CloudState extends State<Cloud> {
     );
   }
 
-  Widget _statPill(IconData icon, String value, String label) {
-    return Column(
+  // ── Storage card (right column) ───────────────────────────────────────────
+  Widget _buildStorageCard() {
+    final pct = (_storageUsed / _storageLimit).clamp(0.0, 1.0);
+    final barColor = pct > 0.8 ? Colors.orangeAccent : _accent;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: _surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: _accent.withOpacity(0.15)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(7),
+                decoration: BoxDecoration(
+                  color: _accent.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(9),
+                ),
+                child: Icon(Icons.cloud_rounded, color: _accent, size: 15),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text('Storage',
+                    style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: _textDark,
+                        fontSize: 13)),
+              ),
+              if (pct > 0.8)
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: Colors.orangeAccent.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                        color: Colors.orangeAccent.withOpacity(0.4)),
+                  ),
+                  child: const Text('LOW',
+                      style: TextStyle(
+                          color: Colors.orangeAccent,
+                          fontSize: 8,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 0.8)),
+                ),
+            ],
+          ),
+          const SizedBox(height: 14),
+
+          // Progress bar
+          ClipRRect(
+            borderRadius: BorderRadius.circular(5),
+            child: LinearProgressIndicator(
+              value: pct,
+              backgroundColor: _accent.withOpacity(0.1),
+              valueColor: AlwaysStoppedAnimation(barColor),
+              minHeight: 7,
+            ),
+          ),
+          const SizedBox(height: 8),
+
+          // Used label
+          Text(
+            _storageLabelGB,
+            style: TextStyle(color: _textSub, fontSize: 11),
+          ),
+          const Spacer(),
+          const SizedBox(height: 12),
+
+          // Upgrade button
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton(
+              style: OutlinedButton.styleFrom(
+                side: BorderSide(color: _accent.withOpacity(0.4)),
+                padding: const EdgeInsets.symmetric(vertical: 11),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+              ),
+              onPressed: () {},
+              child: Text('Upgrade Plan',
+                  style: TextStyle(
+                      color: _label,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Stat mini-card ────────────────────────────────────────────────────────
+  Widget _buildStatCard({
+    required IconData icon,
+    required String value,
+    required String label,
+    required Color color,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: color.withOpacity(0.2)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, color: color, size: 16),
+          ),
+          const SizedBox(width: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(value,
+                  style: TextStyle(
+                      color: _textDark,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18)),
+              Text(label,
+                  style: TextStyle(color: _textSub, fontSize: 11)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Storage categories (full-width) ───────────────────────────────────────
+  Widget _buildStorageCategoriesCard() {
+    final categories = <_StorageCategory>[
+      if (_translationsMB > 0)
+        _StorageCategory('Translations', _translationsMB,
+            const Color(0xFF0077B6), Icons.translate_rounded),
+      if (_correctionsMB > 0)
+        _StorageCategory('Corrections', _correctionsMB,
+            const Color(0xFF0096C7), Icons.tune_rounded),
+      if (_otherMB > 0)
+        _StorageCategory(
+            'Other', _otherMB, const Color(0xFF48CAE4), Icons.folder_rounded),
+    ];
+
+    if (categories.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: _surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: _accent.withOpacity(0.12)),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.info_outline_rounded, color: _textSub, size: 14),
+            const SizedBox(width: 8),
+            Text('Tap Sync Now to calculate storage',
+                style: TextStyle(color: _textSub, fontSize: 12)),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: _surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: _accent.withOpacity(0.15)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Section header
+          Row(
+            children: [
+              Icon(Icons.pie_chart_rounded, color: _accent, size: 15),
+              const SizedBox(width: 8),
+              Text('Storage Breakdown',
+                  style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: _textDark,
+                      fontSize: 13)),
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          // Segmented bar
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: SizedBox(
+              height: 8,
+              child: Row(
+                children: categories.map((cat) {
+                  final segPct =
+                      (cat.sizeMB / _storageUsed).clamp(0.0, 1.0);
+                  return Expanded(
+                    flex: (segPct * 1000).round(),
+                    child: Container(color: cat.color),
+                  );
+                }).toList(),
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+
+          // Two-column category rows
+          ...List.generate(
+            (categories.length / 2).ceil(),
+            (rowIdx) {
+              final a = categories[rowIdx * 2];
+              final b = rowIdx * 2 + 1 < categories.length
+                  ? categories[rowIdx * 2 + 1]
+                  : null;
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Row(
+                  children: [
+                    Expanded(child: _storageCategoryRow(a)),
+                    if (b != null) ...[
+                      const SizedBox(width: 12),
+                      Expanded(child: _storageCategoryRow(b)),
+                    ] else
+                      const Expanded(child: SizedBox()),
+                  ],
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _storageCategoryRow(_StorageCategory cat) {
+    final pct =
+        _storageUsed > 0 ? (cat.sizeMB / _storageUsed).clamp(0.0, 1.0) : 0.0;
+    return Row(
       children: [
-        Icon(icon, color: _teal, size: 14),
-        const SizedBox(height: 4),
-        Text(value,
-            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
-        Text(label,
-            style: const TextStyle(color: Colors.white38, fontSize: 10)),
+        Container(
+          padding: const EdgeInsets.all(6),
+          decoration: BoxDecoration(
+            color: cat.color.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(cat.icon, color: cat.color, size: 12),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(cat.name,
+                      style: TextStyle(
+                          color: _textDark,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500)),
+                  Text(_fmtMB(cat.sizeMB),
+                      style: TextStyle(
+                          color: cat.color,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600)),
+                ],
+              ),
+              const SizedBox(height: 3),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(3),
+                child: LinearProgressIndicator(
+                  value: pct,
+                  backgroundColor: _accent.withOpacity(0.1),
+                  valueColor:
+                      AlwaysStoppedAnimation(cat.color.withOpacity(0.7)),
+                  minHeight: 3,
+                ),
+              ),
+            ],
+          ),
+        ),
       ],
     );
   }
 
-  Widget _vertDivider() => Container(width: 1, height: 36, color: Colors.white12);
-
-  // ── Storage card ──────────────────────────────────────────────────────────
-  Widget _buildStorageCard() {
-    final pct = (_storageUsed / _storageLimit).clamp(0.0, 1.0);
-    final barColor = pct > 0.8 ? Colors.orangeAccent : _teal;
-
-    final categories = <_StorageCategory>[
-      if (_translationsMB > 0)
-        _StorageCategory('Translations', _translationsMB, const Color(0xFF0ECFB0), Icons.translate_rounded),
-      if (_correctionsMB > 0)
-        _StorageCategory('Corrections', _correctionsMB, const Color(0xFF3A8DFF), Icons.tune_rounded),
-      if (_otherMB > 0)
-        _StorageCategory('Other', _otherMB, const Color(0xFFFFAA44), Icons.folder_rounded),
-    ];
-
+  // ── Device card ───────────────────────────────────────────────────────────
+  Widget _deviceCard(
+      IconData icon, String title, String subtitle, bool isActive) {
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: _surface,
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: Colors.white10),
+        color: _card,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isActive ? _accent.withOpacity(0.4) : _accent.withOpacity(0.12),
+          width: isActive ? 1.2 : 1.0,
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -495,207 +858,48 @@ class _CloudState extends State<Cloud> {
           Row(
             children: [
               Container(
-                padding: const EdgeInsets.all(9),
+                padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: _teal.withOpacity(0.1),
+                  color: isActive
+                      ? _accent.withOpacity(0.12)
+                      : _accent.withOpacity(0.05),
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: const Icon(Icons.cloud_rounded, color: _teal, size: 18),
+                child:
+                    Icon(icon, color: isActive ? _accent : _textSub, size: 18),
               ),
-              const SizedBox(width: 12),
-              const Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Cloud Storage',
-                        style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14)),
-                    Text('Secure encrypted backup',
-                        style: TextStyle(color: Colors.white38, fontSize: 11)),
-                  ],
-                ),
-              ),
-              if (pct > 0.8)
+              const Spacer(),
+              if (isActive)
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
                   decoration: BoxDecoration(
-                    color: Colors.orangeAccent.withOpacity(0.1),
+                    color: _accent.withOpacity(0.12),
                     borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: Colors.orangeAccent.withOpacity(0.3)),
+                    border: Border.all(color: _accent.withOpacity(0.35)),
                   ),
-                  child: const Text('LOW SPACE',
+                  child: Text('Active',
                       style: TextStyle(
-                          color: Colors.orangeAccent, fontSize: 9,
-                          fontWeight: FontWeight.bold, letterSpacing: 0.8)),
+                          color: _label,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.4)),
                 ),
             ],
           ),
-          const SizedBox(height: 16),
-
-          if (categories.isNotEmpty && _storageUsed > 0)
-            ClipRRect(
-              borderRadius: BorderRadius.circular(6),
-              child: SizedBox(
-                height: 8,
-                child: Row(
-                  children: categories.map((cat) {
-                    final segPct = (cat.sizeMB / _storageUsed).clamp(0.0, 1.0);
-                    return Expanded(
-                      flex: (segPct * 1000).round(),
-                      child: Container(color: cat.color),
-                    );
-                  }).toList(),
-                ),
-              ),
-            )
-          else
-            ClipRRect(
-              borderRadius: BorderRadius.circular(6),
-              child: LinearProgressIndicator(
-                value: pct,
-                backgroundColor: Colors.white10,
-                valueColor: AlwaysStoppedAnimation(barColor),
-                minHeight: 8,
-              ),
-            ),
-
           const SizedBox(height: 10),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(_storageLabelGB,
-                  style: const TextStyle(color: Colors.white54, fontSize: 12)),
-              GestureDetector(
-                onTap: () {},
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: _teal.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: _teal.withOpacity(0.25)),
-                  ),
-                  child: const Text('Upgrade →',
-                      style: TextStyle(color: _teal, fontSize: 11, fontWeight: FontWeight.w600)),
-                ),
-              ),
-            ],
-          ),
-
-          if (categories.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            const Divider(color: Colors.white10, height: 1),
-            const SizedBox(height: 14),
-            ...categories.map((cat) => _storageCategoryRow(cat)),
-          ] else ...[
-            const SizedBox(height: 12),
-            const Row(
-              children: [
-                Icon(Icons.info_outline_rounded, color: Colors.white24, size: 14),
-                SizedBox(width: 8),
-                Text('Tap Sync Now to calculate storage',
-                    style: TextStyle(color: Colors.white38, fontSize: 12)),
-              ],
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _storageCategoryRow(_StorageCategory cat) {
-    final pct = _storageUsed > 0 ? (cat.sizeMB / _storageUsed).clamp(0.0, 1.0) : 0.0;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(6),
-            decoration: BoxDecoration(
-              color: cat.color.withOpacity(0.12),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Icon(cat.icon, color: cat.color, size: 13),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(cat.name,
-                        style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w500)),
-                    Text(_fmtMB(cat.sizeMB),
-                        style: TextStyle(color: cat.color, fontSize: 11, fontWeight: FontWeight.w600)),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: LinearProgressIndicator(
-                    value: pct,
-                    backgroundColor: Colors.white10,
-                    valueColor: AlwaysStoppedAnimation(cat.color.withOpacity(0.7)),
-                    minHeight: 4,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ── Device card ───────────────────────────────────────────────────────────
-  Widget _deviceCard(IconData icon, String title, String subtitle, bool isActive) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: _card,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: isActive ? _teal.withOpacity(0.35) : Colors.white10,
-          width: isActive ? 1.2 : 1.0,
-        ),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: isActive ? _teal.withOpacity(0.1) : Colors.white.withOpacity(0.05),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(icon, color: isActive ? _teal : Colors.white38, size: 20),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title,
-                    style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14)),
-                const SizedBox(height: 2),
-                Text(subtitle,
-                    style: const TextStyle(color: Colors.white38, fontSize: 12)),
-              ],
-            ),
-          ),
-          if (isActive)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: _teal.withOpacity(0.12),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: _teal.withOpacity(0.3)),
-              ),
-              child: const Text('Active',
-                  style: TextStyle(
-                      color: _teal, fontSize: 11,
-                      fontWeight: FontWeight.w600, letterSpacing: 0.4)),
-            ),
+          Text(title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: _textDark,
+                  fontSize: 12)),
+          const SizedBox(height: 2),
+          Text(subtitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: _textSub, fontSize: 10)),
         ],
       ),
     );
@@ -704,19 +908,24 @@ class _CloudState extends State<Cloud> {
   // ── Helpers ───────────────────────────────────────────────────────────────
   IconData _deviceIcon(String platform) {
     final p = platform.toLowerCase();
-    if (p.contains('ipad') || p.contains('tablet')) return Icons.tablet_rounded;
-    if (p.contains('web') || p.contains('chrome') || p.contains('browser')) return Icons.web_rounded;
+    if (p.contains('ipad') || p.contains('tablet'))
+      return Icons.tablet_rounded;
+    if (p.contains('web') || p.contains('chrome') || p.contains('browser'))
+      return Icons.web_rounded;
     return Icons.phone_android_rounded;
   }
 
   Widget _sectionLabel(String text) => Row(
-    children: [
-      const Icon(Icons.devices_rounded, color: Color(0xFF0ECFB0), size: 16),
-      const SizedBox(width: 8),
-      Text(text,
-          style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 15)),
-    ],
-  );
+        children: [
+          Icon(Icons.devices_rounded, color: _label, size: 15),
+          const SizedBox(width: 7),
+          Text(text,
+              style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: _textDark,
+                  fontSize: 14)),
+        ],
+      );
 }
 
 // ── Data class ────────────────────────────────────────────────────────────────
