@@ -169,7 +169,6 @@ class PhonemeAnalyzer {
     final rawWords  = rawInput.toLowerCase().split(RegExp(r'\s+'));
     final corrWords = correctedOutput.toLowerCase().split(RegExp(r'\s+'));
 
-    // ── Build word pairs ───────────────────────────────────────────────────
     final wordPairs = <WordPair>[];
     final maxLen = rawWords.length > corrWords.length ? rawWords.length : corrWords.length;
     for (int i = 0; i < maxLen; i++) {
@@ -184,7 +183,6 @@ class PhonemeAnalyzer {
       ));
     }
 
-    // ── Check for known mishearings ────────────────────────────────────────
     for (int i = 0; i < rawWords.length; i++) {
       final word = rawWords[i].replaceAll(RegExp(r'[^a-z]'), '');
       if (word.isEmpty) continue;
@@ -206,7 +204,6 @@ class PhonemeAnalyzer {
       });
     }
 
-    // ── Word-level comparison between raw and corrected ────────────────────
     final minLen = rawWords.length < corrWords.length ? rawWords.length : corrWords.length;
     for (int i = 0; i < minLen; i++) {
       final raw = rawWords[i].replaceAll(RegExp(r'[^a-z]'), '');
@@ -232,11 +229,9 @@ class PhonemeAnalyzer {
       }
     }
 
-    // Remove duplicates
     final seen         = <String>{};
     final uniqueIssues = issues.where((i) => seen.add(i.original)).toList();
 
-    // Clarity score
     final baseScore    = (confidence * 100).round().clamp(30, 100);
     final penaltyHigh  = uniqueIssues.where((i) => i.severity == 'high').length * 8;
     final penaltyMed   = uniqueIssues.where((i) => i.severity == 'medium').length * 4;
@@ -413,13 +408,18 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
 
   late AnimationController _pulseController;
 
-  static const _bg       = Color(0xFF060F1A);
-  static const _surface  = Color(0xFF0D1F2D);
-  static const _card     = Color(0xFF112233);
-  static const _teal     = Color(0xFF0ECFB0);
-  static const _tealDark = Color(0xFF0A8A78);
-  static const _tealDeep = Color(0xFF0B5D5E);
-  static const _accent   = Color(0xFF1AE5C8);
+  // ── Sky Blue / Navy Theme ─────────────────────────────────────────────────
+  static const _bg           = Color(0xFFEAF4FB);
+  static const _surface      = Color(0xFFDAEEFA);
+  static const _cardColor    = Color(0xFFC8E3F5);
+  static const _accent       = Color(0xFF0077B6);
+  static const _accentDark   = Color(0xFF005F8E);
+  static const _accentDeep   = Color(0xFF004A70);
+  static const _accentTint   = Color(0x260077B6);
+  static const _accentBorder = Color(0x400077B6);
+  static const _textDark     = Color(0xFF0D2B4E);
+  static const _textSub      = Color(0xFF5A7A96);
+  static const _textLight    = Color(0xFF8AAEC8);
 
   @override
   void initState() {
@@ -445,7 +445,7 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
       final doc  = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
       final data = doc.data();
       setState(() {
-        _userName         = data?['name'] ?? user.displayName ?? 'Aljhen';
+        _userName         = data?['name'] ?? user.displayName ?? 'User';
         _trainingProgress = (data?['trainingProgress'] ?? 0.0).toDouble().clamp(0.0, 1.0);
         _sessionCount     = (data?['sessionCount'] ?? 0) as int;
         _trainedHours     = (data?['trainedHours'] ?? 0.0).toDouble();
@@ -454,7 +454,7 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
       await _nlp.init();
     } catch (_) {
       setState(() {
-        _userName      = FirebaseAuth.instance.currentUser?.displayName ?? 'Aljhen';
+        _userName      = FirebaseAuth.instance.currentUser?.displayName ?? 'User';
         _isLoadingUser = false;
       });
     }
@@ -563,7 +563,7 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: _card,
+      backgroundColor: _surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
@@ -578,11 +578,11 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
           children: [
             Center(child: Container(
               width: 36, height: 4,
-              decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+              decoration: BoxDecoration(color: _accentBorder, borderRadius: BorderRadius.circular(2)),
             )),
             const SizedBox(height: 20),
             Row(children: [
-              const Icon(Icons.hearing_rounded, color: _teal, size: 20),
+              const Icon(Icons.hearing_rounded, color: _accent, size: 20),
               const SizedBox(width: 8),
               Expanded(
                 child: Column(
@@ -590,12 +590,12 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
                   children: [
                     Text(
                       'AI heard: "$heardWord"',
-                      style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                      style: const TextStyle(color: _textDark, fontSize: 16, fontWeight: FontWeight.bold),
                     ),
                     if (correctedHint != null && correctedHint != heardWord)
                       Text(
                         'NLP corrected to: "$correctedHint"',
-                        style: const TextStyle(color: _teal, fontSize: 12),
+                        style: const TextStyle(color: _accent, fontSize: 12),
                       ),
                   ],
                 ),
@@ -603,29 +603,29 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
             ]),
             const SizedBox(height: 6),
             const Text('What did you actually mean to say?',
-                style: TextStyle(color: Colors.white54, fontSize: 13)),
+                style: TextStyle(color: _textSub, fontSize: 13)),
             const SizedBox(height: 16),
 
             TextField(
               controller: controller,
               autofocus: true,
-              style: const TextStyle(color: Colors.white),
+              style: const TextStyle(color: _textDark),
               decoration: InputDecoration(
-                filled: true, fillColor: _surface,
+                filled: true, fillColor: _bg,
                 hintText: 'Type the correct word...',
-                hintStyle: const TextStyle(color: Colors.white38),
-                prefixIcon: const Icon(Icons.record_voice_over_rounded, color: _teal, size: 18),
+                hintStyle: const TextStyle(color: _textLight),
+                prefixIcon: const Icon(Icons.record_voice_over_rounded, color: _accent, size: 18),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(color: Colors.white12),
+                  borderSide: const BorderSide(color: _accentBorder),
                 ),
                 enabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(color: Colors.white12),
+                  borderSide: const BorderSide(color: _accentBorder),
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(color: _teal, width: 1.5),
+                  borderSide: const BorderSide(color: _accent, width: 1.5),
                 ),
               ),
             ),
@@ -633,7 +633,7 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
 
             ElevatedButton.icon(
               style: ElevatedButton.styleFrom(
-                backgroundColor: _tealDeep,
+                backgroundColor: _accentDeep,
                 minimumSize: const Size(double.infinity, 52),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                 elevation: 0,
@@ -683,65 +683,146 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
     if (_isLoadingUser) {
       return const Scaffold(
         backgroundColor: _bg,
-        body: Center(child: CircularProgressIndicator(color: _teal)),
+        body: Center(child: CircularProgressIndicator(color: _accent)),
       );
     }
+
     return Scaffold(
       backgroundColor: _bg,
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildTopBar(),
-              const SizedBox(height: 20),
-              _buildStatusCard(),
-              const SizedBox(height: 16),
-              _buildStatsRow(),
-              const SizedBox(height: 20),
-              _buildVocalProfileCard(),
-              const SizedBox(height: 20),
-              _buildAnalysisPanel(),
-            ],
-          ),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final isWide = constraints.maxWidth >= 700;
+            return isWide ? _buildWideLayout() : _buildNarrowLayout();
+          },
         ),
       ),
     );
   }
 
-  // ── UPDATED: settings icon removed ──────────────────────────────────────
-  Widget _buildTopBar() {
-    return Row(
+  // ─────────────────────────────────────────────────────────────────────────
+  // WIDE LAYOUT: Left = status + record | Right = trained voice + analysis
+  // ─────────────────────────────────────────────────────────────────────────
+
+  Widget _buildWideLayout() {
+    return Column(
       children: [
-        GestureDetector(
-          onTap: () => Navigator.pop(context),
-          child: Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: _surface,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: Colors.white12),
-            ),
-            child: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 16),
-          ),
-        ),
-        const SizedBox(width: 12),
-        const Expanded(
-          child: Column(
+        _buildTopBar(),
+        Expanded(
+          child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Trained Voice',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white)),
-              Text('Voice Model Training',
-                  style: TextStyle(fontSize: 11, color: Colors.white38)),
+              // ── LEFT COLUMN ───────────────────────────────────────────────
+              Expanded(
+                flex: 5,
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(18, 16, 10, 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildStatusCard(),
+                      const SizedBox(height: 16),
+                      _buildStatsRow(),
+                      const SizedBox(height: 20),
+                      _buildRecordPanel(),
+                    ],
+                  ),
+                ),
+              ),
+
+              // ── DIVIDER ───────────────────────────────────────────────────
+              Container(width: 1, color: _accentBorder),
+
+              // ── RIGHT COLUMN ──────────────────────────────────────────────
+              Expanded(
+                flex: 5,
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(10, 16, 18, 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildVocalProfileCard(),
+                      const SizedBox(height: 20),
+                      _buildRightAnalysisContent(),
+                    ],
+                  ),
+                ),
+              ),
             ],
           ),
         ),
-        // Settings icon removed
       ],
     );
   }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // NARROW LAYOUT: stacked (mobile)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  Widget _buildNarrowLayout() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildTopBar(),
+          const SizedBox(height: 20),
+          _buildStatusCard(),
+          const SizedBox(height: 16),
+          _buildStatsRow(),
+          const SizedBox(height: 20),
+          _buildVocalProfileCard(),
+          const SizedBox(height: 20),
+          _buildRecordPanel(),
+          const SizedBox(height: 20),
+          _buildRightAnalysisContent(),
+        ],
+      ),
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // TOP BAR
+  // ─────────────────────────────────────────────────────────────────────────
+
+  Widget _buildTopBar() {
+    return Container(
+      color: _bg,
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+      child: Row(
+        children: [
+          GestureDetector(
+            onTap: () => Navigator.pop(context),
+            child: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: _surface,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: _accentBorder),
+              ),
+              child: const Icon(Icons.arrow_back_ios_new_rounded, color: _accent, size: 16),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Trained Voice',
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: _textDark)),
+                Text('Voice Model Training',
+                    style: TextStyle(fontSize: 11, color: _textSub)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // STATUS CARD (left)
+  // ─────────────────────────────────────────────────────────────────────────
 
   Widget _buildStatusCard() {
     final statusLabel = _isListening ? 'LISTENING...' : _isProcessing ? 'PROCESSING...' : 'ACTIVE';
@@ -750,12 +831,12 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
-          colors: [Color(0xFF0A6E6F), Color(0xFF0C8A7A)],
+          colors: [Color(0xFF005F8E), Color(0xFF0077B6)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(22),
-        boxShadow: [BoxShadow(color: _teal.withOpacity(0.15), blurRadius: 20, offset: const Offset(0, 6))],
+        boxShadow: [BoxShadow(color: _accent.withOpacity(0.2), blurRadius: 20, offset: const Offset(0, 6))],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -765,7 +846,7 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
             children: [
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(color: Colors.black26, borderRadius: BorderRadius.circular(20)),
+                decoration: BoxDecoration(color: Colors.black.withOpacity(0.15), borderRadius: BorderRadius.circular(20)),
                 child: Row(children: [
                   Container(
                     width: 6, height: 6,
@@ -795,7 +876,7 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
             child: LinearProgressIndicator(
               value: _trainingProgress,
               minHeight: 8,
-              backgroundColor: Colors.black26,
+              backgroundColor: Colors.black.withOpacity(0.2),
               valueColor: const AlwaysStoppedAnimation(Colors.white),
             ),
           ),
@@ -813,6 +894,10 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
       ),
     );
   }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // STATS ROW (left)
+  // ─────────────────────────────────────────────────────────────────────────
 
   Widget _buildStatsRow() {
     return Row(
@@ -833,118 +918,68 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
         decoration: BoxDecoration(
           color: _surface,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.white10),
+          border: Border.all(color: _accentBorder),
         ),
         child: Column(
           children: [
-            Icon(icon, color: _teal, size: 18),
+            Icon(icon, color: _accent, size: 18),
             const SizedBox(height: 6),
-            Text(value, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: Colors.white)),
+            Text(value, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: _textDark)),
             const SizedBox(height: 2),
-            Text(label, style: const TextStyle(fontSize: 10, color: Colors.white38)),
+            Text(label, style: const TextStyle(fontSize: 10, color: _textSub)),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildVocalProfileCard() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text('Vocal Profile',
-            style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 15)),
-        const SizedBox(height: 10),
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: _card,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: _teal.withOpacity(0.4), width: 1.2),
-            boxShadow: [BoxShadow(color: _teal.withOpacity(0.08), blurRadius: 12)],
-          ),
-          child: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: _teal.withOpacity(0.12),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Icon(Icons.graphic_eq_rounded, color: _teal, size: 22),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text("$_userName's Trained Voice",
-                        style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14)),
-                    const SizedBox(height: 3),
-                    const Text('Optimized for daily conversation',
-                        style: TextStyle(fontSize: 12, color: Colors.white54)),
-                    const SizedBox(height: 6),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: _teal.withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: const Text('ACTIVE',
-                          style: TextStyle(color: _teal, fontSize: 9, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
-                    ),
-                  ],
-                ),
-              ),
-              const Icon(Icons.check_circle_rounded, color: _teal, size: 22),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
+  // ─────────────────────────────────────────────────────────────────────────
+  // RECORD PANEL (left) — waveform + mic + raw/corrected output
+  // ─────────────────────────────────────────────────────────────────────────
 
-  Widget _buildAnalysisPanel() {
-    final clarity = _phonemeResult?.clarityScore ?? 0;
-    final match   = _phonemeResult != null
-        ? '${(_phonemeResult!.similarity * 100).toStringAsFixed(0)}%'
-        : '—';
-
+  Widget _buildRecordPanel() {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: _surface,
         borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: Colors.white10),
+        border: Border.all(color: _accentBorder),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(children: [
-            const Icon(Icons.analytics_rounded, color: _teal, size: 18),
+            const Icon(Icons.mic_rounded, color: _accent, size: 18),
             const SizedBox(width: 8),
-            const Text('Detailed Analysis',
-                style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 15)),
+            const Text('Recording',
+                style: TextStyle(fontWeight: FontWeight.bold, color: _textDark, fontSize: 15)),
           ]),
           const SizedBox(height: 4),
-          const Text('Focusing on high-frequency stability and phoneme precision.',
-              style: TextStyle(color: Colors.white38, fontSize: 12)),
+          Text('Speak clearly into the microphone',
+              style: TextStyle(color: _textSub, fontSize: 12)),
           const SizedBox(height: 16),
 
+          // Metrics row
           Row(
             children: [
               _analyticsChip(
                 icon:  Icons.graphic_eq_rounded,
                 label: 'Clarity',
-                value: clarity > 0 ? '$clarity%' : '—',
-                color: clarity > 0 ? _clarityColor(clarity) : Colors.white38,
+                value: (_phonemeResult?.clarityScore ?? 0) > 0
+                    ? '${_phonemeResult!.clarityScore}%'
+                    : '—',
+                color: (_phonemeResult?.clarityScore ?? 0) > 0
+                    ? _clarityColor(_phonemeResult!.clarityScore)
+                    : _textLight,
               ),
               const SizedBox(width: 10),
               _analyticsChip(
                 icon:  Icons.compare_arrows_rounded,
                 label: 'Match',
-                value: match,
-                color: _teal,
+                value: _phonemeResult != null
+                    ? '${(_phonemeResult!.similarity * 100).toStringAsFixed(0)}%'
+                    : '—',
+                color: _accent,
               ),
             ],
           ),
@@ -957,12 +992,12 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
           const SizedBox(height: 8),
           Center(
             child: Text(
-              _isListening   ? 'Tap to stop'
-                  : _isProcessing  ? 'Processing...'
+              _isListening    ? 'Tap to stop'
+                  : _isProcessing ? 'Processing...'
                   : _speechAvailable ? 'Tap mic to start speaking'
                   : 'Microphone unavailable',
               style: TextStyle(
-                color: _isListening ? Colors.redAccent : Colors.white38,
+                color: _isListening ? Colors.redAccent : _textSub,
                 fontSize: 12, fontWeight: FontWeight.w500,
               ),
             ),
@@ -977,12 +1012,12 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
               width: double.infinity,
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.black26,
+                color: _accentTint,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.white10),
+                border: Border.all(color: _accentBorder),
               ),
               child: Text(_rawOutput,
-                  style: const TextStyle(fontSize: 14, color: Colors.white70, fontStyle: FontStyle.italic)),
+                  style: TextStyle(fontSize: 14, color: _textDark, fontStyle: FontStyle.italic)),
             ),
             const SizedBox(height: 14),
           ],
@@ -991,25 +1026,20 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
             _sectionLabel('AI Corrected Output — tap any word to fix'),
             const SizedBox(height: 8),
             _buildCorrectedWordChips(),
-            const SizedBox(height: 20),
           ],
 
           if (_isProcessing)
             const Center(
               child: Padding(
                 padding: EdgeInsets.symmetric(vertical: 16),
-                child: CircularProgressIndicator(color: _teal, strokeWidth: 2.5),
+                child: CircularProgressIndicator(color: _accent, strokeWidth: 2.5),
               ),
-            )
-          else if (_correctedOutput.isNotEmpty) ...[
-            // ── PHONEME CLARITY WORD CHIPS ─────────────────────────────────
-            _buildPhonemeWordChipsPanel(),
-            const SizedBox(height: 16),
-            // ── FULL PHONEME ANALYSIS / THERAPY ───────────────────────────
-            _buildPhonemeAnalysisPanel(),
+            ),
+
+          if (_correctedOutput.isNotEmpty) ...[
             const SizedBox(height: 8),
             Text('${_nlp.patternCount} patterns learned',
-                style: const TextStyle(color: _teal, fontSize: 11)),
+                style: const TextStyle(color: _accent, fontSize: 11)),
           ],
 
           const SizedBox(height: 20),
@@ -1019,7 +1049,128 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
     );
   }
 
-  // ── Corrected output word chips (tappable to fix) ────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
+  // VOCAL PROFILE CARD (right)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  Widget _buildVocalProfileCard() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Vocal Profile',
+            style: TextStyle(fontWeight: FontWeight.bold, color: _textDark, fontSize: 15)),
+        const SizedBox(height: 10),
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: _surface,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: _accentBorder, width: 1.2),
+            boxShadow: [BoxShadow(color: _accent.withOpacity(0.07), blurRadius: 12)],
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: _accentTint,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(Icons.graphic_eq_rounded, color: _accent, size: 22),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text("$_userName's Trained Voice",
+                        style: const TextStyle(fontWeight: FontWeight.bold, color: _textDark, fontSize: 14)),
+                    const SizedBox(height: 3),
+                    Text('Optimized for daily conversation',
+                        style: TextStyle(fontSize: 12, color: _textSub)),
+                    const SizedBox(height: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: _accentTint,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: const Text('ACTIVE',
+                          style: TextStyle(color: _accent, fontSize: 9, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.check_circle_rounded, color: _accent, size: 22),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // RIGHT COLUMN ANALYSIS CONTENT
+  // ─────────────────────────────────────────────────────────────────────────
+
+  Widget _buildRightAnalysisContent() {
+    if (_correctedOutput.isEmpty && !_isProcessing) {
+      return Container(
+        padding: const EdgeInsets.all(28),
+        decoration: BoxDecoration(
+          color: _surface,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: _accentBorder),
+        ),
+        child: Column(
+          children: [
+            Container(
+              width: 60, height: 60,
+              decoration: BoxDecoration(
+                color: _accentTint, shape: BoxShape.circle,
+                border: Border.all(color: _accentBorder),
+              ),
+              child: const Icon(Icons.analytics_rounded, color: _accent, size: 28),
+            ),
+            const SizedBox(height: 14),
+            const Text('No analysis yet',
+                style: TextStyle(color: _textDark, fontWeight: FontWeight.w600, fontSize: 15)),
+            const SizedBox(height: 6),
+            Text('Record your voice on the left to\nsee phoneme analysis here.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: _textSub, fontSize: 13)),
+          ],
+        ),
+      );
+    }
+
+    if (_isProcessing) {
+      return Container(
+        padding: const EdgeInsets.all(28),
+        decoration: BoxDecoration(
+          color: _surface,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: _accentBorder),
+        ),
+        child: const Center(
+          child: CircularProgressIndicator(color: _accent, strokeWidth: 2.5),
+        ),
+      );
+    }
+
+    return Column(
+      children: [
+        _buildPhonemeWordChipsPanel(),
+        const SizedBox(height: 16),
+        _buildPhonemeAnalysisPanel(),
+      ],
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // CORRECTED WORD CHIPS
+  // ─────────────────────────────────────────────────────────────────────────
+
   Widget _buildCorrectedWordChips() {
     final words = _correctedOutput.split(RegExp(r'\s+'));
     return Wrap(
@@ -1032,25 +1183,29 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
             decoration: BoxDecoration(
-              color: _teal.withOpacity(0.07),
+              color: _accentTint,
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: _teal.withOpacity(0.3)),
+              border: Border.all(color: _accentBorder),
             ),
             child: Text(word,
-                style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w500)),
+                style: const TextStyle(color: _textDark, fontSize: 15, fontWeight: FontWeight.w500)),
           ),
         );
       }).toList(),
     );
   }
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // WAVEFORM
+  // ─────────────────────────────────────────────────────────────────────────
+
   Widget _buildWaveform() {
     return Container(
       height: 56,
       decoration: BoxDecoration(
-        color: _card,
+        color: _cardColor,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white10),
+        border: Border.all(color: _accentBorder),
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12),
@@ -1066,7 +1221,7 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
               width: 2.5,
               height: h,
               decoration: BoxDecoration(
-                color: _isListening ? _teal : Colors.white24,
+                color: _isListening ? _accent : _accentBorder,
                 borderRadius: BorderRadius.circular(2),
               ),
             );
@@ -1075,6 +1230,10 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
       ),
     );
   }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // MIC BUTTON
+  // ─────────────────────────────────────────────────────────────────────────
 
   Widget _buildMicButton() {
     return AnimatedBuilder(
@@ -1109,10 +1268,10 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
                   width: 80, height: 80,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: _isListening ? Colors.redAccent : _isProcessing ? Colors.white24 : _tealDeep,
+                    color: _isListening ? Colors.redAccent : _isProcessing ? _textLight : _accentDeep,
                     boxShadow: [
                       BoxShadow(
-                        color: (_isListening ? Colors.redAccent : _teal).withOpacity(0.4),
+                        color: (_isListening ? Colors.redAccent : _accent).withOpacity(0.35),
                         blurRadius: 20, spreadRadius: 2,
                       ),
                     ],
@@ -1131,7 +1290,7 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // PHONEME WORD CHIPS PANEL (what AI heard, tappable)
+  // PHONEME WORD CHIPS PANEL (right)
   // ─────────────────────────────────────────────────────────────────────────
 
   Widget _buildPhonemeWordChipsPanel() {
@@ -1141,9 +1300,9 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: _card,
+        color: _surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white10),
+        border: Border.all(color: _accentBorder),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1152,10 +1311,10 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Row(children: [
-                const Icon(Icons.spatial_audio_off_rounded, color: _teal, size: 16),
+                const Icon(Icons.spatial_audio_off_rounded, color: _accent, size: 16),
                 const SizedBox(width: 6),
                 const Text('Phoneme Clarity',
-                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                    style: TextStyle(color: _textDark, fontWeight: FontWeight.bold, fontSize: 13)),
               ]),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -1174,13 +1333,13 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
           ),
 
           const SizedBox(height: 6),
-          const Text('Tap any word the AI heard to correct it',
-              style: TextStyle(color: Colors.white38, fontSize: 11)),
+          Text('Tap any word the AI heard to correct it',
+              style: TextStyle(color: _textSub, fontSize: 11)),
 
           const SizedBox(height: 14),
 
           if (r.wordPairs.isEmpty)
-            const Text('No words captured.', style: TextStyle(color: Colors.white38, fontSize: 12))
+            Text('No words captured.', style: TextStyle(color: _textSub, fontSize: 12))
           else
             Wrap(
               spacing: 8,
@@ -1195,11 +1354,11 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
           Row(children: [
             _legendDot(Colors.orangeAccent),
             const SizedBox(width: 4),
-            const Text('AI changed this word', style: TextStyle(color: Colors.white38, fontSize: 10)),
+            Text('AI changed this word', style: TextStyle(color: _textSub, fontSize: 10)),
             const SizedBox(width: 12),
-            _legendDot(Colors.white24),
+            _legendDot(_accentBorder),
             const SizedBox(width: 4),
-            const Text('Heard correctly', style: TextStyle(color: Colors.white38, fontSize: 10)),
+            Text('Heard correctly', style: TextStyle(color: _textSub, fontSize: 10)),
           ]),
         ],
       ),
@@ -1209,11 +1368,11 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
   Widget _heardWordChip(WordPair pair) {
     final borderColor = pair.wasChanged
         ? Colors.orangeAccent.withOpacity(0.6)
-        : Colors.white12;
+        : _accentBorder;
     final bgColor = pair.wasChanged
-        ? Colors.orangeAccent.withOpacity(0.06)
-        : Colors.white.withOpacity(0.04);
-    final textColor = pair.wasChanged ? Colors.orangeAccent : Colors.white70;
+        ? Colors.orangeAccent.withOpacity(0.08)
+        : _accentTint;
+    final textColor = pair.wasChanged ? Colors.orange.shade700 : _textDark;
 
     return GestureDetector(
       onTap: () => _showWordCorrectionSheet(
@@ -1249,11 +1408,11 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Icons.arrow_downward_rounded, color: _teal, size: 9),
+                const Icon(Icons.arrow_downward_rounded, color: _accent, size: 9),
                 const SizedBox(width: 2),
                 Text(
                   pair.corrected,
-                  style: const TextStyle(color: _teal, fontSize: 10, fontWeight: FontWeight.w500),
+                  style: const TextStyle(color: _accent, fontSize: 10, fontWeight: FontWeight.w500),
                 ),
               ],
             ),
@@ -1269,7 +1428,7 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
   );
 
   // ─────────────────────────────────────────────────────────────────────────
-  // PHONEME ANALYSIS / THERAPY PANEL
+  // PHONEME ANALYSIS PANEL (right)
   // ─────────────────────────────────────────────────────────────────────────
 
   Widget _buildPhonemeAnalysisPanel() {
@@ -1283,9 +1442,9 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: _card,
+        color: _surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white10),
+        border: Border.all(color: _accentBorder),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1294,14 +1453,14 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
             Container(
               padding: const EdgeInsets.all(7),
               decoration: BoxDecoration(
-                color: _teal.withOpacity(0.12),
+                color: _accentTint,
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: const Icon(Icons.record_voice_over_rounded, color: _teal, size: 15),
+              child: const Icon(Icons.record_voice_over_rounded, color: _accent, size: 15),
             ),
             const SizedBox(width: 10),
             const Text('Phoneme Analysis',
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+                style: TextStyle(color: _textDark, fontWeight: FontWeight.bold, fontSize: 14)),
           ]),
 
           const SizedBox(height: 12),
@@ -1310,7 +1469,7 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: BoxDecoration(
-              color: _clarityColor(r.clarityScore).withOpacity(0.1),
+              color: _clarityColor(r.clarityScore).withOpacity(0.08),
               borderRadius: BorderRadius.circular(10),
               border: Border.all(color: _clarityColor(r.clarityScore).withOpacity(0.25)),
             ),
@@ -1355,10 +1514,10 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
           if (!hasIssues && !hasCategories) ...[
             const SizedBox(height: 12),
             Row(children: [
-              const Icon(Icons.check_circle_rounded, color: Colors.greenAccent, size: 16),
+              const Icon(Icons.check_circle_rounded, color: Colors.green, size: 16),
               const SizedBox(width: 8),
-              const Text('No phoneme substitutions detected.',
-                  style: TextStyle(color: Colors.white54, fontSize: 13)),
+              Text('No phoneme substitutions detected.',
+                  style: TextStyle(color: _textSub, fontSize: 13)),
             ]),
           ],
         ],
@@ -1367,22 +1526,21 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
   }
 
   Widget _categoryChip(String category, int count) {
-    final icon = _categoryIcon(category);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
-        color: _teal.withOpacity(0.1),
+        color: _accentTint,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: _teal.withOpacity(0.3)),
+        border: Border.all(color: _accentBorder),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, color: _teal, size: 12),
+          Icon(_categoryIcon(category), color: _accent, size: 12),
           const SizedBox(width: 5),
           Text(
             '${_capitalize(category)} ($count)',
-            style: const TextStyle(color: _teal, fontSize: 11, fontWeight: FontWeight.w600),
+            style: const TextStyle(color: _accent, fontSize: 11, fontWeight: FontWeight.w600),
           ),
         ],
       ),
@@ -1394,13 +1552,13 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
         ? Colors.redAccent
         : issue.severity == 'medium'
             ? Colors.orangeAccent
-            : Colors.yellowAccent;
+            : Colors.amber;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: severityColor.withOpacity(0.05),
+        color: severityColor.withOpacity(0.06),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: severityColor.withOpacity(0.2)),
       ),
@@ -1421,13 +1579,13 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
                         text: '"${issue.original}"',
                         style: TextStyle(color: severityColor),
                       ),
-                      const TextSpan(
+                      TextSpan(
                         text: ' → ',
-                        style: TextStyle(color: Colors.white38),
+                        style: TextStyle(color: _textLight),
                       ),
                       TextSpan(
                         text: '"${issue.expected}"',
-                        style: const TextStyle(color: Colors.white),
+                        style: const TextStyle(color: _textDark),
                       ),
                     ],
                   ),
@@ -1435,7 +1593,7 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
                 const SizedBox(height: 4),
                 Text(
                   issue.description,
-                  style: const TextStyle(color: Colors.white54, fontSize: 12),
+                  style: TextStyle(color: _textSub, fontSize: 12),
                 ),
               ],
             ),
@@ -1443,7 +1601,7 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
             decoration: BoxDecoration(
-              color: severityColor.withOpacity(0.15),
+              color: severityColor.withOpacity(0.12),
               borderRadius: BorderRadius.circular(6),
             ),
             child: Text(
@@ -1467,11 +1625,10 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.fitness_center_rounded, color: _teal, size: 14),
+          const Icon(Icons.fitness_center_rounded, color: _accent, size: 14),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(drill,
-                style: const TextStyle(color: Colors.white70, fontSize: 12)),
+            child: Text(drill, style: TextStyle(color: _textSub, fontSize: 12)),
           ),
         ],
       ),
@@ -1492,32 +1649,34 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
       s.isNotEmpty ? '${s[0].toUpperCase()}${s.substring(1)}' : s;
 
   // ─────────────────────────────────────────────────────────────────────────
+  // RESET BUTTON
+  // ─────────────────────────────────────────────────────────────────────────
 
   Widget _buildResetButton() {
     return OutlinedButton.icon(
       style: OutlinedButton.styleFrom(
         minimumSize: const Size.fromHeight(50),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        side: const BorderSide(color: Colors.white24),
+        side: BorderSide(color: _accentBorder),
       ),
-      icon: const Icon(Icons.restart_alt_rounded, color: Colors.white54, size: 18),
-      label: const Text('Reset NLP Patterns',
-          style: TextStyle(color: Colors.white54, fontWeight: FontWeight.w600)),
+      icon: const Icon(Icons.restart_alt_rounded, color: _textSub, size: 18),
+      label: Text('Reset NLP Patterns',
+          style: TextStyle(color: _textSub, fontWeight: FontWeight.w600)),
       onPressed: () async {
         final confirm = await showDialog<bool>(
           context: context,
           builder: (_) => AlertDialog(
-            backgroundColor: _card,
+            backgroundColor: _surface,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-            title: const Text('Reset Training?', style: TextStyle(color: Colors.white)),
-            content: const Text(
+            title: const Text('Reset Training?', style: TextStyle(color: _textDark)),
+            content: Text(
               'This will clear all learned patterns and reset your training progress to 0%.',
-              style: TextStyle(color: Colors.white54, fontSize: 13),
+              style: TextStyle(color: _textSub, fontSize: 13),
             ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context, false),
-                child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+                child: Text('Cancel', style: TextStyle(color: _textSub)),
               ),
               ElevatedButton(
                 style: ElevatedButton.styleFrom(
@@ -1547,9 +1706,13 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
     );
   }
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // HELPERS
+  // ─────────────────────────────────────────────────────────────────────────
+
   Widget _sectionLabel(String text) => Text(
     text,
-    style: const TextStyle(color: Colors.white38, fontSize: 10, letterSpacing: 0.6, fontWeight: FontWeight.w600),
+    style: TextStyle(color: _textSub, fontSize: 10, letterSpacing: 0.6, fontWeight: FontWeight.w600),
   );
 
   Widget _analyticsChip({
@@ -1584,11 +1747,16 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
   }
 
   Color _clarityColor(int score) {
-    if (score >= 75) return Colors.greenAccent;
-    if (score >= 45) return Colors.orangeAccent;
+    if (score >= 75) return Colors.green.shade600;
+    if (score >= 45) return Colors.orange.shade600;
     return Colors.redAccent;
   }
 
   void _showSnack(String msg) =>
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(msg, style: const TextStyle(color: Colors.white)),
+        backgroundColor: _accent,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ));
 }

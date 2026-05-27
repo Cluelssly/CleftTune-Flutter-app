@@ -61,30 +61,37 @@ class _PremiumScreenState extends State<PremiumScreen> {
   // GoogleSignIn instance — on web pass your OAuth client ID
   late final GoogleSignIn _googleSignIn = kIsWeb
       ? GoogleSignIn(
-          clientId: '756813986418-j2dgokq3hi229seu3hdhh6pn68pckint.apps.googleusercontent.com', // <-- replace
+          clientId: '756813986418-j2dgokq3hi229seu3hdhh6pn68pckint.apps.googleusercontent.com',
           scopes: ['email', 'profile'],
         )
       : GoogleSignIn(scopes: ['email', 'profile']);
 
   late StreamSubscription<List<ConnectivityResult>> _connectivitySub;
 
-  // ── Theme constants ──────────────────────────────────────────────────────
-  static const _bg          = Color(0xFF0D2B2B);
-  static const _bgMid       = Color(0xFF0E2233);
-  static const _bgDark      = Color(0xFF0B1A28);
-  static const _card        = Color(0x0AFFFFFF);
-  static const _teal        = Color(0xFF1D9E75);
-  static const _tealDim     = Color(0x261D9E75);
-  static const _tealBorder  = Color(0x401D9E75);
-  static const _white70     = Color(0xB3FFFFFF);
-  static const _white40     = Color(0x66FFFFFF);
-  static const _white30     = Color(0x4DFFFFFF);
-  static const _fieldBg     = Color(0x12FFFFFF);
+  // ── Theme constants (Sky Blue / Navy) ────────────────────────────────────
+  static const _bg         = Color(0xFFEAF4FB); // Ice blue light
+  static const _surface    = Color(0xFFD6EEFF); // Soft sky blue
+  static const _accent     = Color(0xFF0077B6); // Bright teal blue
+  static const _accentDim  = Color(0xFF005F8E); // Accent darker (shadows)
+  static const _textDark   = Color(0xFF0D2B4E); // Dark Navy
+  static const _textSub    = Color(0xFF5A7A96); // Subtle gray-blue
+  static const _label      = Color(0xFF0077B6); // Label teal
+
+  // Derived constants used throughout
+  static const _bgMid       = Color(0xFFDAEEFA);
+  static const _bgDark      = Color(0xFFC8E3F5);
+  static const Color _card        = Color(0x1A0077B6); // accent with low opacity
+  static const Color _accentBorder= Color(0x400077B6);
+  static const Color _accentTint  = Color(0x260077B6);
+  static const Color _white70     = Color(0xFF2C5B7E); // maps to dark sub-text
+  static const Color _white40     = Color(0xFF5A7A96); // _textSub
+  static const Color _white30     = Color(0xFF8AAEC8); // lighter sub
+  static const Color _fieldBg     = Color(0x120077B6); // faint accent fill
 
   static const _strengthWeak   = Color(0xFFE74C3C);
   static const _strengthFair   = Color(0xFFE67E22);
   static const _strengthGood   = Color(0xFFF1C40F);
-  static const _strengthStrong = Color(0xFF1D9E75);
+  static const _strengthStrong = Color(0xFF0077B6);
 
   @override
   void initState() {
@@ -238,13 +245,12 @@ class _PremiumScreenState extends State<PremiumScreen> {
     }
   }
 
-  // WEB: use Firebase's signInWithPopup — opens the Google OAuth popup natively
+  // WEB: use Firebase's signInWithPopup
   Future<void> _handleGoogleSignInWeb() async {
     try {
       final GoogleAuthProvider provider = GoogleAuthProvider();
       provider.addScope('email');
       provider.addScope('profile');
-      // signInWithPopup triggers the browser Google OAuth popup
       final UserCredential userCredential =
           await _auth.signInWithPopup(provider);
       if (mounted) {
@@ -256,7 +262,6 @@ class _PremiumScreenState extends State<PremiumScreen> {
         widget.onLogin();
       }
     } on FirebaseAuthException catch (e) {
-      // popup-closed-by-user is not an error — user just dismissed it
       if (e.code == 'popup-closed-by-user' || e.code == 'cancelled-popup-request') {
         return;
       }
@@ -269,7 +274,6 @@ class _PremiumScreenState extends State<PremiumScreen> {
       };
       _snack(msgs[e.code] ?? "Google sign-in failed: ${e.message}", isError: true);
     } catch (e) {
-      // User closed popup — ignore
       final errStr = e.toString().toLowerCase();
       if (errStr.contains('popup') || errStr.contains('cancel') || errStr.contains('closed')) {
         return;
@@ -278,20 +282,16 @@ class _PremiumScreenState extends State<PremiumScreen> {
     }
   }
 
-  // MOBILE (Android / iOS): use google_sign_in package then exchange for Firebase credential
+  // MOBILE (Android / iOS)
   Future<void> _handleGoogleSignInMobile() async {
     try {
-      // Sign out first to always show the account picker
       await _googleSignIn.signOut();
-
       final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
-      // User cancelled the picker
       if (googleUser == null) return;
 
       final GoogleSignInAuthentication googleAuth =
           await googleUser.authentication;
 
-      // Verify we got valid tokens
       if (googleAuth.accessToken == null && googleAuth.idToken == null) {
         _snack("Google sign-in failed: could not obtain credentials", isError: true);
         return;
@@ -322,7 +322,6 @@ class _PremiumScreenState extends State<PremiumScreen> {
       };
       _snack(msgs[e.code] ?? "Google sign-in failed: ${e.message}", isError: true);
     } catch (e) {
-      // User cancelled native account picker — ignore silently
       final errStr = e.toString().toLowerCase();
       if (errStr.contains('cancel') || errStr.contains('sign_in_canceled') ||
           errStr.contains('sign_in_failed') && errStr.contains('12501')) {
@@ -337,7 +336,7 @@ class _PremiumScreenState extends State<PremiumScreen> {
     return showDialog<void>(
       context: context,
       barrierDismissible: false,
-      barrierColor: Colors.black.withOpacity(0.7),
+      barrierColor: Colors.black.withOpacity(0.4),
       builder: (context) => Dialog(
         backgroundColor: Colors.transparent,
         child: Container(
@@ -345,25 +344,28 @@ class _PremiumScreenState extends State<PremiumScreen> {
           decoration: BoxDecoration(
             gradient: const LinearGradient(
               begin: Alignment.topLeft, end: Alignment.bottomRight,
-              colors: [Color(0xFF0D2B2B), Color(0xFF0E2233)],
+              colors: [Color(0xFFEAF4FB), Color(0xFFD6EEFF)],
             ),
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: _tealBorder, width: 1.2),
+            border: Border.all(color: _accentBorder, width: 1.2),
+            boxShadow: [
+              BoxShadow(color: _accent.withOpacity(0.15), blurRadius: 30, spreadRadius: 2),
+            ],
           ),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             Container(
               width: 72, height: 72,
               decoration: BoxDecoration(
-                color: _tealDim, shape: BoxShape.circle,
-                border: Border.all(color: _teal, width: 1.5),
-                boxShadow: [BoxShadow(color: _teal.withOpacity(0.3), blurRadius: 20, spreadRadius: 2)],
+                color: _accentTint, shape: BoxShape.circle,
+                border: Border.all(color: _accent, width: 1.5),
+                boxShadow: [BoxShadow(color: _accent.withOpacity(0.25), blurRadius: 20, spreadRadius: 2)],
               ),
-              child: const Icon(Icons.check_rounded, color: _teal, size: 36),
+              child: const Icon(Icons.check_rounded, color: _accent, size: 36),
             ),
             const SizedBox(height: 20),
             const Text(
               "Account Created!",
-              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: -0.3),
+              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: _textDark, letterSpacing: -0.3),
             ),
             const SizedBox(height: 8),
             Text(
@@ -371,14 +373,14 @@ class _PremiumScreenState extends State<PremiumScreen> {
                   ? "Welcome, $name!\nSigned in with Google successfully."
                   : "Welcome to CleftTune Premium.\nYou're all set to get started!",
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 13, color: Colors.white.withOpacity(0.55), height: 1.6),
+              style: const TextStyle(fontSize: 13, color: _textSub, height: 1.6),
             ),
             const SizedBox(height: 24),
             SizedBox(
               width: double.infinity, height: 48,
               child: ElevatedButton(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: _teal,
+                  backgroundColor: _accent,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   elevation: 0,
                 ),
@@ -401,7 +403,7 @@ class _PremiumScreenState extends State<PremiumScreen> {
     Navigator.of(context).push(
       PageRouteBuilder(
         opaque: false,
-        barrierColor: Colors.black.withOpacity(0.6),
+        barrierColor: Colors.black.withOpacity(0.4),
         pageBuilder: (_, __, ___) => _ForgotPasswordScreen(prefillEmail: prefill),
         transitionsBuilder: (_, animation, __, child) {
           return SlideTransition(
@@ -428,7 +430,7 @@ class _PremiumScreenState extends State<PremiumScreen> {
               style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14)),
         ),
       ]),
-      backgroundColor: isError ? Colors.redAccent : _teal,
+      backgroundColor: isError ? Colors.redAccent : _accent,
       behavior: SnackBarBehavior.floating,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       margin: const EdgeInsets.all(12),
@@ -507,7 +509,7 @@ class _PremiumScreenState extends State<PremiumScreen> {
         child: _buildPremiumSection(),
       ),
     ),
-    Container(width: 1, color: Colors.white.withOpacity(0.07)),
+    Container(width: 1, color: _accent.withOpacity(0.12)),
     Expanded(
       child: Center(
         child: SizedBox(
@@ -528,47 +530,47 @@ class _PremiumScreenState extends State<PremiumScreen> {
       Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(
-          color: _tealDim,
+          color: _accentTint,
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: _tealBorder),
+          border: Border.all(color: _accentBorder),
         ),
         child: const Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(Icons.star_rounded, color: _teal, size: 14),
+          Icon(Icons.star_rounded, color: _accent, size: 14),
           SizedBox(width: 5),
-          Text("PREMIUM", style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: _teal, letterSpacing: 1.2)),
+          Text("PREMIUM", style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: _accent, letterSpacing: 1.2)),
         ]),
       ),
       const SizedBox(height: 14),
       RichText(text: const TextSpan(children: [
-        TextSpan(text: "Upgrade to ", style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: -0.3)),
-        TextSpan(text: "Premium",     style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: _teal,         letterSpacing: -0.3)),
+        TextSpan(text: "Upgrade to ", style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: _textDark, letterSpacing: -0.3)),
+        TextSpan(text: "Premium",     style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: _accent,   letterSpacing: -0.3)),
       ])),
       const SizedBox(height: 6),
       const Text(
         "Unlock full features for better communication.",
-        style: TextStyle(fontSize: 13, color: _white40, height: 1.6),
+        style: TextStyle(fontSize: 13, color: _textSub, height: 1.6),
       ),
       const SizedBox(height: 24),
-      _featureCard(Icons.closed_caption_rounded, "Real-time speech translation", "Instantly translates speech while you talk naturally"),
-      _featureCard(Icons.graphic_eq_rounded,     "Noise Cancellation",             "Reduces background noise for clearer voice recognition."),
-      _featureCard(Icons.history_rounded,         "Unlimited Words",           "Translate without limits or interruptions."),
+      _featureCard(Icons.closed_caption_rounded, "Real-time speech translation",   "Instantly translates speech while you talk naturally"),
+      _featureCard(Icons.graphic_eq_rounded,     "Noise Cancellation",              "Reduces background noise for clearer voice recognition."),
+      _featureCard(Icons.history_rounded,         "Unlimited Words",                "Translate without limits or interruptions."),
       _featureCard(Icons.block_rounded,           "Ad-Free Experience",             "No interruptions while using the app"),
       const SizedBox(height: 24),
       Container(
         width: double.infinity,
         padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
-          color: _tealDim,
+          color: _accentTint,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: _tealBorder),
+          border: Border.all(color: _accentBorder),
         ),
         child: Column(children: [
           const Text("MONTHLY PLAN",
-              style: TextStyle(fontSize: 11, color: _white40, letterSpacing: 1.2, fontWeight: FontWeight.w600)),
+              style: TextStyle(fontSize: 11, color: _textSub, letterSpacing: 1.2, fontWeight: FontWeight.w600)),
           const SizedBox(height: 6),
           RichText(text: const TextSpan(children: [
-            TextSpan(text: "₱99",      style: TextStyle(fontSize: 36, fontWeight: FontWeight.w800, color: _teal, letterSpacing: -1)),
-            TextSpan(text: " / month", style: TextStyle(fontSize: 14, color: _white40)),
+            TextSpan(text: "₱99",      style: TextStyle(fontSize: 36, fontWeight: FontWeight.w800, color: _accent, letterSpacing: -1)),
+            TextSpan(text: " / month", style: TextStyle(fontSize: 14, color: _textSub)),
           ])),
           const SizedBox(height: 6),
           const Text("Cancel anytime", style: TextStyle(fontSize: 11, color: _white30)),
@@ -583,21 +585,21 @@ class _PremiumScreenState extends State<PremiumScreen> {
       Container(
         width: 52, height: 52,
         decoration: BoxDecoration(
-          color: _tealDim,
+          color: _accentTint,
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: _tealBorder),
+          border: Border.all(color: _accentBorder),
         ),
-        child: const Icon(Icons.lock_outline_rounded, color: _teal, size: 24),
+        child: const Icon(Icons.lock_outline_rounded, color: _accent, size: 24),
       ),
       const SizedBox(height: 14),
       Text(
         isLoginMode ? "Sign In" : "Create Account",
-        style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: Colors.white),
+        style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: _textDark),
       ),
       const SizedBox(height: 4),
       Text(
         isLoginMode ? "Welcome back to CleftTune" : "Join CleftTune today",
-        style: const TextStyle(fontSize: 12, color: _white40),
+        style: const TextStyle(fontSize: 12, color: _textSub),
       ),
       const SizedBox(height: 28),
 
@@ -606,20 +608,20 @@ class _PremiumScreenState extends State<PremiumScreen> {
         width: double.infinity, height: 50,
         child: OutlinedButton(
           style: OutlinedButton.styleFrom(
-            side: BorderSide(color: Colors.white.withOpacity(0.18)),
+            side: BorderSide(color: _accent.withOpacity(0.3)),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            backgroundColor: Colors.white.withOpacity(0.04),
+            backgroundColor: _surface,
           ),
           onPressed: isGoogleLoading ? null : handleGoogleSignIn,
           child: isGoogleLoading
-              ? const SizedBox(width: 20, height: 20,
-                  child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+              ? SizedBox(width: 20, height: 20,
+                  child: CircularProgressIndicator(color: _accent, strokeWidth: 2))
               : Row(mainAxisAlignment: MainAxisAlignment.center, children: [
                   _buildGoogleLogo(),
                   const SizedBox(width: 10),
                   Text(
                     isLoginMode ? "Continue with Google" : "Sign up with Google",
-                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.white),
+                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: _textDark),
                   ),
                 ]),
         ),
@@ -628,13 +630,13 @@ class _PremiumScreenState extends State<PremiumScreen> {
 
       // Divider
       Row(children: [
-        Expanded(child: Divider(color: Colors.white.withOpacity(0.08))),
+        Expanded(child: Divider(color: _accent.withOpacity(0.15))),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12),
           child: Text("or use email",
-              style: TextStyle(fontSize: 11, color: Colors.white.withOpacity(0.3))),
+              style: const TextStyle(fontSize: 11, color: _textSub)),
         ),
-        Expanded(child: Divider(color: Colors.white.withOpacity(0.08))),
+        Expanded(child: Divider(color: _accent.withOpacity(0.15))),
       ]),
       const SizedBox(height: 16),
 
@@ -658,7 +660,7 @@ class _PremiumScreenState extends State<PremiumScreen> {
         trailing: IconButton(
           icon: Icon(
             obscurePassword ? Icons.visibility_off_outlined : Icons.visibility_outlined,
-            color: _white40, size: 18,
+            color: _textSub, size: 18,
           ),
           onPressed: () => setState(() => obscurePassword = !obscurePassword),
         ),
@@ -677,7 +679,7 @@ class _PremiumScreenState extends State<PremiumScreen> {
             onTap: _openForgotPassword,
             child: const Text(
               "Forgot password?",
-              style: TextStyle(fontSize: 12, color: _teal, fontWeight: FontWeight.w600),
+              style: TextStyle(fontSize: 12, color: _accent, fontWeight: FontWeight.w600),
             ),
           ),
         ),
@@ -690,7 +692,7 @@ class _PremiumScreenState extends State<PremiumScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
           margin: const EdgeInsets.only(bottom: 14),
           decoration: BoxDecoration(
-            color: const Color(0xFFE67E22).withOpacity(0.12),
+            color: const Color(0xFFE67E22).withOpacity(0.10),
             borderRadius: BorderRadius.circular(10),
             border: Border.all(color: const Color(0xFFE67E22).withOpacity(0.4)),
           ),
@@ -711,7 +713,7 @@ class _PremiumScreenState extends State<PremiumScreen> {
         width: double.infinity, height: 50,
         child: ElevatedButton(
           style: ElevatedButton.styleFrom(
-            backgroundColor: _hasInternet ? _teal : Colors.grey.shade700,
+            backgroundColor: _hasInternet ? _accent : Colors.grey.shade400,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             elevation: 0,
           ),
@@ -735,8 +737,9 @@ class _PremiumScreenState extends State<PremiumScreen> {
         width: double.infinity, height: 48,
         child: OutlinedButton(
           style: OutlinedButton.styleFrom(
-            side: BorderSide(color: Colors.white.withOpacity(0.12)),
+            side: BorderSide(color: _accent.withOpacity(0.25)),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            backgroundColor: _surface,
           ),
           onPressed: () => setState(() {
             isLoginMode            = !isLoginMode;
@@ -747,16 +750,16 @@ class _PremiumScreenState extends State<PremiumScreen> {
           }),
           child: Text(
             isLoginMode ? "Don't have an account? Sign up" : "Already have an account? Login",
-            style: const TextStyle(fontSize: 13, color: _white70),
+            style: const TextStyle(fontSize: 13, color: _textDark),
           ),
         ),
       ),
       const SizedBox(height: 20),
 
-      const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+      Row(mainAxisAlignment: MainAxisAlignment.center, children: [
         Icon(Icons.shield_outlined, size: 13, color: _white30),
-        SizedBox(width: 5),
-        Text("Your data is safe and private.", style: TextStyle(fontSize: 11, color: _white30)),
+        const SizedBox(width: 5),
+        const Text("Your data is safe and private.", style: TextStyle(fontSize: 11, color: _white30)),
       ]),
     ]);
   }
@@ -774,7 +777,7 @@ class _PremiumScreenState extends State<PremiumScreen> {
                   margin: EdgeInsets.only(right: index < 3 ? 4 : 0),
                   height: 4,
                   decoration: BoxDecoration(
-                    color: filled ? _strengthColor : Colors.white.withOpacity(0.1),
+                    color: filled ? _strengthColor : _accent.withOpacity(0.12),
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
@@ -806,10 +809,10 @@ class _PremiumScreenState extends State<PremiumScreen> {
       children: hints.map((h) => Row(mainAxisSize: MainAxisSize.min, children: [
         Icon(
           h.$1 ? Icons.check_circle_rounded : Icons.circle_outlined,
-          size: 12, color: h.$1 ? _teal : _white30,
+          size: 12, color: h.$1 ? _accent : _white30,
         ),
         const SizedBox(width: 4),
-        Text(h.$2, style: TextStyle(fontSize: 11, color: h.$1 ? _teal : _white30)),
+        Text(h.$2, style: TextStyle(fontSize: 11, color: h.$1 ? _accent : _white30)),
       ])).toList(),
     );
   }
@@ -824,7 +827,7 @@ class _PremiumScreenState extends State<PremiumScreen> {
   Widget _buildFieldLabel(String label) => Align(
     alignment: Alignment.centerLeft,
     child: Text(label,
-        style: const TextStyle(fontSize: 11, color: _white40, fontWeight: FontWeight.w500, letterSpacing: 0.3)),
+        style: const TextStyle(fontSize: 11, color: _label, fontWeight: FontWeight.w600, letterSpacing: 0.3)),
   );
 
   Widget _buildTextField({
@@ -839,26 +842,26 @@ class _PremiumScreenState extends State<PremiumScreen> {
         controller: controller,
         obscureText: obscure,
         keyboardType: keyboardType,
-        style: const TextStyle(color: Colors.white, fontSize: 14),
+        style: const TextStyle(color: _textDark, fontSize: 14),
         decoration: InputDecoration(
           hintText: hint,
-          hintStyle: const TextStyle(color: _white30, fontSize: 14),
-          prefixIcon: Icon(icon, color: _white40, size: 18),
+          hintStyle: const TextStyle(color: _textSub, fontSize: 14),
+          prefixIcon: Icon(icon, color: _textSub, size: 18),
           suffixIcon: trailing,
           filled: true,
           fillColor: _fieldBg,
           contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
+            borderSide: BorderSide(color: _accent.withOpacity(0.18)),
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
+            borderSide: BorderSide(color: _accent.withOpacity(0.18)),
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: _teal, width: 1.2),
+            borderSide: const BorderSide(color: _accent, width: 1.5),
           ),
         ),
       );
@@ -867,25 +870,28 @@ class _PremiumScreenState extends State<PremiumScreen> {
     margin: const EdgeInsets.only(bottom: 12),
     padding: const EdgeInsets.all(16),
     decoration: BoxDecoration(
-      color: _card,
+      color: _surface,
       borderRadius: BorderRadius.circular(14),
-      border: Border.all(color: _tealBorder),
+      border: Border.all(color: _accentBorder),
+      boxShadow: [
+        BoxShadow(color: _accent.withOpacity(0.06), blurRadius: 8, offset: const Offset(0, 2)),
+      ],
     ),
     child: Row(children: [
       Container(
         width: 36, height: 36,
-        decoration: BoxDecoration(color: _tealDim, borderRadius: BorderRadius.circular(10)),
-        child: Icon(icon, color: _teal, size: 18),
+        decoration: BoxDecoration(color: _accentTint, borderRadius: BorderRadius.circular(10)),
+        child: Icon(icon, color: _accent, size: 18),
       ),
       const SizedBox(width: 14),
       Expanded(
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: Colors.white)),
+          Text(title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: _textDark)),
           const SizedBox(height: 3),
-          Text(subtitle, style: const TextStyle(color: _white40, fontSize: 12, height: 1.4)),
+          Text(subtitle, style: const TextStyle(color: _textSub, fontSize: 12, height: 1.4)),
         ]),
       ),
-      const Icon(Icons.check_circle_rounded, color: _teal, size: 18),
+      const Icon(Icons.check_circle_rounded, color: _accent, size: 18),
     ]),
   );
 }
@@ -914,14 +920,18 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
   int     _cooldownSecs   = 0;
   Timer?  _cooldownTimer;
 
-  static const _bg         = Color(0xFF0D2B2B);
-  static const _bgMid      = Color(0xFF0E2233);
-  static const _teal       = Color(0xFF1D9E75);
-  static const _tealDim    = Color(0x261D9E75);
-  static const _tealBorder = Color(0x401D9E75);
-  static const _white40    = Color(0x66FFFFFF);
-  static const _white20    = Color(0x33FFFFFF);
-  static const _fieldBg    = Color(0x12FFFFFF);
+  // ── Palette ──────────────────────────────────────────────────────────────
+  static const _bg          = Color(0xFFEAF4FB);
+  static const _bgMid       = Color(0xFFDAEEFA);
+  static const _accent      = Color(0xFF0077B6);
+  static const _accentDim   = Color(0xFF005F8E);
+  static const _accentTint  = Color(0x260077B6);
+  static const _accentBorder= Color(0x400077B6);
+  static const _textDark    = Color(0xFF0D2B4E);
+  static const _textSub     = Color(0xFF5A7A96);
+  static const _white40     = Color(0xFF5A7A96); // _textSub alias
+  static const _white20     = Color(0xFF8AAEC8);
+  static const _fieldBg     = Color(0x120077B6);
 
   @override
   void initState() {
@@ -1004,7 +1014,7 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topLeft, end: Alignment.bottomRight,
-            colors: [_bg, _bgMid, Color(0xFF0B1A28)],
+            colors: [_bg, _bgMid, Color(0xFFC8E3F5)],
           ),
         ),
         child: SafeArea(
@@ -1046,13 +1056,13 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
     child: Row(children: [
       IconButton(
-        icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white, size: 18),
+        icon: const Icon(Icons.arrow_back_ios_new, color: _textDark, size: 18),
         onPressed: () => Navigator.of(context).pop(),
       ),
       const Expanded(
         child: Center(
           child: Text("Forgot Password",
-              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: Colors.white)),
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: _textDark)),
         ),
       ),
       const SizedBox(width: 48),
@@ -1068,56 +1078,56 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
           child: Container(
             width: 80, height: 80,
             decoration: BoxDecoration(
-              color: _tealDim, shape: BoxShape.circle,
-              border: Border.all(color: _tealBorder, width: 1.5),
-              boxShadow: [BoxShadow(color: _teal.withOpacity(0.2), blurRadius: 24, spreadRadius: 2)],
+              color: _accentTint, shape: BoxShape.circle,
+              border: Border.all(color: _accentBorder, width: 1.5),
+              boxShadow: [BoxShadow(color: _accent.withOpacity(0.18), blurRadius: 24, spreadRadius: 2)],
             ),
-            child: const Icon(Icons.lock_reset_rounded, color: _teal, size: 36),
+            child: const Icon(Icons.lock_reset_rounded, color: _accent, size: 36),
           ),
         ),
         const SizedBox(height: 28),
         const Center(
           child: Text("Reset your password",
-              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: -0.3)),
+              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: _textDark, letterSpacing: -0.3)),
         ),
         const SizedBox(height: 8),
         Center(
           child: Text(
             "Enter the email address linked to your CleftTune account and we'll send you a reset link.",
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 13, color: Colors.white.withOpacity(0.5), height: 1.6),
+            style: const TextStyle(fontSize: 13, color: _textSub, height: 1.6),
           ),
         ),
         const SizedBox(height: 32),
         const Text("EMAIL ADDRESS",
-            style: TextStyle(fontSize: 10, color: _white40, fontWeight: FontWeight.w600, letterSpacing: 0.8)),
+            style: TextStyle(fontSize: 10, color: _accent, fontWeight: FontWeight.w600, letterSpacing: 0.8)),
         const SizedBox(height: 8),
         TextField(
           controller: _emailCtrl,
           keyboardType: TextInputType.emailAddress,
           autofocus: widget.prefillEmail.isEmpty,
-          style: const TextStyle(color: Colors.white, fontSize: 14),
+          style: const TextStyle(color: _textDark, fontSize: 14),
           onChanged: (_) { if (_errorText != null) setState(() => _errorText = null); },
           decoration: InputDecoration(
             hintText: "you@example.com",
-            hintStyle: TextStyle(color: Colors.white.withOpacity(0.3), fontSize: 14),
-            prefixIcon: const Icon(Icons.email_outlined, color: _white40, size: 18),
+            hintStyle: const TextStyle(color: _textSub, fontSize: 14),
+            prefixIcon: const Icon(Icons.email_outlined, color: _textSub, size: 18),
             filled: true,
             fillColor: _fieldBg,
             contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: _errorText != null ? Colors.redAccent : Colors.white.withOpacity(0.1)),
+              borderSide: BorderSide(color: _errorText != null ? Colors.redAccent : _accent.withOpacity(0.2)),
             ),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
               borderSide: BorderSide(
-                color: _errorText != null ? Colors.redAccent.withOpacity(0.6) : Colors.white.withOpacity(0.1),
+                color: _errorText != null ? Colors.redAccent.withOpacity(0.6) : _accent.withOpacity(0.2),
               ),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: _errorText != null ? Colors.redAccent : _teal, width: 1.5),
+              borderSide: BorderSide(color: _errorText != null ? Colors.redAccent : _accent, width: 1.5),
             ),
           ),
         ),
@@ -1134,7 +1144,7 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
           width: double.infinity, height: 52,
           child: ElevatedButton(
             style: ElevatedButton.styleFrom(
-              backgroundColor: _teal,
+              backgroundColor: _accent,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
               elevation: 0,
             ),
@@ -1154,11 +1164,11 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
         Center(
           child: GestureDetector(
             onTap: () => Navigator.of(context).pop(),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              const Icon(Icons.arrow_back, color: _white40, size: 14),
-              const SizedBox(width: 5),
+            child: const Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(Icons.arrow_back, color: _textSub, size: 14),
+              SizedBox(width: 5),
               Text("Back to Sign In",
-                  style: TextStyle(fontSize: 13, color: Colors.white.withOpacity(0.45), fontWeight: FontWeight.w500)),
+                  style: TextStyle(fontSize: 13, color: _textSub, fontWeight: FontWeight.w500)),
             ]),
           ),
         ),
@@ -1166,17 +1176,17 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
         Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
-            color: _tealDim,
+            color: _accentTint,
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: _tealBorder),
+            border: Border.all(color: _accentBorder),
           ),
           child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Icon(Icons.info_outline_rounded, color: _teal, size: 16),
+            const Icon(Icons.info_outline_rounded, color: _accent, size: 16),
             const SizedBox(width: 10),
-            Expanded(
+            const Expanded(
               child: Text(
                 "Check your spam or junk folder if you don't see the email within a few minutes.",
-                style: TextStyle(fontSize: 12, color: Colors.white.withOpacity(0.5), height: 1.5),
+                style: TextStyle(fontSize: 12, color: _textSub, height: 1.5),
               ),
             ),
           ]),
@@ -1199,32 +1209,32 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
           child: Container(
             width: 96, height: 96,
             decoration: BoxDecoration(
-              shape: BoxShape.circle, color: _tealDim,
-              border: Border.all(color: _teal, width: 2),
-              boxShadow: [BoxShadow(color: _teal.withOpacity(0.35), blurRadius: 30, spreadRadius: 4)],
+              shape: BoxShape.circle, color: _accentTint,
+              border: Border.all(color: _accent, width: 2),
+              boxShadow: [BoxShadow(color: _accent.withOpacity(0.28), blurRadius: 30, spreadRadius: 4)],
             ),
-            child: const Icon(Icons.mark_email_read_rounded, color: _teal, size: 44),
+            child: const Icon(Icons.mark_email_read_rounded, color: _accent, size: 44),
           ),
         ),
         const SizedBox(height: 32),
         const Text("Check your inbox!",
-            style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: -0.5)),
+            style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800, color: _textDark, letterSpacing: -0.5)),
         const SizedBox(height: 12),
-        Text("We've sent a password reset link to",
+        const Text("We've sent a password reset link to",
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 14, color: Colors.white.withOpacity(0.5))),
+            style: TextStyle(fontSize: 14, color: _textSub)),
         const SizedBox(height: 6),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           decoration: BoxDecoration(
-            color: _tealDim,
+            color: _accentTint,
             borderRadius: BorderRadius.circular(30),
-            border: Border.all(color: _tealBorder),
+            border: Border.all(color: _accentBorder),
           ),
           child: Row(mainAxisSize: MainAxisSize.min, children: [
-            const Icon(Icons.email_rounded, color: _teal, size: 15),
+            const Icon(Icons.email_rounded, color: _accent, size: 15),
             const SizedBox(width: 8),
-            Text(email, style: const TextStyle(fontSize: 13, color: _teal, fontWeight: FontWeight.w600)),
+            Text(email, style: const TextStyle(fontSize: 13, color: _accent, fontWeight: FontWeight.w600)),
           ]),
         ),
         const SizedBox(height: 32),
@@ -1233,17 +1243,17 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
         Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.04),
+            color: Color(0xFFFFF8F0),
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: _white20),
+            border: Border.all(color: Color(0xFFE67E22).withOpacity(0.3)),
           ),
           child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
             const Icon(Icons.warning_amber_rounded, color: Color(0xFFE67E22), size: 16),
             const SizedBox(width: 10),
-            Expanded(
+            const Expanded(
               child: Text(
                 "Didn't receive it? Check your spam or junk folder. The link expires in 1 hour.",
-                style: TextStyle(fontSize: 12, color: Colors.white.withOpacity(0.5), height: 1.5),
+                style: TextStyle(fontSize: 12, color: Color(0xFFB05E10), height: 1.5),
               ),
             ),
           ]),
@@ -1253,23 +1263,23 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
           width: double.infinity, height: 50,
           child: OutlinedButton(
             style: OutlinedButton.styleFrom(
-              side: BorderSide(color: _resendCooldown ? Colors.white.withOpacity(0.1) : _tealBorder),
+              side: BorderSide(color: _resendCooldown ? _accent.withOpacity(0.15) : _accentBorder),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-              backgroundColor: _resendCooldown ? Colors.transparent : _tealDim,
+              backgroundColor: _resendCooldown ? Colors.transparent : _accentTint,
             ),
             onPressed: _resendCooldown ? null : _resend,
             child: _resendCooldown
                 ? Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                    const Icon(Icons.timer_outlined, color: _white40, size: 16),
+                    const Icon(Icons.timer_outlined, color: _textSub, size: 16),
                     const SizedBox(width: 8),
                     Text("Resend in ${_cooldownSecs}s",
-                        style: const TextStyle(fontSize: 14, color: _white40, fontWeight: FontWeight.w500)),
+                        style: const TextStyle(fontSize: 14, color: _textSub, fontWeight: FontWeight.w500)),
                   ])
                 : const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                    Icon(Icons.refresh_rounded, color: _teal, size: 16),
+                    Icon(Icons.refresh_rounded, color: _accent, size: 16),
                     SizedBox(width: 8),
                     Text("Resend Email",
-                        style: TextStyle(fontSize: 14, color: _teal, fontWeight: FontWeight.w600)),
+                        style: TextStyle(fontSize: 14, color: _accent, fontWeight: FontWeight.w600)),
                   ]),
           ),
         ),
@@ -1278,7 +1288,7 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
           width: double.infinity, height: 50,
           child: ElevatedButton(
             style: ElevatedButton.styleFrom(
-              backgroundColor: _teal,
+              backgroundColor: _accent,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
               elevation: 0,
             ),
@@ -1306,15 +1316,15 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.04),
+        color: _accentTint,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _white20),
+        border: Border.all(color: _accentBorder),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text("WHAT TO DO NEXT",
-              style: TextStyle(fontSize: 10, color: _white40, fontWeight: FontWeight.w700, letterSpacing: 1.0)),
+              style: TextStyle(fontSize: 10, color: _accent, fontWeight: FontWeight.w700, letterSpacing: 1.0)),
           const SizedBox(height: 14),
           ...steps.asMap().entries.map((entry) {
             final i    = entry.key;
@@ -1327,20 +1337,20 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
                   Container(
                     width: 32, height: 32,
                     decoration: BoxDecoration(
-                      color: _tealDim, shape: BoxShape.circle,
-                      border: Border.all(color: _tealBorder),
+                      color: Color(0xFFD6EEFF), shape: BoxShape.circle,
+                      border: Border.all(color: _accentBorder),
                     ),
-                    child: Icon(step.$1, color: _teal, size: 15),
+                    child: Icon(step.$1, color: _accent, size: 15),
                   ),
                   if (!isLast)
-                    Container(width: 1.5, height: 24, color: Colors.white.withOpacity(0.08)),
+                    Container(width: 1.5, height: 24, color: _accent.withOpacity(0.15)),
                 ]),
                 const SizedBox(width: 14),
                 Expanded(
                   child: Padding(
                     padding: const EdgeInsets.only(top: 6),
                     child: Text(step.$2,
-                        style: TextStyle(fontSize: 13, color: Colors.white.withOpacity(0.65), height: 1.5)),
+                        style: const TextStyle(fontSize: 13, color: _textSub, height: 1.5)),
                   ),
                 ),
               ],

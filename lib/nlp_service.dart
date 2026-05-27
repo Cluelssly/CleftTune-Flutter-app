@@ -374,6 +374,36 @@ class NlpService {
     }, SetOptions(merge: true));
   }
 
+  /// Removes a correction from memory, local cache, and Firestore.
+  /// The [correct] param is accepted to match the call-site signature
+  /// but the Firestore doc is keyed on [wrong] alone.
+  Future<void> forgetPattern(String wrong, String correct) async {
+    final key = wrong.toLowerCase().trim();
+
+    // 1. Remove from in-memory map
+    _patterns.remove(key);
+
+    // 2. Update local cache
+    await _persistLocal();
+
+    // 3. Delete from Firestore
+    final col = _correctionsCol;
+    if (col != null) {
+      await col.doc(key).delete();
+    }
+
+    // 4. Update user stats
+    final doc = _userDoc;
+    if (doc == null) return;
+    await doc.set({
+      'training': {
+        'correctionCount': FieldValue.increment(-1),
+        'patternCount':    _patterns.length,
+        'lastTrainedAt':   FieldValue.serverTimestamp(),
+      }
+    }, SetOptions(merge: true));
+  }
+
   Future<void> _saveAiCorrection(String wrong, String correct) async {
     final key = wrong.toLowerCase().trim();
 

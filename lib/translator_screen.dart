@@ -32,6 +32,9 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   bool _isPremium = false;
   late StreamSubscription<bool> _premiumSub;
 
+  // Corrections stream -- initialised once, never recreated on panel open
+  Stream<QuerySnapshot>? _correctionsStream;
+
   // ── Text state ─────────────────────────────────────────────────────────────
   String _displayText    = '';
   String _committedText  = '';
@@ -51,6 +54,13 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   String  _freeBufferedRaw    = '';
   bool    _isWaitingToDisplay = false;
 
+  // ── Free user: silence-based auto-stop (no speech detected) ───────────────
+  Timer?  _freeSilenceTimer;
+  static const int _freeSilenceAutoStopSeconds = 12;
+
+  // ── Free word cap (auto-stop mic at 30 words) ─────────────────────────────
+  static const int _maxWordsFree = 30;
+
   // ── Premium: session duration tracker ─────────────────────────────────────
   Timer?  _premiumSessionTimer;
   int     _premiumSessionSeconds = 0;
@@ -60,31 +70,23 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   Timer? _partialNlpDebounce;
 
   // ── Premium: always-on engine ─────────────────────────────────────────────
-  //
-  // HOW ALWAYS-ON WORKS:
-  // Instead of a watchdog checking for silence, we use a much simpler approach:
-  // Every time the STT engine stops for ANY reason (pauseFor, OS kill, error),
-  // _alwaysOnLoop immediately restarts it — as long as _userStopped is false.
-  // We set pauseFor to 2 seconds so the engine cycles quickly and restarts
-  // before the user even notices a gap.  The committed text is preserved across
-  // restarts so the display never clears.
-  //
   Timer? _alwaysOnRestartTimer;
+  Timer? _keepAliveTimer;
   bool   _isRestarting = false;
 
-  // ── Free word cap ──────────────────────────────────────────────────────────
-  static const int _maxWordsFree = 30;
-
-  // ── Theme ──────────────────────────────────────────────────────────────────
-  static const _bg         = Color(0xFF0D2B2B);
-  static const _bgMid      = Color(0xFF0E2233);
-  static const _bgDark     = Color(0xFF0B1A28);
-  static const _teal       = Color(0xFF1D9E75);
-  static const _tealDim    = Color(0x261D9E75);
-  static const _tealBorder = Color(0x401D9E75);
-  static const _card       = Color(0x0AFFFFFF);
-  static const _white40    = Color(0x66FFFFFF);
-  static const _white20    = Color(0x33FFFFFF);
+  // ── Theme (Sky Blue / Navy) ────────────────────────────────────────────────
+  static const _bg          = Color(0xFFEAF4FB); // Ice blue light
+  static const _bgMid       = Color(0xFFDAEEFA); // Soft sky blue
+  static const _bgDark      = Color(0xFFC8E3F5); // Slightly deeper
+  static const _accent      = Color(0xFF0077B6); // Bright teal blue
+  static const _accentDim   = Color(0xFF005F8E); // Accent darker
+  static const _accentTint  = Color(0x260077B6); // Low-opacity tint
+  static const _accentBorder= Color(0x400077B6); // Border tint
+  static const _textDark    = Color(0xFF0D2B4E); // Dark Navy
+  static const _textSub     = Color(0xFF5A7A96); // Subtle gray-blue
+  static const _card        = Color(0x1A0077B6); // Card tint
+  static const _white40     = Color(0xFF5A7A96); // _textSub alias
+  static const _white20     = Color(0xFF8AAEC8); // Lighter sub
 
   // ── Animations ─────────────────────────────────────────────────────────────
   late AnimationController _pulseController;
@@ -125,21 +127,33 @@ class _TranslatorScreenState extends State<TranslatorScreen>
 
   Future<void> _initServices() async {
     await _nlp.init();
+    _initCorrectionsStream();
     dev.log('NLP ready — ${_nlp.patternCount} pattern(s) loaded');
     _nlp.onRealtimeCorrection = null;
     await _initSpeech();
+  }
+
+  void _initCorrectionsStream() {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+    _correctionsStream = FirebaseFirestore.instance
+        .collection('users')
+        .doc(uid)
+        .collection('corrections')
+        .snapshots();
   }
 
   Future<void> _initSpeech() async {
     _isInitialized = await _speech.initialize(
       onStatus: (status) {
         dev.log('STT STATUS: $status');
-        // For premium: any stop status triggers an immediate restart loop
         if (!_userStopped && _isListening && _isPremium) {
           if (status == 'done' ||
               status == 'notListening' ||
-              status == 'doneNoResult') {
-            dev.log('STT stopped (status: $status) — restarting...');
+              status == 'doneNoResult' ||
+              status == 'notAvailable' ||
+              status == 'error') {
+            dev.log('STT stopped (status: \$status) — restarting...');
             _scheduleAlwaysOnRestart();
           }
         }
@@ -193,25 +207,44 @@ class _TranslatorScreenState extends State<TranslatorScreen>
 
   // ══════════════════════════════════════════════════════════════════════════
   // ALWAYS-ON RESTART LOOP (premium only)
-  //
-  // Called whenever STT stops for any reason. Waits a tiny bit (80ms) so
-  // the engine fully releases, then fires _startRealtimeListening() again.
-  // _userStopped acts as the kill-switch — set it to true and the loop exits.
   // ══════════════════════════════════════════════════════════════════════════
 
+  void _startKeepAliveTimer() {
+    _keepAliveTimer?.cancel();
+    _keepAliveTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
+      if (_userStopped || !_isListening || !_isPremium || !mounted) {
+        _keepAliveTimer?.cancel();
+        return;
+      }
+      if (!_speech.isListening) {
+        dev.log('KeepAlive: mic went silent — restarting now');
+        try { await _speech.stop(); } catch (_) {}
+        await Future.delayed(const Duration(milliseconds: 50));
+        if (!_userStopped && _isListening && _isPremium && mounted) {
+          await _startRealtimeListening();
+        }
+      }
+    });
+  }
+
+  void _stopKeepAliveTimer() {
+    _keepAliveTimer?.cancel();
+    _keepAliveTimer = null;
+  }
+
   void _scheduleAlwaysOnRestart() {
-    if (_userStopped || !_isListening || !_isPremium || _isRestarting) return;
+    if (_userStopped || !_isListening || !_isPremium) return;
     _isRestarting = true;
 
     _alwaysOnRestartTimer?.cancel();
-    _alwaysOnRestartTimer = Timer(const Duration(milliseconds: 80), () async {
+    _alwaysOnRestartTimer = Timer(const Duration(milliseconds: 50), () async {
       if (_userStopped || !_isListening || !_isPremium || !mounted) {
         _isRestarting = false;
         return;
       }
       dev.log('Always-on: restarting STT engine');
       try { await _speech.stop(); } catch (_) {}
-      await Future.delayed(const Duration(milliseconds: 60));
+      await Future.delayed(const Duration(milliseconds: 80));
       if (_userStopped || !_isListening || !_isPremium || !mounted) {
         _isRestarting = false;
         return;
@@ -224,7 +257,41 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   void _stopAlwaysOnLoop() {
     _alwaysOnRestartTimer?.cancel();
     _alwaysOnRestartTimer = null;
+    _stopKeepAliveTimer();
     _isRestarting = false;
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // FREE — silence auto-stop
+  // ══════════════════════════════════════════════════════════════════════════
+
+  void _resetFreeSilenceAutoStop() {
+    _freeSilenceTimer?.cancel();
+    _freeSilenceTimer = Timer(
+      const Duration(seconds: _freeSilenceAutoStopSeconds),
+      () async {
+        if (!_isListening || _isPremium || _userStopped) return;
+        dev.log('Free user: silence auto-stop triggered');
+        _userStopped = true;
+        _freeTimer?.cancel();
+        await _speech.stop();
+        if (_freeBufferedRaw.trim().isNotEmpty) {
+          _processFreeBufferedText();
+        }
+        if (mounted) {
+          setState(() {
+            _isListening        = false;
+            _isRefiningFinal    = false;
+            _isWaitingToDisplay = false;
+          });
+        }
+      },
+    );
+  }
+
+  void _cancelFreeSilenceAutoStop() {
+    _freeSilenceTimer?.cancel();
+    _freeSilenceTimer = null;
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -297,7 +364,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // FREE — Basic listening with 10-second silence delay
+  // FREE — Basic listening
   // ══════════════════════════════════════════════════════════════════════════
 
   void _startFreeCountdown() {
@@ -309,6 +376,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
       if (_freeSecondsLeft <= 0) {
         t.cancel();
         _userStopped = true;
+        _cancelFreeSilenceAutoStop();
         _speech.stop();
         if (_freeBufferedRaw.trim().isNotEmpty) {
           _processFreeBufferedText();
@@ -329,6 +397,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
     }
 
     _startFreeCountdown();
+    _resetFreeSilenceAutoStop();
 
     await _speech.listen(
       localeId:       'en_US',
@@ -340,11 +409,25 @@ class _TranslatorScreenState extends State<TranslatorScreen>
         final words = result.recognizedWords.trim();
         if (words.isEmpty) return;
 
+        _resetFreeSilenceAutoStop();
+
         if (result.finalResult) {
           final combined   = _buildDisplay(_committedText, words).trim();
           _freeBufferedRaw = combined;
           if (mounted) setState(() => _isWaitingToDisplay = true);
           _resetFreeDelayTimer();
+
+          final wordCount = combined.trim().isEmpty
+              ? 0
+              : combined.trim().split(RegExp(r'\s+')).length;
+          if (wordCount >= _maxWordsFree && !_userStopped) {
+            dev.log('Free user: 30-word cap reached — stopping mic');
+            _userStopped = true;
+            _freeTimer?.cancel();
+            _cancelFreeSilenceAutoStop();
+            _speech.stop();
+            if (mounted) setState(() => _isListening = false);
+          }
         }
       },
     );
@@ -352,13 +435,6 @@ class _TranslatorScreenState extends State<TranslatorScreen>
 
   // ══════════════════════════════════════════════════════════════════════════
   // PREMIUM — ALWAYS-ON REAL-TIME LISTENING
-  //
-  // Key changes vs original:
-  // • pauseFor = 2 seconds — engine recycles fast so restarts are seamless.
-  // • listenFor = 30 seconds — short window so the OS never force-kills it;
-  //   the onStatus 'done' handler immediately restarts via _scheduleAlwaysOnRestart.
-  // • No watchdog timer needed — onStatus/onError covers every stop scenario.
-  // • _committedText is preserved across restarts so text never disappears.
   // ══════════════════════════════════════════════════════════════════════════
 
   Future<void> _startRealtimeListening() async {
@@ -367,13 +443,13 @@ class _TranslatorScreenState extends State<TranslatorScreen>
       if (!_isInitialized) return;
     }
 
-    // Do NOT clear _committedText here — we want to keep it across restarts
     _currentSegment = '';
+    _startKeepAliveTimer();
 
     await _speech.listen(
       localeId:       'en_US',
-      listenFor:      const Duration(seconds: 30), // short window → fast recycle
-      pauseFor:       const Duration(seconds: 2),  // 2s silence → restart immediately
+      listenFor:      const Duration(hours: 24),
+      pauseFor:       const Duration(seconds: 300),
       partialResults: true,
       listenMode:     stt.ListenMode.dictation,
       onResult: (result) {
@@ -401,7 +477,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
 
           _partialNlpDebounce?.cancel();
           _partialNlpDebounce = Timer(
-            const Duration(milliseconds: 120),
+            const Duration(milliseconds: 800),
             () => _runBackgroundSave(words, _committedText),
           );
         } else {
@@ -452,12 +528,12 @@ class _TranslatorScreenState extends State<TranslatorScreen>
 
   Future<void> _toggleMic() async {
     if (_isListening) {
-      // ── STOP — user explicitly tapped off ─────────────────────────────────
-      _userStopped = true;         // kill-switch for the always-on loop
+      _userStopped = true;
       _stopAlwaysOnLoop();
       _freeTimer?.cancel();
       _freeDelayTimer?.cancel();
       _freeDelayTimer = null;
+      _cancelFreeSilenceAutoStop();
       _bgSaveTimer?.cancel();
       _partialNlpDebounce?.cancel();
       _stopPremiumSessionTimer();
@@ -473,7 +549,6 @@ class _TranslatorScreenState extends State<TranslatorScreen>
         _isWaitingToDisplay = false;
       });
     } else {
-      // ── START ─────────────────────────────────────────────────────────────
       _userStopped           = false;
       _isRestarting          = false;
       _displayText           = '';
@@ -490,7 +565,6 @@ class _TranslatorScreenState extends State<TranslatorScreen>
       if (_isPremium) {
         _startPremiumSessionTimer();
         await _startRealtimeListening();
-        // The onStatus callback handles all restarts from here — no watchdog needed
       } else {
         await _startBasicListening();
       }
@@ -513,6 +587,33 @@ class _TranslatorScreenState extends State<TranslatorScreen>
       ? 0
       : _displayText.trim().split(RegExp(r'\s+')).length;
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // DELETE CORRECTION
+  // ══════════════════════════════════════════════════════════════════════════
+
+  Future<void> _deleteCorrection({
+    required String uid,
+    required String docId,
+    required String wrong,
+    required String correct,
+  }) async {
+    try {
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .collection('corrections')
+          .doc(docId)
+          .delete();
+
+      await _nlp.forgetPattern(wrong, correct);
+      dev.log('Correction deleted from Firestore + NLP brain: "$wrong" → "$correct"');
+      await NotificationHelper.wordDeleted(wrong);
+      if (mounted) setState(() {});
+    } catch (e) {
+      dev.log('Delete correction error: $e');
+    }
+  }
+
   // ── Teach correction dialog ────────────────────────────────────────────────
   void _showAddCorrectionDialog() {
     final wrongController   = TextEditingController();
@@ -524,107 +625,41 @@ class _TranslatorScreenState extends State<TranslatorScreen>
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => Padding(
-        padding: EdgeInsets.only(
-            bottom: MediaQuery.of(context).viewInsets.bottom),
-        child: Container(
-          decoration: const BoxDecoration(
-            color: Color(0xFF112828),
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-          ),
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 36, height: 4,
-                  decoration: BoxDecoration(
-                    color: _white20,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
+      builder: (_) => _AddCorrectionSheet(
+        wrongController:   wrongController,
+        correctController: correctController,
+        nlp:               _nlp,
+        onSaved: (wrong, correct) {
+          if (mounted) {
+            _initCorrectionsStream();
+            setState(() {});
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Row(
+                  children: [
+                    const Icon(Icons.check_circle_rounded,
+                        color: Color(0xFF0077B6), size: 18),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        '"$wrong" → "$correct" saved!',
+                        style: const TextStyle(
+                            color: Color(0xFF0D2B4E),
+                            fontWeight: FontWeight.w600,
+                            fontSize: 13),
+                      ),
+                    ),
+                  ],
                 ),
+                backgroundColor: Color(0xFFEAF4FB),
+                behavior: SnackBarBehavior.floating,
+                elevation: 8,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
               ),
-              const SizedBox(height: 20),
-              const Text('Teach a Correction',
-                  style: TextStyle(
-                      fontSize: 17,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white)),
-              const SizedBox(height: 6),
-              const Text(
-                'Tell CleftTune what word was heard wrong and what it should be.',
-                style: TextStyle(fontSize: 12, color: _white40),
-              ),
-              const SizedBox(height: 20),
-              _sheetLabel('WHAT WAS HEARD (WRONG)'),
-              const SizedBox(height: 6),
-              _sheetField(wrongController,
-                  hint: 'e.g. "kea"', icon: Icons.hearing_outlined),
-              const SizedBox(height: 14),
-              _sheetLabel('WHAT IT SHOULD BE (CORRECT)'),
-              const SizedBox(height: 6),
-              _sheetField(correctController,
-                  hint: 'e.g. "tea"', icon: Icons.check_circle_outline),
-              const SizedBox(height: 24),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      style: OutlinedButton.styleFrom(
-                        side: const BorderSide(color: _white20),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                      ),
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('Cancel',
-                          style: TextStyle(color: Colors.white)),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _teal,
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                      ),
-                      onPressed: () async {
-                        final wrong   = wrongController.text.trim();
-                        final correct = correctController.text.trim();
-                        if (wrong.isEmpty || correct.isEmpty) return;
-
-                        await _nlp.learnPattern(wrong, correct);
-                        await NotificationHelper.wordAdded(correct);
-
-                        if (mounted) {
-                          Navigator.pop(context);
-                          setState(() {});
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('"$wrong" → "$correct" saved!'),
-                              backgroundColor: const Color(0xFF1E3A3A),
-                              behavior: SnackBarBehavior.floating,
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(10)),
-                            ),
-                          );
-                        }
-                      },
-                      child: const Text('Save',
-                          style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold)),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
+            );
+          }
+        },
       ),
     );
   }
@@ -633,10 +668,12 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   void dispose() {
     _freeTimer?.cancel();
     _freeDelayTimer?.cancel();
+    _freeSilenceTimer?.cancel();
     _bgSaveTimer?.cancel();
     _premiumSessionTimer?.cancel();
     _partialNlpDebounce?.cancel();
     _alwaysOnRestartTimer?.cancel();
+    _keepAliveTimer?.cancel();
     _premiumSub.cancel();
     _nlp.onRealtimeCorrection = null;
     _speech.stop();
@@ -652,6 +689,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: _bg,
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
@@ -690,13 +728,13 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                 TextSpan(
                     text: 'Cleft',
                     style: TextStyle(
-                        color: Colors.white,
+                        color: _textDark,
                         fontWeight: FontWeight.bold,
                         fontSize: 18)),
                 TextSpan(
                     text: 'Tune',
                     style: TextStyle(
-                        color: _teal,
+                        color: _accent,
                         fontWeight: FontWeight.bold,
                         fontSize: 18)),
               ],
@@ -708,17 +746,17 @@ class _TranslatorScreenState extends State<TranslatorScreen>
               margin: const EdgeInsets.only(right: 8),
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
-                color: _tealDim,
+                color: _accentTint,
                 borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: _tealBorder),
+                border: Border.all(color: _accentBorder),
               ),
               child: const Row(
                 children: [
-                  Icon(Icons.star_rounded, color: _teal, size: 11),
+                  Icon(Icons.star_rounded, color: _accent, size: 11),
                   SizedBox(width: 4),
                   Text('Premium',
                       style: TextStyle(
-                          color: _teal,
+                          color: _accent,
                           fontSize: 10,
                           fontWeight: FontWeight.w700)),
                 ],
@@ -751,11 +789,12 @@ class _TranslatorScreenState extends State<TranslatorScreen>
       child: Container(
         width: 36, height: 36,
         decoration: BoxDecoration(
-          color: active ? _tealDim : _card,
+          color: active ? _accentTint : _card,
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: active ? _tealBorder : _white20),
+          border: Border.all(color: active ? _accentBorder : _white20),
         ),
-        child: Icon(icon, size: 18, color: active ? _teal : Colors.white70),
+        child: Icon(icon, size: 18,
+            color: active ? _accent : _textSub),
       ),
     );
   }
@@ -769,7 +808,6 @@ class _TranslatorScreenState extends State<TranslatorScreen>
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
 
-        // ── LIVE dot + mode indicator ──────────────────────────────────────
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -800,19 +838,19 @@ class _TranslatorScreenState extends State<TranslatorScreen>
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
-                  color: _tealDim,
+                  color: _accentTint,
                   borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: _tealBorder),
+                  border: Border.all(color: _accentBorder),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.timer_rounded, color: _teal, size: 11),
+                    const Icon(Icons.timer_rounded, color: _accent, size: 11),
                     const SizedBox(width: 4),
                     Text(
                       _premiumSessionLabel,
                       style: const TextStyle(
-                          color: _teal, fontSize: 11, fontWeight: FontWeight.w600),
+                          color: _accent, fontSize: 11, fontWeight: FontWeight.w600),
                     ),
                   ],
                 ),
@@ -829,13 +867,13 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                       Container(
                         width: 6, height: 6,
                         decoration: const BoxDecoration(
-                            color: _teal, shape: BoxShape.circle),
+                            color: _accent, shape: BoxShape.circle),
                       ),
                       const SizedBox(width: 5),
                       const Text(
                         'processing in 10s...',
                         style: TextStyle(
-                            color: _teal, fontSize: 11, letterSpacing: 0.5),
+                            color: _accent, fontSize: 11, letterSpacing: 0.5),
                       ),
                     ],
                   ),
@@ -853,13 +891,13 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                       Container(
                         width: 6, height: 6,
                         decoration: const BoxDecoration(
-                            color: _teal, shape: BoxShape.circle),
+                            color: _accent, shape: BoxShape.circle),
                       ),
                       const SizedBox(width: 5),
                       const Text(
                         'translating...',
                         style: TextStyle(
-                            color: _teal, fontSize: 11, letterSpacing: 0.5),
+                            color: _accent, fontSize: 11, letterSpacing: 0.5),
                       ),
                     ],
                   ),
@@ -871,7 +909,6 @@ class _TranslatorScreenState extends State<TranslatorScreen>
 
         const SizedBox(height: 28),
 
-        // ── Main subtitle box ──────────────────────────────────────────────
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
           child: AnimatedContainer(
@@ -879,19 +916,23 @@ class _TranslatorScreenState extends State<TranslatorScreen>
             padding: const EdgeInsets.all(24),
             constraints: const BoxConstraints(minHeight: 140, maxHeight: 320),
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.05),
+              color: Colors.white.withOpacity(0.55),
               borderRadius: BorderRadius.circular(22),
               border: Border.all(
-                color: _isListening ? _teal.withOpacity(0.5) : _white20,
+                color: _isListening ? _accent.withOpacity(0.5) : _accentBorder,
                 width: 1,
               ),
               boxShadow: _isListening
                   ? [BoxShadow(
-                      color: _teal.withOpacity(0.08),
+                      color: _accent.withOpacity(0.12),
                       blurRadius: 24,
                       spreadRadius: 2,
                     )]
-                  : [],
+                  : [BoxShadow(
+                      color: _accent.withOpacity(0.05),
+                      blurRadius: 8,
+                      spreadRadius: 1,
+                    )],
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -906,7 +947,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                           opacity: _dotAnim.value,
                           child: const Icon(
                             Icons.hourglass_top_rounded,
-                            color: _teal,
+                            color: _accent,
                             size: 32,
                           ),
                         ),
@@ -917,7 +958,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: 14,
-                          color: _white40,
+                          color: _textSub,
                           height: 1.6,
                         ),
                       ),
@@ -927,7 +968,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                   Text(hint,
                       textAlign: TextAlign.center,
                       style: const TextStyle(
-                          fontSize: 16, color: _white40, height: 1.5)),
+                          fontSize: 16, color: _textSub, height: 1.5)),
                 if (hasText)
                   Flexible(
                     child: SingleChildScrollView(
@@ -938,7 +979,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                         style: const TextStyle(
                             fontSize: 22,
                             fontWeight: FontWeight.w600,
-                            color: Colors.white,
+                            color: _textDark,
                             height: 1.5),
                       ),
                     ),
@@ -975,7 +1016,6 @@ class _TranslatorScreenState extends State<TranslatorScreen>
 
         const SizedBox(height: 20),
 
-        // ── Status footer ──────────────────────────────────────────────────
         if (_isListening)
           Wrap(
             alignment: WrapAlignment.center,
@@ -985,18 +1025,18 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
                   decoration: BoxDecoration(
-                    color: _tealDim,
+                    color: _accentTint,
                     borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: _tealBorder),
+                    border: Border.all(color: _accentBorder),
                   ),
                   child: const Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.all_inclusive_rounded, color: _teal, size: 11),
+                      Icon(Icons.all_inclusive_rounded, color: _accent, size: 11),
                       SizedBox(width: 4),
                       Text('Unlimited · Always-On',
                           style: TextStyle(
-                              color: _teal,
+                              color: _accent,
                               fontSize: 11,
                               fontWeight: FontWeight.w600)),
                     ],
@@ -1005,17 +1045,17 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
                   decoration: BoxDecoration(
-                    color: _tealDim,
+                    color: _accentTint,
                     borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: _tealBorder),
+                    border: Border.all(color: _accentBorder),
                   ),
                   child: const Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.noise_aware_rounded, color: _teal, size: 11),
+                      Icon(Icons.noise_aware_rounded, color: _accent, size: 11),
                       SizedBox(width: 4),
                       Text('Noise Filter',
-                          style: TextStyle(color: _teal, fontSize: 11)),
+                          style: TextStyle(color: _accent, fontSize: 11)),
                     ],
                   ),
                 ),
@@ -1028,7 +1068,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                   ),
                   child: Text(
                     '$_wordCount words',
-                    style: const TextStyle(color: _white40, fontSize: 11),
+                    style: const TextStyle(color: _textSub, fontSize: 11),
                   ),
                 ),
               ] else ...[
@@ -1036,7 +1076,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
                   decoration: BoxDecoration(
                     color: _freeSecondsLeft <= 10
-                        ? Colors.redAccent.withOpacity(0.15)
+                        ? Colors.redAccent.withOpacity(0.12)
                         : _card,
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(
@@ -1052,14 +1092,14 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                           size: 11,
                           color: _freeSecondsLeft <= 10
                               ? Colors.redAccent
-                              : _white40),
+                              : _textSub),
                       const SizedBox(width: 4),
                       Text(
                         'Basic · ${_freeSecondsLeft}s left',
                         style: TextStyle(
                           color: _freeSecondsLeft <= 10
                               ? Colors.redAccent
-                              : _white40,
+                              : _textSub,
                           fontSize: 11,
                         ),
                       ),
@@ -1067,20 +1107,20 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                   ),
                 ),
                 Text('$_wordCount/$_maxWordsFree words',
-                    style: const TextStyle(color: _white40, fontSize: 12)),
+                    style: const TextStyle(color: _textSub, fontSize: 12)),
               ],
 
               if (_nlp.patternCount > 0)
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
                   decoration: BoxDecoration(
-                    color: _tealDim,
+                    color: _accentTint,
                     borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: _tealBorder),
+                    border: Border.all(color: _accentBorder),
                   ),
                   child: Text(
                     '${_nlp.patternCount} pattern${_nlp.patternCount == 1 ? '' : 's'} active',
-                    style: const TextStyle(color: _teal, fontSize: 11),
+                    style: const TextStyle(color: _accent, fontSize: 11),
                   ),
                 ),
             ],
@@ -1094,20 +1134,20 @@ class _TranslatorScreenState extends State<TranslatorScreen>
               margin: const EdgeInsets.symmetric(horizontal: 24),
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               decoration: BoxDecoration(
-                color: _tealDim,
+                color: _accentTint,
                 borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: _tealBorder),
+                border: Border.all(color: _accentBorder),
               ),
               child: const Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.all_inclusive_rounded, color: _teal, size: 14),
+                  Icon(Icons.all_inclusive_rounded, color: _accent, size: 14),
                   SizedBox(width: 6),
                   Flexible(
                     child: Text(
                       'Upgrade for Always-On Listening + Realtime + Noise Cancellation',
                       style: TextStyle(
-                          color: _teal,
+                          color: _accent,
                           fontSize: 12,
                           fontWeight: FontWeight.w600),
                       textAlign: TextAlign.center,
@@ -1130,15 +1170,15 @@ class _TranslatorScreenState extends State<TranslatorScreen>
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
-          color: _tealDim,
+          color: _accentTint,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: _tealBorder),
+          border: Border.all(color: _accentBorder),
         ),
         child: Row(
           children: [
-            Icon(icon, size: 13, color: _teal),
+            Icon(icon, size: 13, color: _accent),
             const SizedBox(width: 4),
-            Text(label, style: const TextStyle(color: _teal, fontSize: 11)),
+            Text(label, style: const TextStyle(color: _accent, fontSize: 11)),
           ],
         ),
       ),
@@ -1157,11 +1197,11 @@ class _TranslatorScreenState extends State<TranslatorScreen>
           child: Row(
             children: [
               const Icon(Icons.format_list_bulleted_rounded,
-                  color: _teal, size: 18),
+                  color: _accent, size: 18),
               const SizedBox(width: 8),
               const Text('Learned Corrections',
                   style: TextStyle(
-                      color: Colors.white,
+                      color: _textDark,
                       fontWeight: FontWeight.w700,
                       fontSize: 16)),
               const Spacer(),
@@ -1170,17 +1210,17 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
-                    color: _tealDim,
+                    color: _accentTint,
                     borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: _tealBorder),
+                    border: Border.all(color: _accentBorder),
                   ),
                   child: const Row(
                     children: [
-                      Icon(Icons.add_rounded, color: _teal, size: 14),
+                      Icon(Icons.add_rounded, color: _accent, size: 14),
                       SizedBox(width: 4),
                       Text('Add',
                           style: TextStyle(
-                              color: _teal,
+                              color: _accent,
                               fontSize: 12,
                               fontWeight: FontWeight.w600)),
                     ],
@@ -1194,19 +1234,14 @@ class _TranslatorScreenState extends State<TranslatorScreen>
           child: uid == null
               ? const Center(
                   child: Text('Not signed in',
-                      style: TextStyle(color: _white40)))
+                      style: TextStyle(color: _textSub)))
               : StreamBuilder<QuerySnapshot>(
-                  stream: FirebaseFirestore.instance
-                      .collection('users')
-                      .doc(uid)
-                      .collection('corrections')
-                      .orderBy('updatedAt', descending: true)
-                      .snapshots(),
+                  stream: _correctionsStream,
                   builder: (context, snapshot) {
                     if (snapshot.connectionState == ConnectionState.waiting) {
                       return const Center(
                         child: CircularProgressIndicator(
-                            color: _teal, strokeWidth: 2),
+                            color: _accent, strokeWidth: 2),
                       );
                     }
 
@@ -1220,14 +1255,14 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                             Container(
                               padding: const EdgeInsets.all(20),
                               decoration: const BoxDecoration(
-                                  color: _tealDim, shape: BoxShape.circle),
+                                  color: _accentTint, shape: BoxShape.circle),
                               child: const Icon(Icons.auto_fix_high_rounded,
-                                  color: _teal, size: 32),
+                                  color: _accent, size: 32),
                             ),
                             const SizedBox(height: 16),
                             const Text('No corrections yet',
                                 style: TextStyle(
-                                    color: Colors.white,
+                                    color: _textDark,
                                     fontWeight: FontWeight.w600,
                                     fontSize: 15)),
                             const SizedBox(height: 6),
@@ -1235,25 +1270,36 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                               'Use the mic, then tap "Correct"\nto teach CleftTune your patterns.',
                               textAlign: TextAlign.center,
                               style: TextStyle(
-                                  color: _white40, fontSize: 12, height: 1.6),
+                                  color: _textSub, fontSize: 12, height: 1.6),
                             ),
                           ],
                         ),
                       );
                     }
 
+                    final sorted = List.of(docs)
+                      ..sort((a, b) {
+                        final aData = a.data() as Map<String, dynamic>;
+                        final bData = b.data() as Map<String, dynamic>;
+                        final aIsUser = (aData['source'] as String? ?? '') == 'user';
+                        final bIsUser = (bData['source'] as String? ?? '') == 'user';
+                        if (aIsUser != bIsUser) return aIsUser ? -1 : 1;
+                        return (aData['wrong'] as String? ?? '')
+                            .compareTo(bData['wrong'] as String? ?? '');
+                      });
+
                     return ListView.separated(
                       padding: const EdgeInsets.fromLTRB(20, 0, 20, 100),
-                      itemCount: docs.length,
+                      itemCount: sorted.length,
                       separatorBuilder: (_, __) => const SizedBox(height: 8),
                       itemBuilder: (context, i) {
-                        final data = docs[i].data() as Map<String, dynamic>;
+                        final data    = sorted[i].data() as Map<String, dynamic>;
                         final wrong   = data['wrong']   as String? ?? '';
                         final correct = data['correct'] as String? ?? '';
                         final source  = data['source']  as String? ?? 'ai';
                         return _correctionTile(
                           wrong: wrong, correct: correct,
-                          source: source, docId: docs[i].id, uid: uid,
+                          source: source, docId: sorted[i].id, uid: uid,
                         );
                       },
                     );
@@ -1276,21 +1322,28 @@ class _TranslatorScreenState extends State<TranslatorScreen>
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: _card,
+        color: Colors.white.withOpacity(0.7),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: isUser ? _tealBorder : _white20),
+        border: Border.all(color: isUser ? _accentBorder : _white20),
+        boxShadow: [
+          BoxShadow(
+            color: _accent.withOpacity(0.05),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Row(
         children: [
           Container(
             width: 34, height: 34,
             decoration: BoxDecoration(
-              color: isUser ? _tealDim : Colors.white.withOpacity(0.05),
+              color: isUser ? _accentTint : _card,
               borderRadius: BorderRadius.circular(8),
             ),
             child: Icon(
               isUser ? Icons.person_rounded : Icons.auto_fix_high_rounded,
-              color: isUser ? _teal : Colors.white38,
+              color: isUser ? _accent : _textSub,
               size: 16,
             ),
           ),
@@ -1306,15 +1359,15 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                           fontWeight: FontWeight.w500),
                       overflow: TextOverflow.ellipsis),
                 ),
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 8),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
                   child: Icon(Icons.arrow_forward_rounded,
-                      color: _white40, size: 14),
+                      color: _textSub, size: 14),
                 ),
                 Flexible(
                   child: Text('"$correct"',
                       style: const TextStyle(
-                          color: _teal,
+                          color: _accent,
                           fontSize: 14,
                           fontWeight: FontWeight.w600),
                       overflow: TextOverflow.ellipsis),
@@ -1329,7 +1382,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                 decoration: BoxDecoration(
-                  color: isUser ? _tealDim : Colors.white.withOpacity(0.05),
+                  color: isUser ? _accentTint : _card,
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Text(
@@ -1337,21 +1390,18 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                   style: TextStyle(
                     fontSize: 10,
                     fontWeight: FontWeight.w600,
-                    color: isUser ? _teal : Colors.white38,
+                    color: isUser ? _accent : _textSub,
                   ),
                 ),
               ),
               const SizedBox(height: 6),
               GestureDetector(
-                onTap: () async {
-                  await FirebaseFirestore.instance
-                      .collection('users')
-                      .doc(uid)
-                      .collection('corrections')
-                      .doc(docId)
-                      .delete();
-                  await NotificationHelper.wordDeleted(wrong);
-                },
+                onTap: () => _deleteCorrection(
+                  uid: uid,
+                  docId: docId,
+                  wrong: wrong,
+                  correct: correct,
+                ),
                 child: const Icon(Icons.delete_outline_rounded,
                     size: 16, color: Colors.redAccent),
               ),
@@ -1377,11 +1427,11 @@ class _TranslatorScreenState extends State<TranslatorScreen>
           width: 72, height: 72,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: _isListening ? Colors.redAccent : _teal,
+            color: _isListening ? Colors.redAccent : _accent,
             boxShadow: [
               BoxShadow(
-                color: (_isListening ? Colors.redAccent : _teal)
-                    .withOpacity(0.45),
+                color: (_isListening ? Colors.redAccent : _accent)
+                    .withOpacity(0.40),
                 blurRadius: 24,
                 spreadRadius: 4,
               ),
@@ -1396,44 +1446,223 @@ class _TranslatorScreenState extends State<TranslatorScreen>
       ),
     );
   }
+}
 
-  // ── Sheet helpers ──────────────────────────────────────────────────────────
-  Widget _sheetLabel(String label) {
-    return Text(label,
-        style: const TextStyle(
-            fontSize: 11,
-            color: _white40,
-            letterSpacing: 0.8,
-            fontWeight: FontWeight.w500));
+// ══════════════════════════════════════════════════════════════════════════════
+// ADD CORRECTION BOTTOM SHEET — light theme with loading spinner on save
+// ══════════════════════════════════════════════════════════════════════════════
+
+class _AddCorrectionSheet extends StatefulWidget {
+  final TextEditingController wrongController;
+  final TextEditingController correctController;
+  final NlpService nlp;
+  final void Function(String wrong, String correct) onSaved;
+
+  const _AddCorrectionSheet({
+    required this.wrongController,
+    required this.correctController,
+    required this.nlp,
+    required this.onSaved,
+  });
+
+  @override
+  State<_AddCorrectionSheet> createState() => _AddCorrectionSheetState();
+}
+
+class _AddCorrectionSheetState extends State<_AddCorrectionSheet> {
+  bool _isSaving = false;
+
+  // ── Light-theme colours (Sky Blue / Navy) ──────────────────────────────────
+  static const _sheetBg      = Color(0xFFEAF4FB); // _bg
+  static const _sheetSurface = Color(0xFFFFFFFF);
+  static const _labelColor   = Color(0xFF5A7A96); // _textSub
+  static const _textColor    = Color(0xFF0D2B4E); // _textDark
+  static const _accent       = Color(0xFF0077B6);
+  static const _accentLight  = Color(0xFFD6EEFF); // _surface
+  static const _borderColor  = Color(0xFFB8D4E8);
+  static const _hintColor    = Color(0xFF8AAEC8);
+
+  Future<void> _handleSave() async {
+    final wrong   = widget.wrongController.text.trim();
+    final correct = widget.correctController.text.trim();
+    if (wrong.isEmpty || correct.isEmpty) return;
+
+    setState(() => _isSaving = true);
+
+    try {
+      await widget.nlp.learnPattern(wrong, correct);
+      await NotificationHelper.wordAdded(correct);
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+
+    if (mounted) {
+      Navigator.pop(context);
+      widget.onSaved(wrong, correct);
+    }
   }
 
-  Widget _sheetField(
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: Container(
+        decoration: const BoxDecoration(
+          color: _sheetBg,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Drag handle
+            Center(
+              child: Container(
+                width: 36, height: 4,
+                decoration: BoxDecoration(
+                  color: _borderColor,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            // Title row
+            Row(
+              children: [
+                Container(
+                  width: 36, height: 36,
+                  decoration: BoxDecoration(
+                    color: _accentLight,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.auto_fix_high_rounded,
+                      color: _accent, size: 18),
+                ),
+                const SizedBox(width: 12),
+                const Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Teach a Correction',
+                        style: TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.bold,
+                            color: _textColor)),
+                    SizedBox(height: 2),
+                    Text('Tell CleftTune what it heard wrong.',
+                        style: TextStyle(fontSize: 12, color: _labelColor)),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
+
+            // Wrong field
+            _label('WHAT WAS HEARD (WRONG)'),
+            const SizedBox(height: 6),
+            _field(widget.wrongController,
+                hint: 'e.g. "kea"', icon: Icons.hearing_outlined),
+            const SizedBox(height: 16),
+
+            // Correct field
+            _label('WHAT IT SHOULD BE (CORRECT)'),
+            const SizedBox(height: 6),
+            _field(widget.correctController,
+                hint: 'e.g. "tea"', icon: Icons.check_circle_outline),
+            const SizedBox(height: 28),
+
+            // Buttons
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: _labelColor,
+                      side: const BorderSide(color: _borderColor),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      backgroundColor: _sheetSurface,
+                    ),
+                    onPressed: _isSaving ? null : () => Navigator.pop(context),
+                    child: const Text('Cancel',
+                        style: TextStyle(
+                            color: _textColor, fontWeight: FontWeight.w600)),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _accent,
+                      disabledBackgroundColor: _accent.withOpacity(0.6),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      elevation: 0,
+                    ),
+                    onPressed: _isSaving ? null : _handleSave,
+                    child: _isSaving
+                        ? const SizedBox(
+                            width: 18, height: 18,
+                            child: CircularProgressIndicator(
+                              color: Colors.white,
+                              strokeWidth: 2.5,
+                            ),
+                          )
+                        : const Text('Save',
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 15)),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _label(String text) {
+    return Text(text,
+        style: const TextStyle(
+            fontSize: 11,
+            color: _accent,
+            letterSpacing: 0.8,
+            fontWeight: FontWeight.w600));
+  }
+
+  Widget _field(
     TextEditingController controller, {
     required String hint,
     required IconData icon,
   }) {
     return TextField(
       controller: controller,
-      style: const TextStyle(color: Colors.white, fontSize: 14),
+      style: const TextStyle(color: _textColor, fontSize: 14),
       decoration: InputDecoration(
         hintText:   hint,
-        hintStyle:  const TextStyle(color: _white40, fontSize: 13),
-        prefixIcon: Icon(icon, color: _white40, size: 18),
+        hintStyle:  const TextStyle(color: _hintColor, fontSize: 13),
+        prefixIcon: Icon(icon, color: _labelColor, size: 18),
         filled:     true,
-        fillColor:  const Color(0xFF0D2020),
+        fillColor:  _sheetSurface,
         contentPadding:
-            const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: _white20),
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: _borderColor),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: _white20),
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: _borderColor),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: _teal, width: 1.2),
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: _accent, width: 1.5),
         ),
       ),
     );

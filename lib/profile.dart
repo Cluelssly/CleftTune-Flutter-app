@@ -113,6 +113,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     });
   }
 
+  // ── LOGOUT ─────────────────────────────────────────────────────────────────
   Future<void> _logout() async {
     if (mounted) Navigator.of(context).pop();
     await FirebaseAuth.instance.signOut();
@@ -153,6 +154,137 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  // ── DELETE ACCOUNT ─────────────────────────────────────────────────────────
+  /// Permanently deletes:
+  ///   1. The Firestore user document at users/{uid}
+  ///   2. The Firebase Auth account
+  /// Then navigates back to the first route (premium.dart / auth gate),
+  /// just like logout — but the account is gone for real.
+  Future<void> _deleteAccount() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    // Close the confirmation dialog first so there's no dangling overlay.
+    if (mounted) Navigator.of(context).pop();
+
+    try {
+      // 1. Delete Firestore document
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .delete();
+
+      // 2. Delete Firebase Auth user (this also signs them out)
+      await user.delete();
+
+      // 3. Navigate to the root route (premium.dart / auth gate)
+      //    popUntil(isFirst) works the same way as logout.
+      if (!mounted) return;
+      Navigator.of(context).popUntil((route) => route.isFirst);
+    } on FirebaseAuthException catch (e) {
+      // If the user's session is too old, Firebase requires re-authentication
+      // before deletion. Surface a friendly message so the user knows to
+      // log out and back in first.
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            e.code == 'requires-recent-login'
+                ? 'Please log out and log back in before deleting your account.'
+                : 'Could not delete account: ${e.message}',
+          ),
+          backgroundColor: Colors.red.shade700,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Could not delete account: $e'),
+          backgroundColor: Colors.red.shade700,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  void _confirmDeleteAccount() {
+    showDialog(
+      context: context,
+      barrierDismissible: false, // force an explicit choice
+      builder: (_) => AlertDialog(
+        backgroundColor: const Color(0xFF1A0A0A),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Icon(Icons.warning_amber_rounded,
+                color: Colors.red.shade400, size: 22),
+            const SizedBox(width: 8),
+            const Text('Delete Account?',
+                style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'This will permanently delete your CleftTune account and all associated data. This action cannot be undone.',
+              style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 13, height: 1.5),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.red.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.red.withOpacity(0.2)),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline_rounded,
+                      color: Colors.red.shade300, size: 14),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Sessions, progress and preferences will be lost forever.',
+                      style: TextStyle(
+                          color: Colors.red.shade300,
+                          fontSize: 11,
+                          height: 1.4),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel', style: TextStyle(color: _white40)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red.shade800,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+            ),
+            onPressed: _deleteAccount,
+            child: const Text('Delete Forever',
+                style: TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── EDIT SHEET ─────────────────────────────────────────────────────────────
   void _showEditSheet() {
     final nameController  = TextEditingController(text: _name);
     final emailController = TextEditingController(text: _email);
@@ -269,6 +401,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  // ── BUILD ──────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
@@ -324,6 +457,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
           _buildSectionLabel('SESSION'),
           const SizedBox(height: 10),
           _buildLogoutButton(),
+          const SizedBox(height: 12),
+          _buildDeleteAccountButton(),
           const SizedBox(height: 32),
         ],
       ),
@@ -362,6 +497,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 _buildSectionLabel('SESSION'),
                 const SizedBox(height: 10),
                 _buildLogoutButton(),
+                const SizedBox(height: 12),
+                _buildDeleteAccountButton(),
               ],
             ),
           ),
@@ -406,7 +543,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  // ── AVATAR SECTION — camera overlay removed ────────────────────────────────
   Widget _buildAvatarSection() {
     final initials = _name.isNotEmpty
         ? _name.trim().split(' ').map((w) => w[0]).take(2).join().toUpperCase()
@@ -598,7 +734,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
           const SizedBox(height: 6),
           const Text(
-            'Enjoy all premium features — unlimited\nsubtitles, voice training & ad-free.',
+            'Enjoy unlimited words, Noise Cancellation\nand Real-time Translation.',
             style: TextStyle(
                 color: Colors.white70, fontSize: 12, height: 1.5),
           ),
@@ -606,8 +742,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
           Wrap(
             spacing: 6, runSpacing: 6,
             children: [
-              _premiumChip(Icons.closed_caption_rounded, 'Unlimited'),
-              _premiumChip(Icons.graphic_eq_rounded, 'Voice Training'),
+              _premiumChip(Icons.closed_caption_rounded, 'Unlimited Words'),
+              _premiumChip(Icons.graphic_eq_rounded, 'Noise Cancellation'),
               _premiumChip(Icons.block_rounded, 'Ad-Free'),
             ],
           ),
@@ -719,6 +855,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  // ── SESSION BUTTONS ────────────────────────────────────────────────────────
   Widget _buildLogoutButton() {
     return GestureDetector(
       onTap: _confirmLogout,
@@ -738,6 +875,53 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     color: Colors.red.shade400,
                     fontSize: 14,
                     fontWeight: FontWeight.w500)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDeleteAccountButton() {
+    return GestureDetector(
+      onTap: _confirmDeleteAccount,
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.red.withOpacity(0.04),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.red.withOpacity(0.35)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 34, height: 34,
+              decoration: BoxDecoration(
+                color: Colors.red.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(Icons.delete_forever_rounded,
+                  color: Colors.red.shade400, size: 18),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Delete Account',
+                      style: TextStyle(
+                          color: Colors.red.shade400,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 2),
+                  Text('Permanently remove your account and data',
+                      style: TextStyle(
+                          color: Colors.red.withOpacity(0.45),
+                          fontSize: 11)),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right_rounded,
+                color: Colors.red.withOpacity(0.4), size: 18),
           ],
         ),
       ),

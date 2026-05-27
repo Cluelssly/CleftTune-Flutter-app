@@ -24,6 +24,15 @@ class _LandingPageState extends State<LandingPage>
   late Animation<Offset> _buttonSlide;
   late Animation<double> _pulse;
 
+  // ─── PALETTE (Sky Blue / Navy) ───────────────────────────────────────────────
+  static const Color _bg        = Color(0xFFEAF4FB); // Ice blue light
+  static const Color _surface   = Color(0xFFD6EEFF); // Soft sky blue
+  static const Color _accent    = Color(0xFF0077B6); // Bright teal blue
+  static const Color _accentDim = Color(0xFF005F8E); // Accent darker (shadows)
+  static const Color _textDark  = Color(0xFF0D2B4E); // Dark Navy
+  static const Color _textSub   = Color(0xFF5A7A96); // Subtle gray-blue
+  static const Color _label     = Color(0xFF0077B6); // Label teal
+
   @override
   void initState() {
     super.initState();
@@ -49,12 +58,10 @@ class _LandingPageState extends State<LandingPage>
     );
 
     _logoSlide = Tween<Offset>(begin: const Offset(0, -0.3), end: Offset.zero)
-        .animate(
-          CurvedAnimation(
-            parent: _controller,
-            curve: const Interval(0.0, 0.5, curve: Curves.easeOut),
-          ),
-        );
+        .animate(CurvedAnimation(
+          parent: _controller,
+          curve: const Interval(0.0, 0.5, curve: Curves.easeOut),
+        ));
 
     _taglineSlide =
         Tween<Offset>(begin: const Offset(0, 0.4), end: Offset.zero).animate(
@@ -65,20 +72,16 @@ class _LandingPageState extends State<LandingPage>
         );
 
     _textSlide = Tween<Offset>(begin: const Offset(0, 0.3), end: Offset.zero)
-        .animate(
-          CurvedAnimation(
-            parent: _controller,
-            curve: const Interval(0.3, 0.65, curve: Curves.easeOut),
-          ),
-        );
+        .animate(CurvedAnimation(
+          parent: _controller,
+          curve: const Interval(0.3, 0.65, curve: Curves.easeOut),
+        ));
 
     _quoteSlide = Tween<Offset>(begin: const Offset(0, 0.3), end: Offset.zero)
-        .animate(
-          CurvedAnimation(
-            parent: _controller,
-            curve: const Interval(0.45, 0.78, curve: Curves.easeOut),
-          ),
-        );
+        .animate(CurvedAnimation(
+          parent: _controller,
+          curve: const Interval(0.45, 0.78, curve: Curves.easeOut),
+        ));
 
     _buttonSlide =
         Tween<Offset>(begin: const Offset(0, 0.4), end: Offset.zero).animate(
@@ -106,12 +109,17 @@ class _LandingPageState extends State<LandingPage>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: _bg,
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [Color(0xFF0D2B2B), Color(0xFF0E2233), Color(0xFF0B1A28)],
+            colors: [
+              Color(0xFFEAF4FB), // Ice blue light
+              Color(0xFFD6EEFF), // Sky blue mid
+              Color(0xFFBFDFF7), // Sky blue deeper
+            ],
           ),
         ),
         child: SafeArea(
@@ -131,8 +139,6 @@ class _LandingPageState extends State<LandingPage>
   // ─── MOBILE ───────────────────────────────────────────────────────────────
   Widget _buildMobile(BoxConstraints constraints) {
     final screenH = constraints.maxHeight;
-
-    // Scale logo size based on available height so nothing overflows
     final logoSize = (screenH * 0.16).clamp(72.0, 110.0);
 
     return Padding(
@@ -140,10 +146,23 @@ class _LandingPageState extends State<LandingPage>
       child: Column(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
-          // ── TOP: Logo + tagline + subtitle ─────────────────────────────
+          // ── TOP: Label + Logo + tagline + subtitle ──────────────────────
           Column(
             children: [
-              // Logo
+              FadeTransition(
+                opacity: _fadeIn,
+                child: Text(
+                  "AI VOICE SUPPORT",
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: _label,
+                    letterSpacing: 1.8,
+                  ),
+                ),
+              ),
+              SizedBox(height: screenH * 0.014),
+
               SlideTransition(
                 position: _logoSlide,
                 child: FadeTransition(
@@ -151,10 +170,8 @@ class _LandingPageState extends State<LandingPage>
                   child: _buildLogo(logoSize),
                 ),
               ),
-
               SizedBox(height: screenH * 0.018),
 
-              // "Your Voice, Understood."
               SlideTransition(
                 position: _taglineSlide,
                 child: FadeTransition(
@@ -164,21 +181,21 @@ class _LandingPageState extends State<LandingPage>
                     text: TextSpan(
                       children: [
                         TextSpan(
-                          text: "Your Voice,\n",
+                          text: "Speak with confidence.\nBe ",
                           style: TextStyle(
-                            fontSize: (screenH * 0.033).clamp(18.0, 26.0),
+                            fontSize: (screenH * 0.038).clamp(22.0, 30.0),
                             fontWeight: FontWeight.w800,
-                            color: Colors.white,
-                            height: 1.15,
+                            color: _textDark,
+                            height: 1.2,
                           ),
                         ),
                         TextSpan(
-                          text: "Understood.",
+                          text: "understood.",
                           style: TextStyle(
-                            fontSize: (screenH * 0.033).clamp(18.0, 26.0),
+                            fontSize: (screenH * 0.038).clamp(22.0, 30.0),
                             fontWeight: FontWeight.w800,
-                            color: const Color(0xFF1D9E75),
-                            height: 1.15,
+                            color: _accent,
+                            height: 1.2,
                           ),
                         ),
                       ],
@@ -187,17 +204,17 @@ class _LandingPageState extends State<LandingPage>
                 ),
               ),
 
-              SizedBox(height: screenH * 0.008),
+              SizedBox(height: screenH * 0.010),
 
               FadeTransition(
                 opacity: _fadeIn,
                 child: Text(
-                  "CleftTune bridges the gap — one word at a time.",
+                  "CleftTune uses adaptive AI to enhance voice clarity for people with cleft conditions — clear, confident communication starts here.",
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: (screenH * 0.016).clamp(10.0, 13.0),
-                    color: Colors.white.withOpacity(0.5),
-                    height: 1.4,
+                    color: _textSub,
+                    height: 1.5,
                   ),
                 ),
               ),
@@ -220,7 +237,7 @@ class _LandingPageState extends State<LandingPage>
                           style: TextStyle(
                             fontSize: (screenH * 0.044).clamp(26.0, 38.0),
                             fontWeight: FontWeight.bold,
-                            color: Colors.white,
+                            color: _textDark,
                           ),
                         ),
                         TextSpan(
@@ -228,7 +245,7 @@ class _LandingPageState extends State<LandingPage>
                           style: TextStyle(
                             fontSize: (screenH * 0.044).clamp(26.0, 38.0),
                             fontWeight: FontWeight.bold,
-                            color: const Color(0xFF1D9E75),
+                            color: _accent,
                           ),
                         ),
                       ],
@@ -240,7 +257,7 @@ class _LandingPageState extends State<LandingPage>
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       fontSize: (screenH * 0.016).clamp(10.0, 13.0),
-                      color: Colors.white.withOpacity(0.6),
+                      color: _textSub,
                       height: 1.4,
                     ),
                   ),
@@ -261,17 +278,22 @@ class _LandingPageState extends State<LandingPage>
                   vertical: screenH * 0.016,
                 ),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.05),
+                  color: Colors.white.withOpacity(0.75),
                   borderRadius: BorderRadius.circular(14),
-                  border: Border.all(
-                    color: Colors.white.withOpacity(0.08),
-                  ),
+                  border: Border.all(color: _accent.withOpacity(0.2)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: _accent.withOpacity(0.08),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
                 ),
                 child: Column(
                   children: [
                     Icon(
                       Icons.format_quote_rounded,
-                      color: const Color(0xFF1D9E75),
+                      color: _accent,
                       size: (screenH * 0.025).clamp(14.0, 20.0),
                     ),
                     SizedBox(height: screenH * 0.008),
@@ -280,7 +302,7 @@ class _LandingPageState extends State<LandingPage>
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         fontSize: (screenH * 0.016).clamp(10.0, 13.0),
-                        color: Colors.white.withOpacity(0.75),
+                        color: _textDark.withOpacity(0.75),
                         fontStyle: FontStyle.italic,
                         height: 1.5,
                       ),
@@ -290,7 +312,7 @@ class _LandingPageState extends State<LandingPage>
                       "— CleftTune Team",
                       style: TextStyle(
                         fontSize: (screenH * 0.014).clamp(9.0, 11.0),
-                        color: const Color(0xFF1D9E75),
+                        color: _accent,
                         letterSpacing: 0.4,
                         fontWeight: FontWeight.w600,
                       ),
@@ -313,22 +335,14 @@ class _LandingPageState extends State<LandingPage>
                   "Enhance your voice\nwith precision.",
                   screenH,
                 ),
-                Container(
-                  width: 1,
-                  height: 44,
-                  color: Colors.white.withOpacity(0.1),
-                ),
+                Container(width: 1, height: 44, color: _accent.withOpacity(0.15)),
                 _miniFeature(
                   Icons.shield_outlined,
                   "Private & Secure",
                   "Your data is protected\nand never shared.",
                   screenH,
                 ),
-                Container(
-                  width: 1,
-                  height: 44,
-                  color: Colors.white.withOpacity(0.1),
-                ),
+                Container(width: 1, height: 44, color: _accent.withOpacity(0.15)),
                 _miniFeature(
                   Icons.people_alt_outlined,
                   "Built for You",
@@ -339,44 +353,68 @@ class _LandingPageState extends State<LandingPage>
             ),
           ),
 
-          // ── BUTTON ──────────────────────────────────────────────────────
+          // ── BUTTONS ROW ─────────────────────────────────────────────────
           SlideTransition(
             position: _buttonSlide,
             child: FadeTransition(
               opacity: _fadeIn,
-              child: SizedBox(
-                width: double.infinity,
-                height: (screenH * 0.068).clamp(44.0, 54.0),
-                child: ElevatedButton(
-                  onPressed: widget.onContinue,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF1D9E75),
-                    elevation: 6,
-                    shadowColor: const Color(0xFF1D9E75).withOpacity(0.4),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        "Get Started",
-                        style: TextStyle(
-                          fontSize: (screenH * 0.02).clamp(13.0, 16.0),
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: SizedBox(
+                      height: (screenH * 0.068).clamp(44.0, 54.0),
+                      child: ElevatedButton(
+                        onPressed: widget.onContinue,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _textDark,
+                          elevation: 6,
+                          shadowColor: _accentDim.withOpacity(0.3),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        child: Text(
+                          "Start free",
+                          style: TextStyle(
+                            fontSize: (screenH * 0.02).clamp(13.0, 16.0),
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
                         ),
                       ),
-                      const SizedBox(width: 8),
-                      const Icon(
-                        Icons.arrow_forward_rounded,
-                        color: Colors.white,
-                        size: 18,
-                      ),
-                    ],
+                    ),
                   ),
-                ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: SizedBox(
+                      height: (screenH * 0.068).clamp(44.0, 54.0),
+                      child: OutlinedButton(
+                        onPressed: widget.onContinue,
+                        style: OutlinedButton.styleFrom(
+                          side: BorderSide(color: _textDark.withOpacity(0.4), width: 1.5),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(
+                              "See demo",
+                              style: TextStyle(
+                                fontSize: (screenH * 0.02).clamp(13.0, 16.0),
+                                fontWeight: FontWeight.w600,
+                                color: _textDark,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Icon(Icons.arrow_forward_rounded, color: _textDark, size: 16),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -389,7 +427,115 @@ class _LandingPageState extends State<LandingPage>
   Widget _buildDesktop() {
     return Row(
       children: [
-        // LEFT — logo + tagline
+        // LEFT — label + tagline + subtitle + buttons
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 56),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                FadeTransition(
+                  opacity: _fadeIn,
+                  child: Text(
+                    "AI VOICE SUPPORT",
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: _label,
+                      letterSpacing: 1.8,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                SlideTransition(
+                  position: _taglineSlide,
+                  child: FadeTransition(
+                    opacity: _fadeIn,
+                    child: _buildTagline(),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                FadeTransition(
+                  opacity: _fadeIn,
+                  child: Text(
+                    "CleftTune uses adaptive AI to enhance voice clarity\nfor people with cleft conditions — clear, confident\ncommunication starts here.",
+                    style: TextStyle(fontSize: 15, color: _textSub, height: 1.6),
+                  ),
+                ),
+                const SizedBox(height: 28),
+                SlideTransition(
+                  position: _buttonSlide,
+                  child: FadeTransition(
+                    opacity: _fadeIn,
+                    child: Row(
+                      children: [
+                        SizedBox(
+                          height: 52,
+                          child: ElevatedButton(
+                            onPressed: widget.onContinue,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: _textDark,
+                              padding: const EdgeInsets.symmetric(horizontal: 28),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              elevation: 4,
+                            ),
+                            child: const Text(
+                              "Start free",
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+                        SizedBox(
+                          height: 52,
+                          child: OutlinedButton(
+                            onPressed: widget.onContinue,
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(horizontal: 24),
+                              side: BorderSide(
+                                color: _textDark.withOpacity(0.35),
+                                width: 1.5,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Text(
+                                  "See demo",
+                                  style: TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w600,
+                                    color: _textDark,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Icon(Icons.arrow_forward_rounded,
+                                    color: _textDark, size: 16),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 36),
+                FadeTransition(opacity: _fadeIn, child: _buildFeatureRow()),
+              ],
+            ),
+          ),
+        ),
+
+        // RIGHT — logo + quote
         Expanded(
           child: Center(
             child: Column(
@@ -402,64 +548,15 @@ class _LandingPageState extends State<LandingPage>
                     child: _buildLogo(240),
                   ),
                 ),
-                const SizedBox(height: 28),
-                SlideTransition(
-                  position: _taglineSlide,
-                  child: FadeTransition(
-                    opacity: _fadeIn,
-                    child: _buildTagline(centered: true),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                FadeTransition(
-                  opacity: _fadeIn,
-                  child: Text(
-                    "CleftTune bridges the gap —\none word at a time.",
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 15,
-                      color: Colors.white.withOpacity(0.5),
-                      height: 1.6,
+                const SizedBox(height: 32),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 32),
+                  child: SlideTransition(
+                    position: _quoteSlide,
+                    child: FadeTransition(
+                      opacity: _fadeIn,
+                      child: _buildQuote(),
                     ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-
-        // RIGHT — brand + quote + features + button
-        Expanded(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 56),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SlideTransition(
-                  position: _textSlide,
-                  child: FadeTransition(
-                    opacity: _fadeIn,
-                    child: _buildBrandName(),
-                  ),
-                ),
-                const SizedBox(height: 4),
-                FadeTransition(opacity: _fadeIn, child: _buildSubtitle()),
-                const SizedBox(height: 24),
-                SlideTransition(
-                  position: _quoteSlide,
-                  child: FadeTransition(
-                      opacity: _fadeIn, child: _buildQuote()),
-                ),
-                const SizedBox(height: 24),
-                FadeTransition(
-                    opacity: _fadeIn, child: _buildFeatureRow()),
-                const SizedBox(height: 36),
-                SlideTransition(
-                  position: _buttonSlide,
-                  child: FadeTransition(
-                    opacity: _fadeIn,
-                    child: _buildButton(fullWidth: true),
                   ),
                 ),
               ],
@@ -472,7 +569,6 @@ class _LandingPageState extends State<LandingPage>
 
   // ─── SHARED WIDGETS ───────────────────────────────────────────────────────
 
-  /// Pulsing logo with animated glow rings
   Widget _buildLogo(double size) {
     return AnimatedBuilder(
       animation: Listenable.merge([_pulse, _waveController]),
@@ -480,6 +576,15 @@ class _LandingPageState extends State<LandingPage>
         return Stack(
           alignment: Alignment.center,
           children: [
+            // Pale blue blob behind logo
+            Container(
+              width: size * 1.6,
+              height: size * 1.6,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: const Color(0xFFD6EEFF).withOpacity(0.6),
+              ),
+            ),
             // Outer glow ring 2
             Transform.scale(
               scale: 1.0 + (_waveController.value * 0.08),
@@ -489,8 +594,9 @@ class _LandingPageState extends State<LandingPage>
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   border: Border.all(
-                    color: const Color(0xFF1D9E75).withOpacity(
-                        0.12 * (1 - _waveController.value)),
+                    color: _accent.withOpacity(
+                      0.10 * (1 - _waveController.value),
+                    ),
                     width: 1,
                   ),
                 ),
@@ -505,23 +611,23 @@ class _LandingPageState extends State<LandingPage>
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   border: Border.all(
-                    color: const Color(0xFF1D9E75).withOpacity(0.18),
+                    color: _accent.withOpacity(0.25),
                     width: 1,
                   ),
                 ),
               ),
             ),
-            // Waveform lines left side
+            // Waveform lines left
             Positioned(
               left: 0,
               child: _buildWaveformSide(size * 0.38, mirrored: false),
             ),
-            // Waveform lines right side
+            // Waveform lines right
             Positioned(
               right: 0,
               child: _buildWaveformSide(size * 0.38, mirrored: true),
             ),
-            // Main logo circle
+            // Main logo circle — sky blue gradient with teal border
             Transform.scale(
               scale: _pulse.value,
               child: Container(
@@ -530,17 +636,20 @@ class _LandingPageState extends State<LandingPage>
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   gradient: const RadialGradient(
-                    colors: [Color(0xFF1A3A3A), Color(0xFF0D2020)],
+                    colors: [
+                      Color(0xFFD6EEFF), // Sky blue mid
+                      Color(0xFFBFDFF7), // Sky blue deeper
+                    ],
                     center: Alignment.topLeft,
                     radius: 1.4,
                   ),
                   border: Border.all(
-                    color: const Color(0xFF1D9E75).withOpacity(0.4),
+                    color: _accent.withOpacity(0.35),
                     width: 2,
                   ),
                   boxShadow: [
                     BoxShadow(
-                      color: const Color(0xFF1D9E75).withOpacity(0.25),
+                      color: _accent.withOpacity(0.15),
                       blurRadius: 28,
                       spreadRadius: 2,
                     ),
@@ -554,8 +663,7 @@ class _LandingPageState extends State<LandingPage>
                         size: Size(size, size),
                         painter: _DashedCirclePainter(
                           radius: size * 0.44,
-                          color:
-                              const Color(0xFF1D9E75).withOpacity(0.35),
+                          color: _accent.withOpacity(0.25),
                         ),
                       ),
                       Padding(
@@ -599,7 +707,7 @@ class _LandingPageState extends State<LandingPage>
                   width: 2,
                   height: 6 + bars[i] * 36 * factor,
                   decoration: BoxDecoration(
-                    color: const Color(0xFF1D9E75).withOpacity(0.55),
+                    color: _accent.withOpacity(0.55),
                     borderRadius: BorderRadius.circular(2),
                   ),
                 );
@@ -614,24 +722,24 @@ class _LandingPageState extends State<LandingPage>
   Widget _buildTagline({bool centered = false}) {
     return RichText(
       textAlign: centered ? TextAlign.center : TextAlign.left,
-      text: const TextSpan(
+      text: TextSpan(
         children: [
           TextSpan(
-            text: "Your Voice,\n",
+            text: "Speak with confidence.\nBe ",
             style: TextStyle(
-              fontSize: 34,
+              fontSize: 38,
               fontWeight: FontWeight.w800,
-              color: Colors.white,
+              color: _textDark,
               height: 1.2,
               letterSpacing: -0.5,
             ),
           ),
           TextSpan(
-            text: "Understood.",
+            text: "understood.",
             style: TextStyle(
-              fontSize: 34,
+              fontSize: 38,
               fontWeight: FontWeight.w800,
-              color: Color(0xFF1D9E75),
+              color: _accent,
               height: 1.2,
               letterSpacing: -0.5,
             ),
@@ -643,14 +751,14 @@ class _LandingPageState extends State<LandingPage>
 
   Widget _buildBrandName() {
     return RichText(
-      text: const TextSpan(
+      text: TextSpan(
         children: [
           TextSpan(
             text: "Cleft",
             style: TextStyle(
               fontSize: 44,
               fontWeight: FontWeight.bold,
-              color: Colors.white,
+              color: _textDark,
               letterSpacing: -0.5,
             ),
           ),
@@ -659,7 +767,7 @@ class _LandingPageState extends State<LandingPage>
             style: TextStyle(
               fontSize: 44,
               fontWeight: FontWeight.bold,
-              color: Color(0xFF1D9E75),
+              color: _accent,
               letterSpacing: -0.5,
             ),
           ),
@@ -671,11 +779,7 @@ class _LandingPageState extends State<LandingPage>
   Widget _buildSubtitle() {
     return Text(
       "AI-powered voice support for clearer,\nmore confident communication.",
-      style: TextStyle(
-        fontSize: 15,
-        color: Colors.white.withOpacity(0.6),
-        height: 1.6,
-      ),
+      style: TextStyle(fontSize: 15, color: _textSub, height: 1.6),
     );
   }
 
@@ -683,9 +787,16 @@ class _LandingPageState extends State<LandingPage>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.05),
+        color: Colors.white.withOpacity(0.8),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white.withOpacity(0.1), width: 1),
+        border: Border.all(color: _accent.withOpacity(0.2), width: 1),
+        boxShadow: [
+          BoxShadow(
+            color: _accent.withOpacity(0.08),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -693,14 +804,10 @@ class _LandingPageState extends State<LandingPage>
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: const Color(0xFF1D9E75).withOpacity(0.15),
+              color: _accent.withOpacity(0.1),
               borderRadius: BorderRadius.circular(8),
             ),
-            child: const Icon(
-              Icons.format_quote,
-              color: Color(0xFF1D9E75),
-              size: 18,
-            ),
+            child: Icon(Icons.format_quote, color: _accent, size: 18),
           ),
           const SizedBox(height: 12),
           Text(
@@ -708,16 +815,16 @@ class _LandingPageState extends State<LandingPage>
             style: TextStyle(
               fontSize: 15,
               fontStyle: FontStyle.italic,
-              color: Colors.white.withOpacity(0.75),
+              color: _textDark.withOpacity(0.7),
               height: 1.65,
             ),
           ),
           const SizedBox(height: 12),
-          const Text(
+          Text(
             "— CleftTune Team",
             style: TextStyle(
               fontSize: 12,
-              color: Color(0xFF1D9E75),
+              color: _accent,
               letterSpacing: 0.4,
               fontWeight: FontWeight.w600,
             ),
@@ -729,21 +836,9 @@ class _LandingPageState extends State<LandingPage>
 
   Widget _buildFeatureRow() {
     final features = [
-      (
-        Icons.graphic_eq_rounded,
-        "Voice Clarity",
-        "Enhance your voice\nwith precision.",
-      ),
-      (
-        Icons.shield_outlined,
-        "Private & Secure",
-        "Your data is protected\nand never shared.",
-      ),
-      (
-        Icons.people_alt_outlined,
-        "Built for You",
-        "Designed with care,\ndriven by empathy.",
-      ),
+      (Icons.graphic_eq_rounded,  "Voice Clarity",    "Enhance your voice\nwith precision."),
+      (Icons.shield_outlined,     "Private & Secure",  "Your data is protected\nand never shared."),
+      (Icons.people_alt_outlined, "Built for You",     "Designed with care,\ndriven by empathy."),
     ];
 
     return Row(
@@ -758,7 +853,7 @@ class _LandingPageState extends State<LandingPage>
                 Container(
                   width: 1,
                   height: 48,
-                  color: Colors.white.withOpacity(0.1),
+                  color: _accent.withOpacity(0.15),
                   margin: const EdgeInsets.symmetric(horizontal: 4),
                 ),
             ],
@@ -774,30 +869,26 @@ class _LandingPageState extends State<LandingPage>
         Container(
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(
-            color: const Color(0xFF1D9E75).withOpacity(0.12),
+            color: _accent.withOpacity(0.1),
             shape: BoxShape.circle,
           ),
-          child: Icon(icon, color: const Color(0xFF1D9E75), size: 20),
+          child: Icon(icon, color: _accent, size: 20),
         ),
         const SizedBox(height: 8),
         Text(
           title,
           textAlign: TextAlign.center,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 12,
             fontWeight: FontWeight.w600,
-            color: Colors.white,
+            color: _textDark,
           ),
         ),
         const SizedBox(height: 4),
         Text(
           subtitle,
           textAlign: TextAlign.center,
-          style: TextStyle(
-            fontSize: 10,
-            color: Colors.white.withOpacity(0.45),
-            height: 1.5,
-          ),
+          style: TextStyle(fontSize: 10, color: _textSub, height: 1.5),
         ),
       ],
     );
@@ -805,23 +896,23 @@ class _LandingPageState extends State<LandingPage>
 
   Widget _buildButton({bool fullWidth = false}) {
     return SizedBox(
-      width: fullWidth ? double.infinity : 220,
+      width: fullWidth ? double.infinity : 180,
       height: 52,
       child: ElevatedButton(
         onPressed: widget.onContinue,
         style: ElevatedButton.styleFrom(
-          backgroundColor: const Color(0xFF1D9E75),
+          backgroundColor: _textDark,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14),
           ),
           elevation: 6,
-          shadowColor: const Color(0xFF1D9E75).withOpacity(0.4),
+          shadowColor: _accentDim.withOpacity(0.3),
         ),
         child: const Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Text(
-              "Get Started",
+              "Start free",
               style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.bold,
@@ -829,8 +920,6 @@ class _LandingPageState extends State<LandingPage>
                 letterSpacing: 0.3,
               ),
             ),
-            SizedBox(width: 8),
-            Icon(Icons.arrow_forward, color: Colors.white, size: 18),
           ],
         ),
       ),
@@ -838,13 +927,17 @@ class _LandingPageState extends State<LandingPage>
   }
 }
 
-// ─── MOBILE FEATURE CHIP (with subtitle, matching desktop) ────────────────────
+// ─── MOBILE FEATURE CHIP ─────────────────────────────────────────────────────
 Widget _miniFeature(
   IconData icon,
   String label,
   String subtitle,
   double screenH,
 ) {
+  const accent   = Color(0xFF0077B6);
+  const textDark = Color(0xFF0D2B4E);
+  const textSub  = Color(0xFF5A7A96);
+
   return Expanded(
     child: Column(
       mainAxisSize: MainAxisSize.min,
@@ -853,12 +946,12 @@ Widget _miniFeature(
           width: (screenH * 0.052).clamp(36.0, 46.0),
           height: (screenH * 0.052).clamp(36.0, 46.0),
           decoration: BoxDecoration(
-            color: const Color(0xFF1D9E75).withOpacity(0.12),
+            color: accent.withOpacity(0.1),
             shape: BoxShape.circle,
           ),
           child: Icon(
             icon,
-            color: const Color(0xFF1D9E75),
+            color: accent,
             size: (screenH * 0.026).clamp(16.0, 22.0),
           ),
         ),
@@ -866,9 +959,9 @@ Widget _miniFeature(
         Text(
           label,
           textAlign: TextAlign.center,
-          style: TextStyle(
-            fontSize: (screenH * 0.015).clamp(9.0, 12.0),
-            color: Colors.white,
+          style: const TextStyle(
+            fontSize: 12,
+            color: textDark,
             fontWeight: FontWeight.w600,
           ),
         ),
@@ -878,7 +971,7 @@ Widget _miniFeature(
           textAlign: TextAlign.center,
           style: TextStyle(
             fontSize: (screenH * 0.013).clamp(8.0, 10.5),
-            color: Colors.white.withOpacity(0.45),
+            color: textSub,
             height: 1.4,
           ),
         ),
@@ -887,7 +980,7 @@ Widget _miniFeature(
   );
 }
 
-// ─── DASHED CIRCLE PAINTER ────────────────────────────────────────────────────
+// ─── DASHED CIRCLE PAINTER ───────────────────────────────────────────────────
 class _DashedCirclePainter extends CustomPainter {
   final double radius;
   final Color color;

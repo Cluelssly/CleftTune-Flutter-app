@@ -1,28 +1,18 @@
-// lib/services/paymongo_service.dart
-//
-// ⚠️  Only your PUBLIC key goes here (pk_test_... or pk_live_...).
-//     Never put your secret key in Flutter code.
-
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 class PaymongoService {
-  // ── REPLACE with your real PayMongo public key ──────────────────────────────
-  static const _publicKey = 'pk_live_iVpx5yFRt94HcxJPmx1EsQ9z';
-  // ────────────────────────────────────────────────────────────────────────────
+  static const _publicKey = 'pk_test_D1CrzWbhj7DEJWT2Aez1g2GE';
 
-  static String get _authHeader =>
-      'Basic ${base64Encode(utf8.encode('$_publicKey:'))}';
+  // SECRET KEY REMOVED
+  static const _secretKey = '';
 
   static const _baseUrl = 'https://api.paymongo.com/v1';
 
-  /// Creates a PayMongo Source for GCash or Maya.
-  /// Returns the full source object (contains checkout_url inside attributes.redirect).
-  ///
-  /// [type]             → 'gcash' | 'paymaya'
-  /// [amountCentavos]   → amount in centavos  e.g. 9900 = ₱99
-  /// [successUrl]       → where PayMongo redirects after successful payment
-  /// [failedUrl]        → where PayMongo redirects after failed / cancelled payment
+  static String _basicAuth(String key) =>
+      'Basic ${base64Encode(utf8.encode('$key:'))}';
+
+  // ─── SOURCES API: GCash ───────────────────────────────────────────────────
   static Future<Map<String, dynamic>> createSource({
     required String type,
     required int amountCentavos,
@@ -30,14 +20,12 @@ class PaymongoService {
     required String failedUrl,
     required String name,
     required String email,
-    String phone = '09000000000',
   }) async {
     final response = await http.post(
       Uri.parse('$_baseUrl/sources'),
       headers: {
-        'Authorization': _authHeader,
         'Content-Type': 'application/json',
-        'Accept': 'application/json',
+        'Authorization': _basicAuth(_publicKey),
       },
       body: jsonEncode({
         'data': {
@@ -52,33 +40,147 @@ class PaymongoService {
             'billing': {
               'name': name,
               'email': email,
-              'phone': phone,
             },
           },
         },
       }),
     );
 
-    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    final json = jsonDecode(response.body);
 
-    if (response.statusCode == 200 || response.statusCode == 201) {
-      return body['data'] as Map<String, dynamic>;
-    } else {
-      final errors = body['errors'] as List?;
-      final detail = errors?.isNotEmpty == true
-          ? errors![0]['detail']
-          : 'Unknown PayMongo error';
-      throw Exception(detail);
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      throw Exception(
+        json['errors']?[0]?['detail'] ?? 'Source creation failed',
+      );
     }
+
+    return json['data'] as Map<String, dynamic>;
   }
 
-  /// Extracts the checkout URL from a source object returned by [createSource].
   static String checkoutUrlFrom(Map<String, dynamic> source) {
     return source['attributes']['redirect']['checkout_url'] as String;
   }
 
-  /// Extracts the source ID (needed for webhook / server-side payment capture).
-  static String idFrom(Map<String, dynamic> source) {
-    return source['id'] as String;
+  // ─── PAYMENT INTENT API: Maya ─────────────────────────────────────────────
+  static Future<String> createPaymentIntentCheckoutUrl({
+    required String paymentMethodType,
+    required int amountCentavos,
+    required String successUrl,
+    required String failedUrl,
+    required String name,
+    required String email,
+  }) async {
+    // Step 1: Create Payment Intent
+    final intentRes = await http.post(
+      Uri.parse('$_baseUrl/payment_intents'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': _basicAuth(_secretKey),
+      },
+      body: jsonEncode({
+        'data': {
+          'attributes': {
+            'amount': amountCentavos,
+            'currency': 'PHP',
+            'payment_method_allowed': [paymentMethodType],
+            'capture_type': 'automatic',
+          },
+        },
+      }),
+    );
+
+    final intentJson = jsonDecode(intentRes.body);
+
+    if (intentRes.statusCode != 200 && intentRes.statusCode != 201) {
+      throw Exception(
+        intentJson['errors']?[0]?['detail'] ??
+            'Payment Intent creation failed',
+      );
+    }
+
+    final intentId = intentJson['data']['id'] as String;
+
+    final clientKey =
+        intentJson['data']['attributes']['client_key'] as String;
+
+    // Step 2: Build Payment Method attributes
+    final Map<String, dynamic> methodAttributes = {
+      'type': paymentMethodType,
+      'billing': {
+        'name': name,
+        'email': email,
+      },
+    };
+
+    if (paymentMethodType == 'dob') {
+      methodAttributes['details'] = {
+        'bank_code': 'bank_AQUZMXsZUXY4Wg1MRfFpPWTB',
+      };
+    }
+
+    // Step 3: Create Payment Method
+    final methodRes = await http.post(
+      Uri.parse('$_baseUrl/payment_methods'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': _basicAuth(_publicKey),
+      },
+      body: jsonEncode({
+        'data': {
+          'attributes': methodAttributes,
+        },
+      }),
+    );
+
+    final methodJson = jsonDecode(methodRes.body);
+
+    if (methodRes.statusCode != 200 && methodRes.statusCode != 201) {
+      throw Exception(
+        methodJson['errors']?[0]?['detail'] ??
+            'Payment Method creation failed',
+      );
+    }
+
+    final paymentMethodId = methodJson['data']['id'] as String;
+
+    // Step 4: Attach Payment Method to Intent
+    final attachRes = await http.post(
+      Uri.parse('$_baseUrl/payment_intents/$intentId/attach'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': _basicAuth(_publicKey),
+      },
+      body: jsonEncode({
+        'data': {
+          'attributes': {
+            'payment_method': paymentMethodId,
+            'client_key': clientKey,
+            'return_url': successUrl,
+          },
+        },
+      }),
+    );
+
+    final attachJson = jsonDecode(attachRes.body);
+
+    if (attachRes.statusCode != 200 && attachRes.statusCode != 201) {
+      throw Exception(
+        attachJson['errors']?[0]?['detail'] ?? 'Attach failed',
+      );
+    }
+
+    final nextAction =
+        attachJson['data']['attributes']['next_action'];
+
+    final checkoutUrl =
+        nextAction?['redirect']?['url'] as String?;
+
+    if (checkoutUrl == null || checkoutUrl.isEmpty) {
+      throw Exception(
+        'No redirect URL returned. Make sure Maya is enabled in your PayMongo dashboard.',
+      );
+    }
+
+    return checkoutUrl;
   }
 }

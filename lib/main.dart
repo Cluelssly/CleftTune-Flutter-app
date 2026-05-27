@@ -1,6 +1,9 @@
+import 'package:flutter/foundation.dart';                                               // ✅ add this
 import 'package:flutter/material.dart';
-import 'dart:ui'; // for ImageFilter.blur
+import 'dart:ui';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:webview_flutter/webview_flutter.dart';                  // ✅ add this
+import 'package:webview_flutter_android/webview_flutter_android.dart';
 import 'profile.dart';
 import 'firebase_options.dart';
 import 'premium.dart';
@@ -11,48 +14,37 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'translator_screen.dart';
 import 'landing_page.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:intl/intl.dart';
-
 import 'paymongo_service.dart';
 import 'payment_webview_screen.dart';
-
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+ 
+  // ✅ Initialize Android WebView platform before anything else
+  if (kIsWeb) {
+  print("Running on Web");
+}
+ 
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   runApp(const CleftTuneApp());
 }
-
+ 
 class CleftTuneApp extends StatelessWidget {
   const CleftTuneApp({super.key});
-
+ 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'CleftTune',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData.dark().copyWith(
-        primaryColor: const Color(0xFF1D9E75),
-        scaffoldBackgroundColor: const Color(0xFF0A1628),
+      theme: ThemeData.light().copyWith(
+        primaryColor: const Color(0xFF0077B6),
+        scaffoldBackgroundColor: const Color(0xFFEAF4FB),
       ),
       home: const RootRouter(),
     );
   }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ROOT ROUTER
-//
-// UPDATED PERSISTENT LOGIN FLOW:
-//   • App launch, user already signed in  → go directly to AppShell
-//   • App launch, no user                 → show LandingPage
-//   • User taps Continue on Landing       → show PremiumScreen (login/signup)
-//   • User logs in / signs up             → FirebaseAuth emits User → AppShell
-//   • User logs out                       → FirebaseAuth emits null → LandingPage
-//
-// The key change: we check FirebaseAuth.instance.currentUser on startup.
-// If a session already exists, we skip the landing page entirely.
-// ─────────────────────────────────────────────────────────────────────────────
 
 class RootRouter extends StatefulWidget {
   const RootRouter({super.key});
@@ -62,55 +54,42 @@ class RootRouter extends StatefulWidget {
 }
 
 class _RootRouterState extends State<RootRouter> {
-  // Show landing only when there is no active session on startup.
-  // If the user is already logged in (persistent session), skip landing.
   late bool _showLanding;
 
   @override
   void initState() {
     super.initState();
-    // ✅ KEY FIX: If Firebase already has a current user (saved session),
-    // we don't show the landing page — the user stays logged in.
     _showLanding = FirebaseAuth.instance.currentUser == null;
   }
 
   void _onLandingContinue() => setState(() => _showLanding = false);
 
-  // Called by PremiumScreen's onBack to return to landing.
   void _onBackToLanding() => setState(() => _showLanding = true);
 
   @override
   Widget build(BuildContext context) {
-    // If no active session on startup, show landing first.
     if (_showLanding) {
       return LandingPage(onContinue: _onLandingContinue);
     }
 
-    // React to Firebase auth state in real-time.
     return StreamBuilder<User?>(
       stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, snapshot) {
-        // Still waiting for the first auth event — show a minimal loader.
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Scaffold(
-            backgroundColor: Color(0xFF0D2B2B),
+            backgroundColor: Color(0xFFEAF4FB),
             body: Center(
-              child: CircularProgressIndicator(color: Color(0xFF1D9E75)),
+              child: CircularProgressIndicator(color: Color(0xFF0077B6)),
             ),
           );
         }
 
-        // ✅ User is signed in (new login OR restored session) → show app.
         if (snapshot.hasData && snapshot.data != null) {
           return const AppShell();
         }
 
-        // No user (logged out or never logged in) → show login screen.
         return PremiumScreen(
-          onLogin: () {
-            // Nothing needed — StreamBuilder rebuilds automatically
-            // once FirebaseAuth emits the signed-in user.
-          },
+          onLogin: () {},
           onBack: _onBackToLanding,
         );
       },
@@ -143,7 +122,7 @@ class CleftBackground extends StatelessWidget {
           ),
         ),
         Container(
-          color: const Color(0xD80A1F2E),
+          color: const Color(0xE8EAF4FB),
         ),
         child,
       ],
@@ -152,7 +131,7 @@ class CleftBackground extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// APP SHELL  (shown only when a user is signed in)
+// APP SHELL
 // ─────────────────────────────────────────────────────────────────────────────
 
 class AppShell extends StatefulWidget {
@@ -165,9 +144,9 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> {
   int _currentIndex = 0;
 
-  static const _teal    = Color(0xFF1D9E75);
-  static const _tealDim = Color(0x261D9E75);
-  static const _navBg   = Color(0xFF071520);
+  static const _accent      = Color(0xFF0077B6);
+  static const _accentTint  = Color(0x260077B6);
+  static const _navBg       = Color(0xFFDAEEFA);
 
   void _openPremium() {
     Navigator.push(
@@ -204,7 +183,7 @@ class _AppShellState extends State<AppShell> {
 
         if (isWide) {
           return Scaffold(
-            backgroundColor: const Color(0xFF0A1628),
+            backgroundColor: const Color(0xFFEAF4FB),
             body: Row(
               children: [
                 Container(
@@ -215,28 +194,28 @@ class _AppShellState extends State<AppShell> {
                     onDestinationSelected: _switchPage,
                     labelType: NavigationRailLabelType.all,
                     selectedIconTheme:
-                        const IconThemeData(color: _teal),
+                        const IconThemeData(color: _accent),
                     unselectedIconTheme:
-                        const IconThemeData(color: Colors.white38),
+                        const IconThemeData(color: Color(0xFF5A7A96)),
                     selectedLabelTextStyle: const TextStyle(
-                        color: _teal,
+                        color: _accent,
                         fontSize: 12,
                         fontWeight: FontWeight.w600),
                     unselectedLabelTextStyle: const TextStyle(
-                        color: Colors.white38, fontSize: 12),
+                        color: Color(0xFF5A7A96), fontSize: 12),
                     leading: Padding(
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       child: Container(
                         width: 36,
                         height: 36,
                         decoration: BoxDecoration(
-                          color: _tealDim,
+                          color: _accentTint,
                           shape: BoxShape.circle,
                           border:
-                              Border.all(color: const Color(0x401D9E75)),
+                              Border.all(color: const Color(0x400077B6)),
                         ),
                         child: const Icon(Icons.graphic_eq_rounded,
-                            color: _teal, size: 18),
+                            color: _accent, size: 18),
                       ),
                     ),
                     destinations: const [
@@ -259,7 +238,7 @@ class _AppShellState extends State<AppShell> {
                   ),
                 ),
                 Container(
-                    width: 0.5, color: const Color(0x201D9E75)),
+                    width: 0.5, color: const Color(0x400077B6)),
                 Expanded(child: ClipRect(child: _currentScreen)),
               ],
             ),
@@ -268,20 +247,20 @@ class _AppShellState extends State<AppShell> {
 
         // Mobile layout
         return Scaffold(
-          backgroundColor: const Color(0xFF0A1628),
+          backgroundColor: const Color(0xFFEAF4FB),
           body: _currentScreen,
           bottomNavigationBar: Container(
             decoration: const BoxDecoration(
               color: _navBg,
               border: Border(
-                top: BorderSide(color: Color(0x201D9E75), width: 0.5),
+                top: BorderSide(color: Color(0x400077B6), width: 0.5),
               ),
             ),
             child: BottomNavigationBar(
               backgroundColor: Colors.transparent,
               elevation: 0,
-              selectedItemColor: _teal,
-              unselectedItemColor: Colors.white38,
+              selectedItemColor: _accent,
+              unselectedItemColor: Color(0xFF5A7A96),
               currentIndex: _currentIndex,
               onTap: _switchPage,
               items: const [
@@ -319,15 +298,15 @@ class HistoryScreen extends StatefulWidget {
 }
  
 class _HistoryScreenState extends State<HistoryScreen> {
-  // ── Theme ────────────────────────────────────────────────────────────────
-  static const _teal       = Color(0xFF1D9E75);
-  static const _tealDim    = Color(0x261D9E75);
-  static const _tealBorder = Color(0x401D9E75);
-  static const _white40    = Color(0x66FFFFFF);
-  static const _white12    = Color(0x1FFFFFFF);
-  static const _redDim     = Color(0x26E74C3C);
-  static const _red        = Color(0xFFE74C3C);
-  static const _redBorder  = Color(0x40E74C3C);
+  // ── Theme (Sky Blue / Navy) ───────────────────────────────────────────────
+  static const _accent       = Color(0xFF0077B6);
+  static const _accentTint   = Color(0x260077B6);
+  static const _accentBorder = Color(0x400077B6);
+  static const _textSub      = Color(0xFF5A7A96);
+  static const _white12      = Color(0x1A0077B6);
+  static const _redDim       = Color(0x26E74C3C);
+  static const _red          = Color(0xFFE74C3C);
+  static const _redBorder    = Color(0x40E74C3C);
  
   String _searchQuery = '';
   final TextEditingController _searchCtrl = TextEditingController();
@@ -338,7 +317,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
     super.dispose();
   }
  
-  // ── Group docs by date label ─────────────────────────────────────────────
   Map<String, List<QueryDocumentSnapshot>> _groupByDate(
       List<QueryDocumentSnapshot> docs) {
     final now       = DateTime.now();
@@ -360,7 +338,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
       } else if (date == yesterday) {
         label = 'YESTERDAY';
       } else {
-        // e.g. "MON, JAN 6" or "MON, JAN 6, 2024" if different year
         final fmt = date.year == now.year
             ? DateFormat('EEE, MMM d').format(date).toUpperCase()
             : DateFormat('EEE, MMM d, yyyy').format(date).toUpperCase();
@@ -372,11 +349,10 @@ class _HistoryScreenState extends State<HistoryScreen> {
     return grouped;
   }
  
-  // ── Delete single doc with confirm dialog ────────────────────────────────
   Future<void> _deleteItem(QueryDocumentSnapshot doc) async {
     final confirmed = await showDialog<bool>(
       context: context,
-      barrierColor: Colors.black.withOpacity(0.6),
+      barrierColor: Colors.black.withOpacity(0.4),
       builder: (ctx) => Dialog(
         backgroundColor: Colors.transparent,
         child: Container(
@@ -385,7 +361,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
             gradient: const LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
-              colors: [Color(0xFF0D2B2B), Color(0xFF0E2233)],
+              colors: [Color(0xFFDAEEFA), Color(0xFFEAF4FB)],
             ),
             borderRadius: BorderRadius.circular(20),
             border: Border.all(color: _redBorder, width: 1.2),
@@ -402,26 +378,26 @@ class _HistoryScreenState extends State<HistoryScreen> {
             const SizedBox(height: 16),
             const Text(
               'Delete Entry?',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: Colors.white),
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: Color(0xFF0D2B4E)),
             ),
             const SizedBox(height: 8),
             Text(
               'This translation will be permanently removed from your history.',
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 13, color: Colors.white.withOpacity(0.5), height: 1.5),
+              style: TextStyle(fontSize: 13, color: Color(0xFF5A7A96), height: 1.5),
             ),
             const SizedBox(height: 24),
             Row(children: [
               Expanded(
                 child: OutlinedButton(
                   style: OutlinedButton.styleFrom(
-                    side: BorderSide(color: Colors.white.withOpacity(0.15)),
+                    side: BorderSide(color: Color(0xFF8AAEC8)),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     padding: const EdgeInsets.symmetric(vertical: 13),
                   ),
                   onPressed: () => Navigator.of(ctx).pop(false),
                   child: const Text('Cancel',
-                      style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w600)),
+                      style: TextStyle(color: Color(0xFF5A7A96), fontWeight: FontWeight.w600)),
                 ),
               ),
               const SizedBox(width: 12),
@@ -466,11 +442,10 @@ class _HistoryScreenState extends State<HistoryScreen> {
     }
   }
  
-  // ── Delete ALL for current user ──────────────────────────────────────────
   Future<void> _deleteAll(String uid) async {
     final confirmed = await showDialog<bool>(
       context: context,
-      barrierColor: Colors.black.withOpacity(0.6),
+      barrierColor: Colors.black.withOpacity(0.4),
       builder: (ctx) => Dialog(
         backgroundColor: Colors.transparent,
         child: Container(
@@ -479,7 +454,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
             gradient: const LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
-              colors: [Color(0xFF0D2B2B), Color(0xFF0E2233)],
+              colors: [Color(0xFFDAEEFA), Color(0xFFEAF4FB)],
             ),
             borderRadius: BorderRadius.circular(20),
             border: Border.all(color: _redBorder, width: 1.2),
@@ -496,26 +471,26 @@ class _HistoryScreenState extends State<HistoryScreen> {
             const SizedBox(height: 16),
             const Text(
               'Clear All History?',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: Colors.white),
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: Color(0xFF0D2B4E)),
             ),
             const SizedBox(height: 8),
             Text(
               'All your translation history will be permanently deleted. This cannot be undone.',
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 13, color: Colors.white.withOpacity(0.5), height: 1.5),
+              style: TextStyle(fontSize: 13, color: Color(0xFF5A7A96), height: 1.5),
             ),
             const SizedBox(height: 24),
             Row(children: [
               Expanded(
                 child: OutlinedButton(
                   style: OutlinedButton.styleFrom(
-                    side: BorderSide(color: Colors.white.withOpacity(0.15)),
+                    side: BorderSide(color: Color(0xFF8AAEC8)),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     padding: const EdgeInsets.symmetric(vertical: 13),
                   ),
                   onPressed: () => Navigator.of(ctx).pop(false),
                   child: const Text('Cancel',
-                      style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w600)),
+                      style: TextStyle(color: Color(0xFF5A7A96), fontWeight: FontWeight.w600)),
                 ),
               ),
               const SizedBox(width: 12),
@@ -565,7 +540,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
     }
   }
  
-  // ── BUILD ────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
@@ -594,15 +568,15 @@ class _HistoryScreenState extends State<HistoryScreen> {
                           Container(
                             width: 32, height: 32,
                             decoration: BoxDecoration(
-                              color: _tealDim, shape: BoxShape.circle,
-                              border: Border.all(color: _tealBorder),
+                              color: _accentTint, shape: BoxShape.circle,
+                              border: Border.all(color: _accentBorder),
                             ),
-                            child: const Icon(Icons.graphic_eq_rounded, color: _teal, size: 16),
+                            child: const Icon(Icons.graphic_eq_rounded, color: _accent, size: 16),
                           ),
                           const SizedBox(width: 10),
                           const Text('CleftTune',
                               style: TextStyle(
-                                  color: _teal, fontWeight: FontWeight.bold,
+                                  color: _accent, fontWeight: FontWeight.bold,
                                   fontSize: 16, letterSpacing: 0.5)),
                         ]),
                         InkWell(
@@ -612,10 +586,10 @@ class _HistoryScreenState extends State<HistoryScreen> {
                           child: Container(
                             width: 38, height: 38,
                             decoration: BoxDecoration(
-                              color: _tealDim, shape: BoxShape.circle,
-                              border: Border.all(color: _tealBorder),
+                              color: _accentTint, shape: BoxShape.circle,
+                              border: Border.all(color: _accentBorder),
                             ),
-                            child: const Icon(Icons.person, color: _teal, size: 18),
+                            child: const Icon(Icons.person, color: _accent, size: 18),
                           ),
                         ),
                       ],
@@ -631,14 +605,14 @@ class _HistoryScreenState extends State<HistoryScreen> {
                           Container(
                             width: 4, height: 28,
                             decoration: BoxDecoration(
-                              color: _teal,
+                              color: _accent,
                               borderRadius: BorderRadius.circular(2),
                             ),
                           ),
                           const SizedBox(width: 12),
                           const Text('History',
                               style: TextStyle(
-                                  color: Colors.white, fontSize: 28,
+                                  color: Color(0xFF0D2B4E), fontSize: 28,
                                   fontWeight: FontWeight.bold)),
                         ]),
                         if (user != null)
@@ -667,7 +641,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     const Padding(
                       padding: EdgeInsets.only(left: 16),
                       child: Text('Your recent vocal bridge captures.',
-                          style: TextStyle(color: _white40, fontSize: 13)),
+                          style: TextStyle(color: Color(0xFF5A7A96), fontSize: 13)),
                     ),
  
                     const SizedBox(height: 20),
@@ -676,22 +650,22 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       decoration: BoxDecoration(
-                        color: _tealDim,
+                        color: _accentTint,
                         borderRadius: BorderRadius.circular(30),
-                        border: Border.all(color: _tealBorder),
+                        border: Border.all(color: _accentBorder),
                       ),
                       child: Row(children: [
-                        const Icon(Icons.search_rounded, color: _teal),
+                        const Icon(Icons.search_rounded, color: _accent),
                         const SizedBox(width: 8),
                         Expanded(
                           child: TextField(
                             controller: _searchCtrl,
-                            style: const TextStyle(color: Colors.white),
+                            style: const TextStyle(color: Color(0xFF0D2B4E)),
                             onChanged: (v) =>
                                 setState(() => _searchQuery = v.toLowerCase()),
                             decoration: const InputDecoration(
                               hintText: 'Search history...',
-                              hintStyle: TextStyle(color: _white40),
+                              hintStyle: TextStyle(color: Color(0xFF5A7A96)),
                               border: InputBorder.none,
                             ),
                           ),
@@ -702,7 +676,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                               _searchCtrl.clear();
                               setState(() => _searchQuery = '');
                             },
-                            child: const Icon(Icons.close_rounded, color: _white40, size: 18),
+                            child: const Icon(Icons.close_rounded, color: Color(0xFF5A7A96), size: 18),
                           ),
                       ]),
                     ),
@@ -726,7 +700,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                                     ConnectionState.waiting) {
                                   return const Center(
                                     child: CircularProgressIndicator(
-                                        color: _teal, strokeWidth: 2),
+                                        color: _accent, strokeWidth: 2),
                                   );
                                 }
  
@@ -740,7 +714,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
                                 final allDocs =
                                     snapshot.data?.docs ?? [];
  
-                                // Filter by search
                                 final filtered = allDocs.where((doc) {
                                   final data =
                                       doc.data() as Map<String, dynamic>;
@@ -769,7 +742,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
                                 return ListView(
                                   physics: const BouncingScrollPhysics(),
                                   children: [
-                                    // Count badge
                                     Padding(
                                       padding: const EdgeInsets.only(bottom: 16),
                                       child: Row(children: [
@@ -777,14 +749,14 @@ class _HistoryScreenState extends State<HistoryScreen> {
                                           padding: const EdgeInsets.symmetric(
                                               horizontal: 10, vertical: 4),
                                           decoration: BoxDecoration(
-                                            color: _tealDim,
+                                            color: _accentTint,
                                             borderRadius: BorderRadius.circular(20),
-                                            border: Border.all(color: _tealBorder),
+                                            border: Border.all(color: _accentBorder),
                                           ),
                                           child: Text(
                                             '${filtered.length} ${filtered.length == 1 ? 'entry' : 'entries'}',
                                             style: const TextStyle(
-                                                color: _teal,
+                                                color: _accent,
                                                 fontSize: 11,
                                                 fontWeight: FontWeight.w600),
                                           ),
@@ -816,42 +788,39 @@ class _HistoryScreenState extends State<HistoryScreen> {
     );
   }
  
-  // ── SECTION LABEL ────────────────────────────────────────────────────────
   Widget _sectionLabel(String label, int count) {
     return Row(children: [
       Container(
         width: 3, height: 14,
         decoration: BoxDecoration(
-          color: _teal.withOpacity(0.6),
+          color: const Color(0xFF0077B6).withOpacity(0.6),
           borderRadius: BorderRadius.circular(2),
         ),
       ),
       const SizedBox(width: 8),
       Text(label,
           style: const TextStyle(
-              color: _white40, fontSize: 11,
+              color: Color(0xFF5A7A96), fontSize: 11,
               fontWeight: FontWeight.w600, letterSpacing: 0.8)),
       const SizedBox(width: 8),
       Container(
         padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
         decoration: BoxDecoration(
-          color: _tealDim,
+          color: const Color(0x260077B6),
           borderRadius: BorderRadius.circular(10),
         ),
         child: Text('$count',
             style: const TextStyle(
-                color: _teal, fontSize: 10, fontWeight: FontWeight.w700)),
+                color: Color(0xFF0077B6), fontSize: 10, fontWeight: FontWeight.w700)),
       ),
     ]);
   }
  
-  // ── CHAT BUBBLE WITH SWIPE-TO-DELETE ─────────────────────────────────────
   Widget _chatBubble(QueryDocumentSnapshot doc, String uid) {
     final data = doc.data() as Map<String, dynamic>;
     final text = data['text'] ?? '';
     final dt   = (data['time'] as Timestamp).toDate();
  
-    // Full date + time label
     final now      = DateTime.now();
     final today    = DateTime(now.year, now.month, now.day);
     final docDay   = DateTime(dt.year, dt.month, dt.day);
@@ -867,7 +836,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
         margin: const EdgeInsets.only(bottom: 10),
         padding: const EdgeInsets.symmetric(horizontal: 20),
         decoration: BoxDecoration(
-          color: _red.withOpacity(0.15),
+          color: _red.withOpacity(0.1),
           borderRadius: BorderRadius.circular(16),
           border: Border.all(color: _redBorder),
         ),
@@ -883,14 +852,14 @@ class _HistoryScreenState extends State<HistoryScreen> {
       ),
       confirmDismiss: (_) async {
         await _deleteItem(doc);
-        return false; // Firestore stream handles removal
+        return false;
       },
       child: Container(
         margin: const EdgeInsets.only(bottom: 10),
         decoration: BoxDecoration(
-          color: _white12,
+          color: const Color(0xFFDAEEFA),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: _tealBorder),
+          border: Border.all(color: _accentBorder),
         ),
         child: Material(
           color: Colors.transparent,
@@ -903,25 +872,23 @@ class _HistoryScreenState extends State<HistoryScreen> {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Icon
                   Container(
                     width: 36, height: 36,
                     decoration: BoxDecoration(
-                      color: _tealDim,
+                      color: _accentTint,
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: const Icon(Icons.translate_rounded, color: _teal, size: 17),
+                    child: const Icon(Icons.translate_rounded, color: _accent, size: 17),
                   ),
                   const SizedBox(width: 12),
  
-                  // Text + timestamp
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(text,
                             style: const TextStyle(
-                                color: Colors.white,
+                                color: Color(0xFF0D2B4E),
                                 fontWeight: FontWeight.w500,
                                 fontSize: 14,
                                 height: 1.4)),
@@ -929,27 +896,25 @@ class _HistoryScreenState extends State<HistoryScreen> {
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            // Full date pill
                             Container(
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 8, vertical: 3),
                               decoration: BoxDecoration(
-                                color: _tealDim,
+                                color: _accentTint,
                                 borderRadius: BorderRadius.circular(8),
                               ),
                               child: Row(mainAxisSize: MainAxisSize.min, children: [
                                 const Icon(Icons.access_time_rounded,
-                                    color: _teal, size: 11),
+                                    color: _accent, size: 11),
                                 const SizedBox(width: 4),
                                 Text(dateStr,
                                     style: const TextStyle(
-                                        color: _teal,
+                                        color: _accent,
                                         fontSize: 10,
                                         fontWeight: FontWeight.w500)),
                               ]),
                             ),
- 
-                            // Delete button
+
                             GestureDetector(
                               onTap: () => _deleteItem(doc),
                               child: Container(
@@ -977,7 +942,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
     );
   }
  
-  // ── EMPTY STATE ───────────────────────────────────────────────────────────
   Widget _emptyState({
     required IconData icon,
     required String message,
@@ -988,64 +952,60 @@ class _HistoryScreenState extends State<HistoryScreen> {
         Container(
           width: 70, height: 70,
           decoration: BoxDecoration(
-            color: _tealDim, shape: BoxShape.circle,
-            border: Border.all(color: _tealBorder),
+            color: const Color(0x260077B6), shape: BoxShape.circle,
+            border: Border.all(color: const Color(0x400077B6)),
           ),
-          child: Icon(icon, color: _teal, size: 30),
+          child: Icon(icon, color: const Color(0xFF0077B6), size: 30),
         ),
         const SizedBox(height: 16),
         Text(message,
             style: const TextStyle(
-                color: Colors.white, fontSize: 15, fontWeight: FontWeight.w600)),
+                color: Color(0xFF0D2B4E), fontSize: 15, fontWeight: FontWeight.w600)),
         if (subtitle != null) ...[
           const SizedBox(height: 6),
           Text(subtitle,
               textAlign: TextAlign.center,
-              style: const TextStyle(color: _white40, fontSize: 13)),
+              style: const TextStyle(color: Color(0xFF5A7A96), fontSize: 13)),
         ],
       ]),
     );
   }
 }
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SETTINGS SCREEN
 // ─────────────────────────────────────────────────────────────────────────────
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
- 
+
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
- 
+
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _isPremium    = false;
   bool _isLoading    = true;
   bool _isUpgrading  = false;
   bool _isCancelling = false;
- 
-  static const _teal       = Color(0xFF1D9E75);
-  static const _tealDim    = Color(0x261D9E75);
-  static const _tealBorder = Color(0x401D9E75);
-  static const _cardColor  = Color(0x0DFFFFFF);
-  static const _white40    = Color(0x66FFFFFF);
- 
-  // ── PayMongo redirect URLs ──────────────────────────────────────────────────
-  // These are the URLs PayMongo sends the user back to after paying.
-  // Use your real domain or a Firebase Hosting URL in production.
-  // In test mode any URL works fine.
- // ✅ Replace with your real Firebase URLs
-static const _successUrl = 'https://appcleft2026-55337.web.app/payment/success';
-static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
-  // ─────────────────────────────────────────────────────────────────────────────
- 
+
+  // ── Theme (Sky Blue / Navy) ────────────────────────────────────────────────
+  static const _accent       = Color(0xFF0077B6);
+  static const _accentTint   = Color(0x260077B6);
+  static const _accentBorder = Color(0x400077B6);
+  static const _textDark     = Color(0xFF0D2B4E);
+  static const _textSub      = Color(0xFF5A7A96);
+  static const _cardColor    = Color(0x1A0077B6);
+
+  static const _successUrl = 'https://appcleft2026-55337.web.app/payment/success';
+  static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
+
   @override
   void initState() {
     super.initState();
     _loadPlanStatus();
   }
- 
-  // ── LOAD PLAN STATUS ────────────────────────────────────────────────────────
+
   Future<void> _loadPlanStatus() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
@@ -1057,11 +1017,11 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
           .collection('users')
           .doc(user.uid)
           .get();
- 
-      final data = doc.data() ?? {};
+
+      final data            = doc.data() ?? {};
       final isPremiumByPlan = (data['plan'] ?? '') == 'premium';
       final isPremiumByFlag = data['isPremium'] == true;
- 
+
       setState(() {
         _isPremium = isPremiumByPlan || isPremiumByFlag;
         _isLoading = false;
@@ -1070,76 +1030,58 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
       setState(() => _isLoading = false);
     }
   }
- 
-  // ── UPGRADE TO PREMIUM (PayMongo flow) ─────────────────────────────────────
+
   Future<void> _upgradeToPremium(String method) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
- 
+
     setState(() => _isUpgrading = true);
- 
+
     try {
-      // Map UI method name → PayMongo source type
-      final String paymongoType;
-      switch (method) {
-        case 'gcash':
-          paymongoType = 'gcash';
-          break;
-        case 'maya':
-          paymongoType = 'maya';
-          break;
-        case 'gotyme':
-          // GoTyme does not have a dedicated PayMongo type yet.
-          // Fall back to opening GoTyme website.
-          setState(() => _isUpgrading = false);
-          await _launchGoTymeFallback();
-          return;
-        default:
-          setState(() => _isUpgrading = false);
-          return;
-      }
- 
-      // Build billing info from Firebase user
       final email = user.email?.isNotEmpty == true
           ? user.email!
           : 'noemail@yourapp.com';
-      final name  = user.displayName?.isNotEmpty == true
+      final name = user.displayName?.isNotEmpty == true
           ? user.displayName!
           : 'App User';
- 
-      // ₱99 = 9900 centavos
-      // NOTE: PayMongo minimum is ₱100 (10000 centavos).
-      // If you keep the price at ₱99, PayMongo will return an error.
-      // Either raise price to ₱100 or set amountCentavos: 10000.
-      const int amountCentavos = 10000; // ← change to 10000 for ₱100 if needed
- 
-      // Create source — this hits PayMongo API
-      final source = await PaymongoService.createSource(
-        type: paymongoType,
-        amountCentavos: amountCentavos,
-        successUrl: _successUrl,
-        failedUrl: _failedUrl,
-        name: name,
-        email: email,
-      );
- 
-      final checkoutUrl = PaymongoService.checkoutUrlFrom(source);
- 
+
+      const int amountCentavos = 9900;
+      String checkoutUrl;
+
+      if (method == 'gcash') {
+        final source = await PaymongoService.createSource(
+          type:           'gcash',
+          amountCentavos: amountCentavos,
+          successUrl:     _successUrl,
+          failedUrl:      _failedUrl,
+          name:           name,
+          email:          email,
+        );
+        checkoutUrl = PaymongoService.checkoutUrlFrom(source);
+      } else {
+        checkoutUrl = await PaymongoService.createPaymentIntentCheckoutUrl(
+          paymentMethodType: 'paymaya',
+          amountCentavos:    amountCentavos,
+          successUrl:        _successUrl,
+          failedUrl:         _failedUrl,
+          name:              name,
+          email:             email,
+        );
+      }
+
       setState(() => _isUpgrading = false);
- 
+
       if (!mounted) return;
- 
-      // Open the PayMongo-hosted checkout page in a WebView.
-      // The WebView will handle the GCash / Maya deep link automatically.
+
       await Navigator.push(
         context,
         MaterialPageRoute(
           builder: (_) => PaymentWebViewScreen(
             checkoutUrl: checkoutUrl,
-            successUrl: _successUrl,
-            failedUrl: _failedUrl,
-            onSuccess: () => _onPaymentSuccess(method),
-            onFailed: _onPaymentFailed,
+            successUrl:  _successUrl,
+            failedUrl:   _failedUrl,
+            onSuccess:   () => _onPaymentSuccess(method),
+            onFailed:    _onPaymentFailed,
           ),
         ),
       );
@@ -1156,12 +1098,11 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
       }
     }
   }
- 
-  // ── PAYMENT SUCCESS CALLBACK ────────────────────────────────────────────────
+
   Future<void> _onPaymentSuccess(String method) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
- 
+
     try {
       await FirebaseFirestore.instance
           .collection('users')
@@ -1169,14 +1110,30 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
           .set({
         'plan':          'premium',
         'isPremium':     true,
+        'subscription':  'premium',
         'paymentMethod': method,
         'upgradedAt':    FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
- 
-      // await NotificationHelper.premiumActivated(method: method);
- 
+
+      await FirebaseFirestore.instance
+          .collection('payments')
+          .add({
+        'userId':        user.uid,
+        'email':         user.email ?? 'noemail@yourapp.com',
+        'name':          user.displayName ?? 'App User',
+        'amount':        99,
+        'method':        method,
+        'status':        'verified',
+        'isDemo':        false,
+        'plan':          'premium',
+        'createdAt':     FieldValue.serverTimestamp(),
+        'paidAt':        FieldValue.serverTimestamp(),
+      });
+
       setState(() => _isPremium = true);
- 
+
+      await NotificationHelper.premiumActivated(method: method);
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: const Row(children: [
@@ -1184,7 +1141,7 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
             SizedBox(width: 8),
             Text('Welcome to Premium! 🎉'),
           ]),
-          backgroundColor: _teal,
+          backgroundColor: _accent,
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12)),
@@ -1199,8 +1156,7 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
       }
     }
   }
- 
-  // ── PAYMENT FAILED CALLBACK ─────────────────────────────────────────────────
+
   void _onPaymentFailed() {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -1214,16 +1170,7 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
     ));
   }
- 
-  // ── GOTYME FALLBACK (no PayMongo support yet) ───────────────────────────────
-  Future<void> _launchGoTymeFallback() async {
-    final uri = Uri.parse('https://gotyme.com');
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    }
-  }
- 
-  // ── CANCEL PREMIUM ──────────────────────────────────────────────────────────
+
   Future<void> _cancelPremium() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
@@ -1233,18 +1180,19 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
           .collection('users')
           .doc(user.uid)
           .set({
-        'plan':        'free',
-        'isPremium':   false,
-        'cancelledAt': FieldValue.serverTimestamp(),
+        'plan':         'free',
+        'isPremium':    false,
+        'subscription': 'free',
+        'cancelledAt':  FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
- 
-      // await NotificationHelper.premiumCancelled();
- 
+
       setState(() {
         _isPremium    = false;
         _isCancelling = false;
       });
- 
+
+      await NotificationHelper.premiumCancelled();
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: const Row(children: [
@@ -1268,21 +1216,19 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
       }
     }
   }
- 
-  // ── DIALOGS ─────────────────────────────────────────────────────────────────
- 
+
   void _showPaymentMethodDialog() {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: const Color(0xFF0A2020),
+        backgroundColor: const Color(0xFFEAF4FB),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Row(children: [
-          Icon(Icons.payment_rounded, color: _teal, size: 22),
+          Icon(Icons.payment_rounded, color: _accent, size: 22),
           SizedBox(width: 8),
           Text('Choose Payment Method',
               style: TextStyle(
-                  color: Colors.white,
+                  color: _textDark,
                   fontSize: 17,
                   fontWeight: FontWeight.bold)),
         ]),
@@ -1290,12 +1236,12 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
           mainAxisSize: MainAxisSize.min,
           children: [
             const Text("Select how you'd like to pay for Premium:",
-                style: TextStyle(color: _white40, fontSize: 13)),
+                style: TextStyle(color: _textSub, fontSize: 13)),
             const SizedBox(height: 20),
             _paymentMethodTile(
-              label: 'GCash',
-              subtitle: 'Opens the GCash app to pay ₱99',
-              icon: Icons.account_balance_wallet_rounded,
+              label:     'GCash',
+              subtitle:  'Opens the GCash app to pay ₱99',
+              icon:      Icons.account_balance_wallet_rounded,
               iconColor: const Color(0xFF007DFF),
               onTap: () {
                 Navigator.pop(context);
@@ -1304,24 +1250,13 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
             ),
             const SizedBox(height: 10),
             _paymentMethodTile(
-              label: 'Maya',
-              subtitle: 'Opens the Maya app to pay ₱99',
-              icon: Icons.credit_card_rounded,
+              label:     'Maya',
+              subtitle:  'Opens the Maya app to pay ₱99',
+              icon:      Icons.credit_card_rounded,
               iconColor: const Color(0xFF6C3BE8),
               onTap: () {
                 Navigator.pop(context);
                 _confirmPayment('maya', 'Maya');
-              },
-            ),
-            const SizedBox(height: 10),
-            _paymentMethodTile(
-              label: 'GoTyme',
-              subtitle: 'Opens GoTyme Bank website',
-              icon: Icons.account_balance_rounded,
-              iconColor: const Color(0xFFE63946),
-              onTap: () {
-                Navigator.pop(context);
-                _confirmPayment('gotyme', 'GoTyme');
               },
             ),
           ],
@@ -1329,25 +1264,25 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel', style: TextStyle(color: _white40)),
+            child: const Text('Cancel', style: TextStyle(color: _textSub)),
           ),
         ],
       ),
     );
   }
- 
+
   void _confirmPayment(String method, String label) {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: const Color(0xFF0A2020),
+        backgroundColor: const Color(0xFFEAF4FB),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: Row(children: [
-          const Icon(Icons.star_rounded, color: _teal, size: 22),
+          const Icon(Icons.star_rounded, color: _accent, size: 22),
           const SizedBox(width: 8),
           Text('Pay with $label',
               style: const TextStyle(
-                  color: Colors.white,
+                  color: _textDark,
                   fontSize: 17,
                   fontWeight: FontWeight.bold)),
         ]),
@@ -1364,41 +1299,40 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
               width: double.infinity,
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: _tealDim,
+                color: _accentTint,
                 borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: _tealBorder),
+                border: Border.all(color: _accentBorder),
               ),
               child: const Column(children: [
                 Text('₱99 / month',
                     style: TextStyle(
-                        color: _teal,
+                        color: _accent,
                         fontSize: 20,
                         fontWeight: FontWeight.w800)),
                 Text('Cancel anytime',
-                    style: TextStyle(color: _white40, fontSize: 11)),
+                    style: TextStyle(color: _textSub, fontSize: 11)),
               ]),
             ),
             const SizedBox(height: 12),
             Text(
-              method == 'gotyme'
-                  ? 'Tapping "Pay with GoTyme" will open the GoTyme website.'
-                  : 'Tapping "Pay with $label" will open a secure checkout page. '
-                    'You\'ll then be taken to the $label app to confirm payment.',
-              style: const TextStyle(color: _white40, fontSize: 12),
+              'Tapping "Pay with $label" will open a secure checkout page. '
+              "You'll then be redirected to $label to confirm payment.",
+              style: const TextStyle(color: _textSub, fontSize: 12),
             ),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Back', style: TextStyle(color: _white40)),
+            child: const Text('Back', style: TextStyle(color: _textSub)),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
-              backgroundColor: _teal,
+              backgroundColor: _accent,
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12)),
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
             ),
             onPressed: () async {
               Navigator.pop(context);
@@ -1412,12 +1346,12 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
       ),
     );
   }
- 
+
   void _showCancelWarningDialog() {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: const Color(0xFF1A0A0A),
+        backgroundColor: const Color(0xFFEAF4FB),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Row(children: [
           Icon(Icons.warning_amber_rounded,
@@ -1425,7 +1359,7 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
           SizedBox(width: 8),
           Text('Cancel Premium?',
               style: TextStyle(
-                  color: Colors.white,
+                  color: _textDark,
                   fontSize: 17,
                   fontWeight: FontWeight.bold)),
         ]),
@@ -1435,7 +1369,8 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
           children: [
             const Text(
               'Are you sure you want to cancel your Premium subscription?',
-              style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.5),
+              style: TextStyle(
+                  color: _textSub, fontSize: 13, height: 1.5),
             ),
             const SizedBox(height: 14),
             _lossItem('Real-time Translation'),
@@ -1446,7 +1381,7 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.red.withOpacity(0.08),
+                color: Colors.red.withOpacity(0.07),
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(color: Colors.red.withOpacity(0.25)),
               ),
@@ -1469,14 +1404,16 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('Keep Premium',
-                style: TextStyle(color: _teal, fontWeight: FontWeight.bold)),
+                style: TextStyle(
+                    color: _accent, fontWeight: FontWeight.bold)),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.redAccent,
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12)),
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
             ),
             onPressed: () async {
               Navigator.pop(context);
@@ -1490,19 +1427,18 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
       ),
     );
   }
- 
-  // ── HELPERS ─────────────────────────────────────────────────────────────────
- 
+
   Widget _lossItem(String text) => Padding(
         padding: const EdgeInsets.only(bottom: 6),
         child: Row(children: [
           const Icon(Icons.remove_circle_outline_rounded,
               color: Colors.redAccent, size: 15),
           const SizedBox(width: 8),
-          Text(text, style: const TextStyle(color: Colors.white60, fontSize: 12)),
+          Text(text,
+              style: const TextStyle(color: _textSub, fontSize: 12)),
         ]),
       );
- 
+
   Widget _paymentMethodTile({
     required String label,
     required String subtitle,
@@ -1515,9 +1451,9 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
-          color: const Color(0x1AFFFFFF),
+          color: const Color(0xFFDAEEFA),
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: _tealBorder),
+          border: Border.all(color: _accentBorder),
         ),
         child: Row(children: [
           Container(
@@ -1536,31 +1472,31 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
               children: [
                 Text(label,
                     style: const TextStyle(
-                        color: Colors.white,
+                        color: _textDark,
                         fontSize: 14,
                         fontWeight: FontWeight.w600)),
                 Text(subtitle,
-                    style: const TextStyle(color: _white40, fontSize: 11)),
+                    style: const TextStyle(color: _textSub, fontSize: 11)),
               ],
             ),
           ),
           const Icon(Icons.arrow_forward_ios_rounded,
-              color: _white40, size: 13),
+              color: _textSub, size: 13),
         ]),
       ),
     );
   }
- 
+
   Widget _dialogFeature(String text) => Padding(
         padding: const EdgeInsets.only(bottom: 8),
         child: Row(children: [
-          const Icon(Icons.check_circle_rounded, color: _teal, size: 16),
+          const Icon(Icons.check_circle_rounded, color: _accent, size: 16),
           const SizedBox(width: 8),
           Text(text,
-              style: const TextStyle(color: Colors.white70, fontSize: 13)),
+              style: const TextStyle(color: _textSub, fontSize: 13)),
         ]),
       );
- 
+
   Widget _notificationsTile() {
     final user = FirebaseAuth.instance.currentUser;
     return StreamBuilder<QuerySnapshot>(
@@ -1586,23 +1522,23 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
             decoration: BoxDecoration(
               color: _cardColor,
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: _tealBorder),
+              border: Border.all(color: _accentBorder),
             ),
             child: Row(children: [
               Container(
                 width: 34,
                 height: 34,
                 decoration: BoxDecoration(
-                  color: _tealDim,
+                  color: _accentTint,
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: const Icon(Icons.notifications_none_rounded,
-                    color: _teal, size: 17),
+                    color: _accent, size: 17),
               ),
               const SizedBox(width: 12),
               const Expanded(
                 child: Text('Notifications',
-                    style: TextStyle(color: Colors.white, fontSize: 14)),
+                    style: TextStyle(color: _textDark, fontSize: 14)),
               ),
               if (unread > 0)
                 Container(
@@ -1610,7 +1546,7 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
                   padding: const EdgeInsets.symmetric(
                       horizontal: 9, vertical: 3),
                   decoration: BoxDecoration(
-                    color: _teal,
+                    color: _accent,
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: Text('$unread',
@@ -1619,15 +1555,15 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
                           fontSize: 11,
                           fontWeight: FontWeight.w700)),
                 ),
-              const Icon(Icons.arrow_forward_ios, size: 13, color: _white40),
+              const Icon(Icons.arrow_forward_ios,
+                  size: 13, color: _textSub),
             ]),
           ),
         );
       },
     );
   }
- 
-  // ── BUILD ────────────────────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1639,7 +1575,7 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
               final width        = constraints.maxWidth;
               final padding      = width < 800 ? 16.0 : 40.0;
               final contentWidth = width < 1000 ? width : 900.0;
- 
+
               return Center(
                 child: Container(
                   width: contentWidth,
@@ -1647,100 +1583,94 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
                   child: _isLoading
                       ? const Center(
                           child: CircularProgressIndicator(
-                              color: _teal, strokeWidth: 2))
+                              color: _accent, strokeWidth: 2))
                       : ListView(children: [
-                          // ── HEADER ─────────────────────────────────────
+                          // ── HEADER ──────────────────────────────────────
                           Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            mainAxisAlignment:
+                                MainAxisAlignment.spaceBetween,
                             children: [
-                              Row(children: [
-                                GestureDetector(
-                                  onTap: () => Navigator.pop(context),
-                                  child: Container(
-                                    width: 36,
-                                    height: 36,
-                                    decoration: BoxDecoration(
-                                      color: _tealDim,
-                                      shape: BoxShape.circle,
-                                      border: Border.all(color: _tealBorder),
-                                    ),
-                                    child: const Icon(
-                                        Icons.arrow_back_ios_new,
-                                        color: _teal,
-                                        size: 15),
+                              const Text('Settings',
+                                  style: TextStyle(
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.w700,
+                                      color: _textDark)),
+                              GestureDetector(
+                                onTap: () => Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                      builder: (_) =>
+                                          const ProfileScreen()),
+                                ),
+                                child: Container(
+                                  width: 36,
+                                  height: 36,
+                                  decoration: BoxDecoration(
+                                    color: _accentTint,
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                        color: _accentBorder),
                                   ),
+                                  child: const Icon(Icons.person,
+                                      color: _accent, size: 18),
                                 ),
-                                const SizedBox(width: 12),
-                                const Text('Settings',
-                                    style: TextStyle(
-                                        fontSize: 20,
-                                        fontWeight: FontWeight.w700,
-                                        color: Colors.white)),
-                              ]),
-                              Container(
-                                width: 36,
-                                height: 36,
-                                decoration: BoxDecoration(
-                                  color: _tealDim,
-                                  shape: BoxShape.circle,
-                                  border: Border.all(color: _tealBorder),
-                                ),
-                                child: const Icon(Icons.person,
-                                    color: _teal, size: 18),
                               ),
                             ],
                           ),
- 
+
                           const SizedBox(height: 24),
- 
-                          // ── PREMIUM CARD ──────────────────────────────
+
                           _isPremium
                               ? _buildPremiumActiveCard()
                               : _buildUpgradeCard(),
- 
+
                           const SizedBox(height: 28),
- 
-                          // ── GENERAL ───────────────────────────────────
+
                           _sectionLabel('GENERAL'),
                           const SizedBox(height: 10),
-                          _optionTile('Trained Voice', Icons.graphic_eq_rounded),
-                          _optionTile('Cloud Based', Icons.cloud_outlined),
+                          _optionTile(
+                              'Trained Voice', Icons.graphic_eq_rounded),
+                          _optionTile(
+                              'Cloud Based', Icons.cloud_outlined),
                           _notificationsTile(),
- 
+
                           const SizedBox(height: 28),
- 
-                          // ── ABOUT ──────────────────────────────────────
+
                           _sectionLabel('ABOUT'),
                           const SizedBox(height: 10),
                           _card(
                             child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              mainAxisAlignment:
+                                  MainAxisAlignment.spaceBetween,
                               children: [
                                 Row(children: [
                                   Container(
                                     width: 32,
                                     height: 32,
                                     decoration: BoxDecoration(
-                                      color: _tealDim,
-                                      borderRadius: BorderRadius.circular(8),
+                                      color: _accentTint,
+                                      borderRadius:
+                                          BorderRadius.circular(8),
                                     ),
                                     child: const Icon(
                                         Icons.info_outline_rounded,
-                                        color: _teal,
+                                        color: _accent,
                                         size: 16),
                                   ),
                                   const SizedBox(width: 12),
                                   const Text('App Version',
                                       style: TextStyle(
-                                          color: Colors.white, fontSize: 14)),
+                                          color: _textDark,
+                                          fontSize: 14)),
                                 ]),
                                 const Text('v1.0.0',
                                     style: TextStyle(
-                                        color: _white40, fontSize: 13)),
+                                        color: _textSub,
+                                        fontSize: 13)),
                               ],
                             ),
                           ),
- 
+
                           const SizedBox(height: 40),
                         ]),
                 ),
@@ -1751,8 +1681,7 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
       ),
     );
   }
- 
-  // ── PREMIUM ACTIVE CARD ────────────────────────────────────────────────────
+
   Widget _buildPremiumActiveCard() {
     return Container(
       padding: const EdgeInsets.all(20),
@@ -1760,13 +1689,13 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
         gradient: const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xFF0E5C47), Color(0xFF1D9E75)],
+          colors: [Color(0xFF005F8E), Color(0xFF0077B6)],
         ),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withOpacity(0.15)),
+        border: Border.all(color: Colors.white.withOpacity(0.2)),
         boxShadow: [
           BoxShadow(
-              color: _teal.withOpacity(0.25),
+              color: const Color(0xFF0077B6).withOpacity(0.3),
               blurRadius: 20,
               spreadRadius: 1),
         ],
@@ -1776,7 +1705,8 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
         children: [
           Row(children: [
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 10, vertical: 4),
               decoration: BoxDecoration(
                 color: Colors.white.withOpacity(0.2),
                 borderRadius: BorderRadius.circular(20),
@@ -1793,40 +1723,41 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
               ]),
             ),
             const Spacer(),
-            const Icon(Icons.verified_rounded, color: Colors.white, size: 22),
+            const Icon(Icons.verified_rounded,
+                color: Colors.white, size: 22),
           ]),
- 
+
           const SizedBox(height: 16),
- 
+
           const Text("You're a Premium\nMember! 🎉",
               style: TextStyle(
                   fontSize: 22,
                   color: Colors.white,
                   fontWeight: FontWeight.bold,
                   height: 1.25)),
- 
+
           const SizedBox(height: 10),
- 
+
           const Text(
-              'Enjoy unlimited subtitles, voice calibration,\nand an ad-free experience.',
+              'Enjoy unlimited words, Noise Cancellation\nand Real-time Translation.',
               style: TextStyle(
                   color: Colors.white70, fontSize: 13, height: 1.5)),
- 
+
           const SizedBox(height: 16),
- 
+
           Wrap(
             spacing: 8,
             runSpacing: 8,
             children: [
-              _premiumChip('Unlimited Subtitles'),
-              _premiumChip('Voice Training'),
+              _premiumChip('Real-time Translation'),
+              _premiumChip('Noise Cancellation'),
               _premiumChip('Ad-Free'),
-              _premiumChip('History'),
+              _premiumChip('Unlimited Words'),
             ],
           ),
- 
+
           const SizedBox(height: 16),
- 
+
           const Row(children: [
             Icon(Icons.check_circle_rounded,
                 color: Colors.white70, size: 14),
@@ -1834,9 +1765,9 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
             Text('₱99 / month · Cancel anytime',
                 style: TextStyle(color: Colors.white70, fontSize: 12)),
           ]),
- 
+
           const SizedBox(height: 18),
- 
+
           GestureDetector(
             onTap: _showCancelWarningDialog,
             child: Container(
@@ -1845,7 +1776,8 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
               decoration: BoxDecoration(
                 color: Colors.white.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.redAccent.withOpacity(0.5)),
+                border: Border.all(
+                    color: Colors.redAccent.withOpacity(0.5)),
               ),
               child: _isCancelling
                   ? const Center(
@@ -1875,13 +1807,14 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
       ),
     );
   }
- 
+
   Widget _premiumChip(String label) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        padding:
+            const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.15),
+          color: Colors.white.withOpacity(0.2),
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: Colors.white.withOpacity(0.2)),
+          border: Border.all(color: Colors.white.withOpacity(0.25)),
         ),
         child: Text(label,
             style: const TextStyle(
@@ -1889,31 +1822,31 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
                 fontSize: 11,
                 fontWeight: FontWeight.w500)),
       );
- 
-  // ── UPGRADE CARD ────────────────────────────────────────────────────────────
+
   Widget _buildUpgradeCard() {
     return GestureDetector(
       onTap: _showPaymentMethodDialog,
       child: Container(
         padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
-          color: _tealDim,
+          color: _accentTint,
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: _tealBorder),
+          border: Border.all(color: _accentBorder),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 10, vertical: 4),
               decoration: BoxDecoration(
-                color: _tealDim,
+                color: _accentTint,
                 borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: _tealBorder),
+                border: Border.all(color: _accentBorder),
               ),
               child: const Text('PREMIUM',
                   style: TextStyle(
-                      color: _teal,
+                      color: _accent,
                       fontSize: 10,
                       fontWeight: FontWeight.w700,
                       letterSpacing: 0.8)),
@@ -1922,28 +1855,26 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
             const Text('Upgrade to\nPremium',
                 style: TextStyle(
                     fontSize: 24,
-                    color: Colors.white,
+                    color: _textDark,
                     fontWeight: FontWeight.bold,
                     height: 1.2)),
             const SizedBox(height: 8),
             const Text(
-                'Unlimited offline translations\nand ad-free experience.',
-                style: TextStyle(color: _white40, fontSize: 13, height: 1.5)),
+                'Unlimited Words\nand Realtime Experience',
+                style: TextStyle(
+                    color: _textSub, fontSize: 13, height: 1.5)),
             const SizedBox(height: 16),
- 
+
             Row(children: [
               _miniPayBadge(Icons.account_balance_wallet_rounded,
                   const Color(0xFF007DFF), 'GCash'),
               const SizedBox(width: 8),
               _miniPayBadge(Icons.credit_card_rounded,
                   const Color(0xFF6C3BE8), 'Maya'),
-              const SizedBox(width: 8),
-              _miniPayBadge(Icons.account_balance_rounded,
-                  const Color(0xFFE63946), 'GoTyme'),
             ]),
- 
+
             const SizedBox(height: 16),
- 
+
             Align(
               alignment: Alignment.centerRight,
               child: _isUpgrading
@@ -1951,12 +1882,12 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
                       width: 24,
                       height: 24,
                       child: CircularProgressIndicator(
-                          color: _teal, strokeWidth: 2))
+                          color: _accent, strokeWidth: 2))
                   : Container(
                       padding: const EdgeInsets.symmetric(
                           horizontal: 20, vertical: 10),
                       decoration: BoxDecoration(
-                        color: _teal,
+                        color: _accent,
                         borderRadius: BorderRadius.circular(30),
                       ),
                       child: const Text('Upgrade Now →',
@@ -1971,9 +1902,11 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
       ),
     );
   }
- 
-  Widget _miniPayBadge(IconData icon, Color color, String label) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+
+  Widget _miniPayBadge(IconData icon, Color color, String label) =>
+      Container(
+        padding:
+            const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
         decoration: BoxDecoration(
           color: color.withOpacity(0.12),
           borderRadius: BorderRadius.circular(8),
@@ -1984,47 +1917,51 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
           const SizedBox(width: 4),
           Text(label,
               style: TextStyle(
-                  color: color, fontSize: 10, fontWeight: FontWeight.w600)),
+                  color: color,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600)),
         ]),
       );
- 
+
   Widget _sectionLabel(String label) => Row(children: [
         Container(
           width: 3,
           height: 14,
           decoration: BoxDecoration(
-            color: _teal.withOpacity(0.7),
+            color: _accent.withOpacity(0.7),
             borderRadius: BorderRadius.circular(2),
           ),
         ),
         const SizedBox(width: 8),
         Text(label,
             style: const TextStyle(
-                color: _white40,
+                color: _textSub,
                 fontSize: 11,
                 fontWeight: FontWeight.w600,
                 letterSpacing: 0.8)),
       ]);
- 
+
   Widget _card({required Widget child}) => Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           color: _cardColor,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: _tealBorder),
+          border: Border.all(color: _accentBorder),
         ),
         child: child,
       );
- 
+
   Widget _optionTile(String title, IconData icon) {
     return GestureDetector(
       onTap: () {
         if (title == 'Trained Voice') {
-          Navigator.push(context,
-              MaterialPageRoute(builder: (_) => const TrainedVoiceScreen()));
-        } else if (title == 'Cloud Based') {
           Navigator.push(
-              context, MaterialPageRoute(builder: (_) => const Cloud()));
+              context,
+              MaterialPageRoute(
+                  builder: (_) => const TrainedVoiceScreen()));
+        } else if (title == 'Cloud Based') {
+          Navigator.push(context,
+              MaterialPageRoute(builder: (_) => const Cloud()));
         }
       },
       child: Container(
@@ -2033,27 +1970,28 @@ static const _failedUrl  = 'https://appcleft2026-55337.web.app/payment/failed';
         decoration: BoxDecoration(
           color: _cardColor,
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: _tealBorder),
+          border: Border.all(color: _accentBorder),
         ),
         child: Row(children: [
           Container(
             width: 34,
             height: 34,
             decoration: BoxDecoration(
-              color: _tealDim,
+              color: _accentTint,
               borderRadius: BorderRadius.circular(8),
             ),
-            child: Icon(icon, color: _teal, size: 17),
+            child: Icon(icon, color: _accent, size: 17),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Text(title,
-                style: const TextStyle(color: Colors.white, fontSize: 14)),
+                style: const TextStyle(
+                    color: _textDark, fontSize: 14)),
           ),
-          const Icon(Icons.arrow_forward_ios, size: 13, color: _white40),
+          const Icon(Icons.arrow_forward_ios,
+              size: 13, color: _textSub),
         ]),
       ),
     );
   }
 }
- 

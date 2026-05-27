@@ -3,6 +3,10 @@
 // Opens the PayMongo checkout URL in a WebView.
 // Handles GCash / Maya deep links so the e-wallet app opens automatically.
 // Calls onSuccess / onFailed when PayMongo redirects back.
+//
+// FIX: Maya returns to the app via an app-switch, not a WebView navigation,
+// so onNavigationRequest never fires. We now also check the URL in
+// onPageStarted and onPageFinished to catch those redirects.
 
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -30,7 +34,8 @@ class PaymentWebViewScreen extends StatefulWidget {
 
 class _PaymentWebViewScreenState extends State<PaymentWebViewScreen> {
   late final WebViewController _controller;
-  bool _isLoading = true;
+  bool _isLoading  = true;
+  bool _didFinish  = false; // guard: fire callbacks only once
 
   static const _teal = Color(0xFF1D9E75);
 
@@ -42,32 +47,36 @@ class _PaymentWebViewScreenState extends State<PaymentWebViewScreen> {
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setNavigationDelegate(
         NavigationDelegate(
-          onPageStarted: (_) => setState(() => _isLoading = true),
-          onPageFinished: (_) => setState(() => _isLoading = false),
-          onWebResourceError: (error) => setState(() => _isLoading = false),
+
+          // ── Fires when the WebView starts loading any URL ──────────────
+          // Maya sometimes lands here instead of onNavigationRequest
+          onPageStarted: (url) {
+            setState(() => _isLoading = true);
+            _handleUrl(url);
+          },
+
+          // ── Fires when a page fully loads ─────────────────────────────
+          // Catches the case where Maya redirects and the page loads blank
+          onPageFinished: (url) {
+            setState(() => _isLoading = false);
+            _handleUrl(url);
+          },
+
+          onWebResourceError: (_) => setState(() => _isLoading = false),
+
+          // ── Fires before navigation — catches most redirects ───────────
           onNavigationRequest: (request) {
             final url = request.url;
 
-            // ── SUCCESS redirect ───────────────────────────────────────────
-            if (url.startsWith(widget.successUrl)) {
-              if (mounted) Navigator.of(context).pop();
-              widget.onSuccess();
+            if (_handleUrl(url)) {
               return NavigationDecision.prevent;
             }
 
-            // ── FAILED / CANCELLED redirect ────────────────────────────────
-            if (url.startsWith(widget.failedUrl)) {
-              if (mounted) Navigator.of(context).pop();
-              widget.onFailed();
-              return NavigationDecision.prevent;
-            }
-
-            // ── GCash / Maya deep link ─────────────────────────────────────
-            // PayMongo injects an "Open in GCash" button that fires gcash://
-            // We intercept it here and forward to url_launcher.
+            // ── GCash / Maya / PayMaya deep links ────────────────────────
             if (url.startsWith('gcash://') ||
                 url.startsWith('maya://') ||
-                url.startsWith('paymaya://')) {
+                url.startsWith('paymaya://') ||
+                url.startsWith('intent://')) {
               _openDeepLink(url);
               return NavigationDecision.prevent;
             }
@@ -79,13 +88,35 @@ class _PaymentWebViewScreenState extends State<PaymentWebViewScreen> {
       ..loadRequest(Uri.parse(widget.checkoutUrl));
   }
 
+  /// Checks if [url] is a success or failed redirect.
+  /// Returns true if handled (so the caller can prevent navigation).
+  bool _handleUrl(String url) {
+    if (_didFinish) return true; // already handled, swallow everything
+
+    if (url.startsWith(widget.successUrl)) {
+      _didFinish = true;
+      if (mounted) Navigator.of(context).pop();
+      widget.onSuccess();
+      return true;
+    }
+
+    if (url.startsWith(widget.failedUrl)) {
+      _didFinish = true;
+      if (mounted) Navigator.of(context).pop();
+      widget.onFailed();
+      return true;
+    }
+
+    return false;
+  }
+
   Future<void> _openDeepLink(String url) async {
     final uri = Uri.parse(url);
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
     }
-    // If the app isn't installed the WebView just stays on the checkout page
-    // so the user can still complete via QR code.
+    // If the wallet app isn't installed the WebView stays on the checkout
+    // page so the user can still pay via QR code.
   }
 
   @override

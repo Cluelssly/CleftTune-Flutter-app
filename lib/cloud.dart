@@ -18,20 +18,17 @@ class _CloudState extends State<Cloud> {
   bool   _isSyncing    = false;
   bool   _syncSuccess  = false;
   String _lastSynced   = 'Never';
-  double _storageLimit = 5120; // 5 GB in MB
+  double _storageLimit = 5120;
 
-  // Real per-category storage (MB)
   double _translationsMB = 0.0;
   double _correctionsMB  = 0.0;
   double _otherMB        = 0.0;
 
-  // Real counts
   int _translationCount = 0;
   int _correctionCount  = 0;
 
   double get _storageUsed => _translationsMB + _correctionsMB + _otherMB;
 
-  // ── Design tokens ──────────────────────────────────────────────────────────
   static const _bg       = Color(0xFF060F1A);
   static const _surface  = Color(0xFF0D1F2D);
   static const _card     = Color(0xFF112233);
@@ -193,7 +190,6 @@ class _CloudState extends State<Cloud> {
     return '${usedGB.toStringAsFixed(2)} GB of ${limitGB.toStringAsFixed(0)} GB used';
   }
 
-  // ══════════════════════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
     final uid = _auth.currentUser?.uid;
@@ -328,21 +324,15 @@ class _CloudState extends State<Cloud> {
           ),
         ),
         const SizedBox(width: 12),
-        const Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Cloud Sync',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white)),
-              Text('Data & Device Management',
-                  style: TextStyle(fontSize: 11, color: Colors.white38)),
-            ],
-          ),
-        ),
-        const CircleAvatar(
-          backgroundColor: _tealDeep,
-          radius: 18,
-          child: Icon(Icons.person_rounded, color: Colors.white, size: 18),
+        // ✅ Profile icon removed — title fills the remaining space
+        const Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Cloud Sync',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white)),
+            Text('Data & Device Management',
+                style: TextStyle(fontSize: 11, color: Colors.white38)),
+          ],
         ),
       ],
     );
@@ -375,7 +365,6 @@ class _CloudState extends State<Cloud> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Status pill
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
             decoration: BoxDecoration(
@@ -414,7 +403,6 @@ class _CloudState extends State<Cloud> {
             style: const TextStyle(color: Colors.white54, fontSize: 13),
           ),
 
-          // Real data summary
           if (_translationCount > 0 || _correctionCount > 0) ...[
             const SizedBox(height: 14),
             Container(
@@ -543,7 +531,6 @@ class _CloudState extends State<Cloud> {
           ),
           const SizedBox(height: 16),
 
-          // Segmented or plain progress bar
           if (categories.isNotEmpty && _storageUsed > 0)
             ClipRRect(
               borderRadius: BorderRadius.circular(6),
