@@ -7,12 +7,9 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'dart:developer' as dev;
 import 'nlp_service.dart';
 import 'notifications.dart';
-import 'premium_gate.dart';
 
 class TranslatorScreen extends StatefulWidget {
-  final VoidCallback goToPremium;
-
-  const TranslatorScreen({super.key, required this.goToPremium});
+  const TranslatorScreen({super.key});
 
   @override
   State<TranslatorScreen> createState() => _TranslatorScreenState();
@@ -23,16 +20,12 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   late stt.SpeechToText _speech;
   final NlpService _nlp = NlpService();
 
-  bool _isListening     = false;
-  bool _isInitialized   = false;
-  bool _userStopped     = false;
+  bool _isListening   = false;
+  bool _isInitialized = false;
+  bool _userStopped   = false;
   bool _showCorrections = false;
 
-  // ── Premium gate ───────────────────────────────────────────────────────────
-  bool _isPremium = false;
-  late StreamSubscription<bool> _premiumSub;
-
-  // Corrections stream -- initialised once, never recreated on panel open
+  // Corrections stream
   Stream<QuerySnapshot>? _correctionsStream;
 
   // ── Text state ─────────────────────────────────────────────────────────────
@@ -40,53 +33,30 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   String _committedText  = '';
   String _currentSegment = '';
 
-  // ── Free user: refining indicator ─────────────────────────────────────────
-  bool _isRefiningFinal = false;
+  // ── Session duration tracker ───────────────────────────────────────────────
+  Timer? _sessionTimer;
+  int    _sessionSeconds = 0;
 
-  // ── Free user: countdown timer (60s session) ──────────────────────────────
-  Timer?  _freeTimer;
-  int     _freeSecondsLeft = 60;
-  static const int _freeTotalSeconds = 60;
-
-  // ── Free user: 10-second silence delay before translating ─────────────────
-  Timer?  _freeDelayTimer;
-  static const int _freeSilenceDelay = 10;
-  String  _freeBufferedRaw    = '';
-  bool    _isWaitingToDisplay = false;
-
-  // ── Free user: silence-based auto-stop (no speech detected) ───────────────
-  Timer?  _freeSilenceTimer;
-  static const int _freeSilenceAutoStopSeconds = 12;
-
-  // ── Free word cap (auto-stop mic at 30 words) ─────────────────────────────
-  static const int _maxWordsFree = 30;
-
-  // ── Premium: session duration tracker ─────────────────────────────────────
-  Timer?  _premiumSessionTimer;
-  int     _premiumSessionSeconds = 0;
-
-  // ── Premium: debounce timers ───────────────────────────────────────────────
+  // ── Debounce timers ────────────────────────────────────────────────────────
   Timer? _bgSaveTimer;
   Timer? _partialNlpDebounce;
 
-  // ── Premium: always-on engine ─────────────────────────────────────────────
+  // ── Always-on engine ──────────────────────────────────────────────────────
   Timer? _alwaysOnRestartTimer;
   Timer? _keepAliveTimer;
   bool   _isRestarting = false;
 
   // ── Theme (Sky Blue / Navy) ────────────────────────────────────────────────
-  static const _bg          = Color(0xFFEAF4FB); // Ice blue light
-  static const _bgMid       = Color(0xFFDAEEFA); // Soft sky blue
-  static const _bgDark      = Color(0xFFC8E3F5); // Slightly deeper
-  static const _accent      = Color(0xFF0077B6); // Bright teal blue
-  static const _accentDim   = Color(0xFF005F8E); // Accent darker
-  static const _accentTint  = Color(0x260077B6); // Low-opacity tint
-  static const _accentBorder= Color(0x400077B6); // Border tint
-  static const _textDark    = Color(0xFF0D2B4E); // Dark Navy
-  static const _textSub     = Color(0xFF5A7A96); // Subtle gray-blue
-  static const _card        = Color(0x1A0077B6); // Card tint
-  static const _white40     = Color(0xFF5A7A96); // _textSub alias
-  static const _white20     = Color(0xFF8AAEC8); // Lighter sub
+  static const _bg           = Color(0xFFEAF4FB);
+  static const _bgMid        = Color(0xFFDAEEFA);
+  static const _bgDark       = Color(0xFFC8E3F5);
+  static const _accent       = Color(0xFF0077B6);
+  static const _accentTint   = Color(0x260077B6);
+  static const _accentBorder = Color(0x400077B6);
+  static const _textDark     = Color(0xFF0D2B4E);
+  static const _textSub      = Color(0xFF5A7A96);
+  static const _card         = Color(0x1A0077B6);
+  static const _white20      = Color(0xFF8AAEC8);
 
   // ── Animations ─────────────────────────────────────────────────────────────
   late AnimationController _pulseController;
@@ -118,10 +88,6 @@ class _TranslatorScreenState extends State<TranslatorScreen>
       CurvedAnimation(parent: _dotController, curve: Curves.easeInOut),
     );
 
-    _premiumSub = PremiumGate.isPremiumStream().listen((value) {
-      if (mounted) setState(() => _isPremium = value);
-    });
-
     _initServices();
   }
 
@@ -147,20 +113,20 @@ class _TranslatorScreenState extends State<TranslatorScreen>
     _isInitialized = await _speech.initialize(
       onStatus: (status) {
         dev.log('STT STATUS: $status');
-        if (!_userStopped && _isListening && _isPremium) {
+        if (!_userStopped && _isListening) {
           if (status == 'done' ||
               status == 'notListening' ||
               status == 'doneNoResult' ||
               status == 'notAvailable' ||
               status == 'error') {
-            dev.log('STT stopped (status: \$status) — restarting...');
+            dev.log('STT stopped (status: $status) — restarting...');
             _scheduleAlwaysOnRestart();
           }
         }
       },
       onError: (error) {
         dev.log('STT ERROR: ${error.errorMsg}');
-        if (!_userStopped && _isListening && _isPremium) {
+        if (!_userStopped && _isListening) {
           dev.log('STT error — restarting...');
           _scheduleAlwaysOnRestart();
         }
@@ -181,38 +147,38 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // PREMIUM SESSION TIMER
+  // SESSION TIMER
   // ══════════════════════════════════════════════════════════════════════════
 
-  void _startPremiumSessionTimer() {
-    _premiumSessionTimer?.cancel();
-    _premiumSessionSeconds = 0;
-    _premiumSessionTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+  void _startSessionTimer() {
+    _sessionTimer?.cancel();
+    _sessionSeconds = 0;
+    _sessionTimer = Timer.periodic(const Duration(seconds: 1), (t) {
       if (!mounted || !_isListening) { t.cancel(); return; }
-      setState(() => _premiumSessionSeconds++);
+      setState(() => _sessionSeconds++);
     });
   }
 
-  void _stopPremiumSessionTimer() {
-    _premiumSessionTimer?.cancel();
-    _premiumSessionTimer = null;
+  void _stopSessionTimer() {
+    _sessionTimer?.cancel();
+    _sessionTimer = null;
   }
 
-  String get _premiumSessionLabel {
-    final m = _premiumSessionSeconds ~/ 60;
-    final s = _premiumSessionSeconds % 60;
+  String get _sessionLabel {
+    final m = _sessionSeconds ~/ 60;
+    final s = _sessionSeconds % 60;
     if (m == 0) return '${s}s';
     return '${m}m ${s}s';
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // ALWAYS-ON RESTART LOOP (premium only)
+  // ALWAYS-ON RESTART LOOP
   // ══════════════════════════════════════════════════════════════════════════
 
   void _startKeepAliveTimer() {
     _keepAliveTimer?.cancel();
     _keepAliveTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
-      if (_userStopped || !_isListening || !_isPremium || !mounted) {
+      if (_userStopped || !_isListening || !mounted) {
         _keepAliveTimer?.cancel();
         return;
       }
@@ -220,7 +186,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
         dev.log('KeepAlive: mic went silent — restarting now');
         try { await _speech.stop(); } catch (_) {}
         await Future.delayed(const Duration(milliseconds: 50));
-        if (!_userStopped && _isListening && _isPremium && mounted) {
+        if (!_userStopped && _isListening && mounted) {
           await _startRealtimeListening();
         }
       }
@@ -233,19 +199,19 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   }
 
   void _scheduleAlwaysOnRestart() {
-    if (_userStopped || !_isListening || !_isPremium) return;
+    if (_userStopped || !_isListening) return;
     _isRestarting = true;
 
     _alwaysOnRestartTimer?.cancel();
     _alwaysOnRestartTimer = Timer(const Duration(milliseconds: 50), () async {
-      if (_userStopped || !_isListening || !_isPremium || !mounted) {
+      if (_userStopped || !_isListening || !mounted) {
         _isRestarting = false;
         return;
       }
       dev.log('Always-on: restarting STT engine');
       try { await _speech.stop(); } catch (_) {}
       await Future.delayed(const Duration(milliseconds: 80));
-      if (_userStopped || !_isListening || !_isPremium || !mounted) {
+      if (_userStopped || !_isListening || !mounted) {
         _isRestarting = false;
         return;
       }
@@ -262,179 +228,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // FREE — silence auto-stop
-  // ══════════════════════════════════════════════════════════════════════════
-
-  void _resetFreeSilenceAutoStop() {
-    _freeSilenceTimer?.cancel();
-    _freeSilenceTimer = Timer(
-      const Duration(seconds: _freeSilenceAutoStopSeconds),
-      () async {
-        if (!_isListening || _isPremium || _userStopped) return;
-        dev.log('Free user: silence auto-stop triggered');
-        _userStopped = true;
-        _freeTimer?.cancel();
-        await _speech.stop();
-        if (_freeBufferedRaw.trim().isNotEmpty) {
-          _processFreeBufferedText();
-        }
-        if (mounted) {
-          setState(() {
-            _isListening        = false;
-            _isRefiningFinal    = false;
-            _isWaitingToDisplay = false;
-          });
-        }
-      },
-    );
-  }
-
-  void _cancelFreeSilenceAutoStop() {
-    _freeSilenceTimer?.cancel();
-    _freeSilenceTimer = null;
-  }
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // FREE — 10-SECOND SILENCE DELAY SYSTEM
-  // ══════════════════════════════════════════════════════════════════════════
-
-  void _resetFreeDelayTimer() {
-    _freeDelayTimer?.cancel();
-    _freeDelayTimer = Timer(
-      const Duration(seconds: _freeSilenceDelay),
-      _processFreeBufferedText,
-    );
-  }
-
-  Future<void> _processFreeBufferedText() async {
-    _freeDelayTimer?.cancel();
-    _freeDelayTimer = null;
-
-    final raw = _freeBufferedRaw.trim();
-    if (raw.isEmpty) return;
-
-    dev.log('Free user: 10s silence passed — processing "$raw"');
-
-    final localResult = _nlp.correctPartialSync(raw);
-    final appended    = _buildDisplay(_committedText, localResult);
-
-    if (mounted) setState(() {
-      _displayText        = appended;
-      _currentSegment     = '';
-      _isRefiningFinal    = true;
-      _isWaitingToDisplay = false;
-    });
-
-    try {
-      final correctionResult = await _nlp.correct(appended);
-      final corrected        = correctionResult['corrected'] as String;
-
-      if (mounted) {
-        setState(() {
-          _committedText   = corrected;
-          _currentSegment  = '';
-          _displayText     = corrected;
-          _isRefiningFinal = false;
-        });
-      }
-
-      final user = FirebaseAuth.instance.currentUser;
-      if (user != null) {
-        FirebaseFirestore.instance.collection('translations').add({
-          'text':    corrected,
-          'rawText': raw,
-          'time':    FieldValue.serverTimestamp(),
-          'userId':  user.uid,
-          'mode':    'basic',
-        }).catchError((e) => dev.log('Firestore save error: $e'));
-      }
-    } catch (e) {
-      dev.log('Free correction error: $e');
-      if (mounted) {
-        setState(() {
-          _committedText   = appended;
-          _currentSegment  = '';
-          _displayText     = appended;
-          _isRefiningFinal = false;
-        });
-      }
-    }
-
-    _freeBufferedRaw = '';
-  }
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // FREE — Basic listening
-  // ══════════════════════════════════════════════════════════════════════════
-
-  void _startFreeCountdown() {
-    _freeTimer?.cancel();
-    _freeSecondsLeft = _freeTotalSeconds;
-    _freeTimer = Timer.periodic(const Duration(seconds: 1), (t) {
-      if (!mounted) { t.cancel(); return; }
-      setState(() => _freeSecondsLeft--);
-      if (_freeSecondsLeft <= 0) {
-        t.cancel();
-        _userStopped = true;
-        _cancelFreeSilenceAutoStop();
-        _speech.stop();
-        if (_freeBufferedRaw.trim().isNotEmpty) {
-          _processFreeBufferedText();
-        }
-        if (mounted) setState(() {
-          _isListening        = false;
-          _isRefiningFinal    = false;
-          _isWaitingToDisplay = false;
-        });
-      }
-    });
-  }
-
-  Future<void> _startBasicListening() async {
-    if (!_isInitialized) {
-      await _initSpeech();
-      if (!_isInitialized) return;
-    }
-
-    _startFreeCountdown();
-    _resetFreeSilenceAutoStop();
-
-    await _speech.listen(
-      localeId:       'en_US',
-      listenFor:      const Duration(seconds: _freeTotalSeconds),
-      pauseFor:       const Duration(seconds: 12),
-      partialResults: true,
-      listenMode:     stt.ListenMode.dictation,
-      onResult: (result) {
-        final words = result.recognizedWords.trim();
-        if (words.isEmpty) return;
-
-        _resetFreeSilenceAutoStop();
-
-        if (result.finalResult) {
-          final combined   = _buildDisplay(_committedText, words).trim();
-          _freeBufferedRaw = combined;
-          if (mounted) setState(() => _isWaitingToDisplay = true);
-          _resetFreeDelayTimer();
-
-          final wordCount = combined.trim().isEmpty
-              ? 0
-              : combined.trim().split(RegExp(r'\s+')).length;
-          if (wordCount >= _maxWordsFree && !_userStopped) {
-            dev.log('Free user: 30-word cap reached — stopping mic');
-            _userStopped = true;
-            _freeTimer?.cancel();
-            _cancelFreeSilenceAutoStop();
-            _speech.stop();
-            if (mounted) setState(() => _isListening = false);
-          }
-        }
-      },
-    );
-  }
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // PREMIUM — ALWAYS-ON REAL-TIME LISTENING
+  // ALWAYS-ON REAL-TIME LISTENING
   // ══════════════════════════════════════════════════════════════════════════
 
   Future<void> _startRealtimeListening() async {
@@ -530,44 +324,23 @@ class _TranslatorScreenState extends State<TranslatorScreen>
     if (_isListening) {
       _userStopped = true;
       _stopAlwaysOnLoop();
-      _freeTimer?.cancel();
-      _freeDelayTimer?.cancel();
-      _freeDelayTimer = null;
-      _cancelFreeSilenceAutoStop();
       _bgSaveTimer?.cancel();
       _partialNlpDebounce?.cancel();
-      _stopPremiumSessionTimer();
+      _stopSessionTimer();
       await _speech.stop();
 
-      if (!_isPremium && _freeBufferedRaw.trim().isNotEmpty) {
-        _processFreeBufferedText();
-      }
-
-      if (mounted) setState(() {
-        _isListening        = false;
-        _isRefiningFinal    = false;
-        _isWaitingToDisplay = false;
-      });
+      if (mounted) setState(() => _isListening = false);
     } else {
-      _userStopped           = false;
-      _isRestarting          = false;
-      _displayText           = '';
-      _committedText         = '';
-      _currentSegment        = '';
-      _freeBufferedRaw       = '';
-      _freeSecondsLeft       = _freeTotalSeconds;
-      _isRefiningFinal       = false;
-      _isWaitingToDisplay    = false;
-      _premiumSessionSeconds = 0;
+      _userStopped    = false;
+      _isRestarting   = false;
+      _displayText    = '';
+      _committedText  = '';
+      _currentSegment = '';
+      _sessionSeconds = 0;
       if (mounted) setState(() => _isListening = true);
       _nlp.beginSession();
-
-      if (_isPremium) {
-        _startPremiumSessionTimer();
-        await _startRealtimeListening();
-      } else {
-        await _startBasicListening();
-      }
+      _startSessionTimer();
+      await _startRealtimeListening();
     }
   }
 
@@ -577,7 +350,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
     if (!_isListening && _displayText.isEmpty) {
       return 'Tap the mic to start speaking...';
     }
-    if (_isListening && _displayText.isEmpty && !_isWaitingToDisplay) {
+    if (_isListening && _displayText.isEmpty) {
       return 'Listening... speak now';
     }
     return '';
@@ -606,7 +379,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
           .delete();
 
       await _nlp.forgetPattern(wrong, correct);
-      dev.log('Correction deleted from Firestore + NLP brain: "$wrong" → "$correct"');
+      dev.log('Correction deleted: "$wrong" → "$correct"');
       await NotificationHelper.wordDeleted(wrong);
       if (mounted) setState(() {});
     } catch (e) {
@@ -666,15 +439,11 @@ class _TranslatorScreenState extends State<TranslatorScreen>
 
   @override
   void dispose() {
-    _freeTimer?.cancel();
-    _freeDelayTimer?.cancel();
-    _freeSilenceTimer?.cancel();
     _bgSaveTimer?.cancel();
-    _premiumSessionTimer?.cancel();
+    _sessionTimer?.cancel();
     _partialNlpDebounce?.cancel();
     _alwaysOnRestartTimer?.cancel();
     _keepAliveTimer?.cancel();
-    _premiumSub.cancel();
     _nlp.onRealtimeCorrection = null;
     _speech.stop();
     _pulseController.dispose();
@@ -741,27 +510,6 @@ class _TranslatorScreenState extends State<TranslatorScreen>
             ),
           ),
           const Spacer(),
-          if (_isPremium)
-            Container(
-              margin: const EdgeInsets.only(right: 8),
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: _accentTint,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: _accentBorder),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.star_rounded, color: _accent, size: 11),
-                  SizedBox(width: 4),
-                  Text('Premium',
-                      style: TextStyle(
-                          color: _accent,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700)),
-                ],
-              ),
-            ),
           _appBarBtn(
             icon: _showCorrections
                 ? Icons.close_rounded
@@ -808,6 +556,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
 
+        // ── Status row ───────────────────────────────────────────────────────
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -833,7 +582,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                 ],
               ),
             ),
-            if (_isListening && _isPremium) ...[
+            if (_isListening) ...[
               const SizedBox(width: 16),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -848,59 +597,13 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                     const Icon(Icons.timer_rounded, color: _accent, size: 11),
                     const SizedBox(width: 4),
                     Text(
-                      _premiumSessionLabel,
+                      _sessionLabel,
                       style: const TextStyle(
-                          color: _accent, fontSize: 11, fontWeight: FontWeight.w600),
+                          color: _accent,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600),
                     ),
                   ],
-                ),
-              ),
-            ],
-            if (_isWaitingToDisplay && !_isPremium) ...[
-              const SizedBox(width: 16),
-              AnimatedBuilder(
-                animation: _dotAnim,
-                builder: (_, __) => Opacity(
-                  opacity: _dotAnim.value,
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 6, height: 6,
-                        decoration: const BoxDecoration(
-                            color: _accent, shape: BoxShape.circle),
-                      ),
-                      const SizedBox(width: 5),
-                      const Text(
-                        'processing in 10s...',
-                        style: TextStyle(
-                            color: _accent, fontSize: 11, letterSpacing: 0.5),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-            if (_isRefiningFinal && !_isPremium) ...[
-              const SizedBox(width: 16),
-              AnimatedBuilder(
-                animation: _dotAnim,
-                builder: (_, __) => Opacity(
-                  opacity: _dotAnim.value,
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 6, height: 6,
-                        decoration: const BoxDecoration(
-                            color: _accent, shape: BoxShape.circle),
-                      ),
-                      const SizedBox(width: 5),
-                      const Text(
-                        'translating...',
-                        style: TextStyle(
-                            color: _accent, fontSize: 11, letterSpacing: 0.5),
-                      ),
-                    ],
-                  ),
                 ),
               ),
             ],
@@ -909,6 +612,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
 
         const SizedBox(height: 28),
 
+        // ── Text card ────────────────────────────────────────────────────────
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
           child: AnimatedContainer(
@@ -919,7 +623,9 @@ class _TranslatorScreenState extends State<TranslatorScreen>
               color: Colors.white.withOpacity(0.55),
               borderRadius: BorderRadius.circular(22),
               border: Border.all(
-                color: _isListening ? _accent.withOpacity(0.5) : _accentBorder,
+                color: _isListening
+                    ? _accent.withOpacity(0.5)
+                    : _accentBorder,
                 width: 1,
               ),
               boxShadow: _isListening
@@ -937,34 +643,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (_isWaitingToDisplay && !_isPremium && _displayText.isEmpty)
-                  Column(
-                    children: [
-                      const SizedBox(height: 8),
-                      AnimatedBuilder(
-                        animation: _dotAnim,
-                        builder: (_, __) => Opacity(
-                          opacity: _dotAnim.value,
-                          child: const Icon(
-                            Icons.hourglass_top_rounded,
-                            color: _accent,
-                            size: 32,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      const Text(
-                        'Speech captured.\nTranslation appears after 10s of silence.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: _textSub,
-                          height: 1.6,
-                        ),
-                      ),
-                    ],
-                  )
-                else if (hint.isNotEmpty)
+                if (hint.isNotEmpty)
                   Text(hint,
                       textAlign: TextAlign.center,
                       style: const TextStyle(
@@ -992,7 +671,8 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                       _textAction(Icons.content_copy_rounded, 'Copy', () {
                         Clipboard.setData(ClipboardData(text: _displayText));
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Copied to clipboard')),
+                          const SnackBar(
+                              content: Text('Copied to clipboard')),
                         );
                       }),
                       const SizedBox(width: 8),
@@ -1016,103 +696,72 @@ class _TranslatorScreenState extends State<TranslatorScreen>
 
         const SizedBox(height: 20),
 
+        // ── Session chips ────────────────────────────────────────────────────
         if (_isListening)
           Wrap(
             alignment: WrapAlignment.center,
             spacing: 8, runSpacing: 6,
             children: [
-              if (_isPremium) ...[
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: _accentTint,
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: _accentBorder),
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.all_inclusive_rounded, color: _accent, size: 11),
-                      SizedBox(width: 4),
-                      Text('Unlimited · Always-On',
-                          style: TextStyle(
-                              color: _accent,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600)),
-                    ],
-                  ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 3),
+                decoration: BoxDecoration(
+                  color: _accentTint,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: _accentBorder),
                 ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: _accentTint,
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: _accentBorder),
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.noise_aware_rounded, color: _accent, size: 11),
-                      SizedBox(width: 4),
-                      Text('Noise Filter',
-                          style: TextStyle(color: _accent, fontSize: 11)),
-                    ],
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: _card,
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: _white20),
-                  ),
-                  child: Text(
-                    '$_wordCount words',
-                    style: const TextStyle(color: _textSub, fontSize: 11),
-                  ),
-                ),
-              ] else ...[
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: _freeSecondsLeft <= 10
-                        ? Colors.redAccent.withOpacity(0.12)
-                        : _card,
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                      color: _freeSecondsLeft <= 10
-                          ? Colors.redAccent.withOpacity(0.5)
-                          : _white20,
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.timer_outlined,
-                          size: 11,
-                          color: _freeSecondsLeft <= 10
-                              ? Colors.redAccent
-                              : _textSub),
-                      const SizedBox(width: 4),
-                      Text(
-                        'Basic · ${_freeSecondsLeft}s left',
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.all_inclusive_rounded,
+                        color: _accent, size: 11),
+                    SizedBox(width: 4),
+                    Text('Always-On · Realtime',
                         style: TextStyle(
-                          color: _freeSecondsLeft <= 10
-                              ? Colors.redAccent
-                              : _textSub,
-                          fontSize: 11,
-                        ),
-                      ),
-                    ],
-                  ),
+                            color: _accent,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600)),
+                  ],
                 ),
-                Text('$_wordCount/$_maxWordsFree words',
-                    style: const TextStyle(color: _textSub, fontSize: 12)),
-              ],
-
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 3),
+                decoration: BoxDecoration(
+                  color: _accentTint,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: _accentBorder),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.noise_aware_rounded,
+                        color: _accent, size: 11),
+                    SizedBox(width: 4),
+                    Text('Noise Filter',
+                        style: TextStyle(
+                            color: _accent, fontSize: 11)),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 3),
+                decoration: BoxDecoration(
+                  color: _card,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: _white20),
+                ),
+                child: Text(
+                  '$_wordCount words',
+                  style: const TextStyle(
+                      color: _textSub, fontSize: 11),
+                ),
+              ),
               if (_nlp.patternCount > 0)
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 3),
                   decoration: BoxDecoration(
                     color: _accentTint,
                     borderRadius: BorderRadius.circular(20),
@@ -1120,44 +769,12 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                   ),
                   child: Text(
                     '${_nlp.patternCount} pattern${_nlp.patternCount == 1 ? '' : 's'} active',
-                    style: const TextStyle(color: _accent, fontSize: 11),
+                    style: const TextStyle(
+                        color: _accent, fontSize: 11),
                   ),
                 ),
             ],
           ),
-
-        if (!_isPremium && !_isListening) ...[
-          const SizedBox(height: 20),
-          GestureDetector(
-            onTap: widget.goToPremium,
-            child: Container(
-              margin: const EdgeInsets.symmetric(horizontal: 24),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              decoration: BoxDecoration(
-                color: _accentTint,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: _accentBorder),
-              ),
-              child: const Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.all_inclusive_rounded, color: _accent, size: 14),
-                  SizedBox(width: 6),
-                  Flexible(
-                    child: Text(
-                      'Upgrade for Always-On Listening + Realtime + Noise Cancellation',
-                      style: TextStyle(
-                          color: _accent,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600),
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
 
         const SizedBox(height: 100),
       ],
@@ -1178,7 +795,8 @@ class _TranslatorScreenState extends State<TranslatorScreen>
           children: [
             Icon(icon, size: 13, color: _accent),
             const SizedBox(width: 4),
-            Text(label, style: const TextStyle(color: _accent, fontSize: 11)),
+            Text(label,
+                style: const TextStyle(color: _accent, fontSize: 11)),
           ],
         ),
       ),
@@ -1208,7 +826,8 @@ class _TranslatorScreenState extends State<TranslatorScreen>
               GestureDetector(
                 onTap: _showAddCorrectionDialog,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
                     color: _accentTint,
                     borderRadius: BorderRadius.circular(20),
@@ -1238,7 +857,8 @@ class _TranslatorScreenState extends State<TranslatorScreen>
               : StreamBuilder<QuerySnapshot>(
                   stream: _correctionsStream,
                   builder: (context, snapshot) {
-                    if (snapshot.connectionState == ConnectionState.waiting) {
+                    if (snapshot.connectionState ==
+                        ConnectionState.waiting) {
                       return const Center(
                         child: CircularProgressIndicator(
                             color: _accent, strokeWidth: 2),
@@ -1255,9 +875,12 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                             Container(
                               padding: const EdgeInsets.all(20),
                               decoration: const BoxDecoration(
-                                  color: _accentTint, shape: BoxShape.circle),
-                              child: const Icon(Icons.auto_fix_high_rounded,
-                                  color: _accent, size: 32),
+                                  color: _accentTint,
+                                  shape: BoxShape.circle),
+                              child: const Icon(
+                                  Icons.auto_fix_high_rounded,
+                                  color: _accent,
+                                  size: 32),
                             ),
                             const SizedBox(height: 16),
                             const Text('No corrections yet',
@@ -1270,7 +893,9 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                               'Use the mic, then tap "Correct"\nto teach CleftTune your patterns.',
                               textAlign: TextAlign.center,
                               style: TextStyle(
-                                  color: _textSub, fontSize: 12, height: 1.6),
+                                  color: _textSub,
+                                  fontSize: 12,
+                                  height: 1.6),
                             ),
                           ],
                         ),
@@ -1279,27 +904,44 @@ class _TranslatorScreenState extends State<TranslatorScreen>
 
                     final sorted = List.of(docs)
                       ..sort((a, b) {
-                        final aData = a.data() as Map<String, dynamic>;
-                        final bData = b.data() as Map<String, dynamic>;
-                        final aIsUser = (aData['source'] as String? ?? '') == 'user';
-                        final bIsUser = (bData['source'] as String? ?? '') == 'user';
-                        if (aIsUser != bIsUser) return aIsUser ? -1 : 1;
+                        final aData =
+                            a.data() as Map<String, dynamic>;
+                        final bData =
+                            b.data() as Map<String, dynamic>;
+                        final aIsUser =
+                            (aData['source'] as String? ?? '') ==
+                                'user';
+                        final bIsUser =
+                            (bData['source'] as String? ?? '') ==
+                                'user';
+                        if (aIsUser != bIsUser) {
+                          return aIsUser ? -1 : 1;
+                        }
                         return (aData['wrong'] as String? ?? '')
-                            .compareTo(bData['wrong'] as String? ?? '');
+                            .compareTo(
+                                bData['wrong'] as String? ?? '');
                       });
 
                     return ListView.separated(
                       padding: const EdgeInsets.fromLTRB(20, 0, 20, 100),
                       itemCount: sorted.length,
-                      separatorBuilder: (_, __) => const SizedBox(height: 8),
+                      separatorBuilder: (_, __) =>
+                          const SizedBox(height: 8),
                       itemBuilder: (context, i) {
-                        final data    = sorted[i].data() as Map<String, dynamic>;
-                        final wrong   = data['wrong']   as String? ?? '';
-                        final correct = data['correct'] as String? ?? '';
-                        final source  = data['source']  as String? ?? 'ai';
+                        final data = sorted[i].data()
+                            as Map<String, dynamic>;
+                        final wrong =
+                            data['wrong'] as String? ?? '';
+                        final correct =
+                            data['correct'] as String? ?? '';
+                        final source =
+                            data['source'] as String? ?? 'ai';
                         return _correctionTile(
-                          wrong: wrong, correct: correct,
-                          source: source, docId: sorted[i].id, uid: uid,
+                          wrong: wrong,
+                          correct: correct,
+                          source: source,
+                          docId: sorted[i].id,
+                          uid: uid,
                         );
                       },
                     );
@@ -1342,7 +984,9 @@ class _TranslatorScreenState extends State<TranslatorScreen>
               borderRadius: BorderRadius.circular(8),
             ),
             child: Icon(
-              isUser ? Icons.person_rounded : Icons.auto_fix_high_rounded,
+              isUser
+                  ? Icons.person_rounded
+                  : Icons.auto_fix_high_rounded,
               color: isUser ? _accent : _textSub,
               size: 16,
             ),
@@ -1380,7 +1024,8 @@ class _TranslatorScreenState extends State<TranslatorScreen>
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 7, vertical: 2),
                 decoration: BoxDecoration(
                   color: isUser ? _accentTint : _card,
                   borderRadius: BorderRadius.circular(20),
@@ -1449,7 +1094,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// ADD CORRECTION BOTTOM SHEET — light theme with loading spinner on save
+// ADD CORRECTION BOTTOM SHEET
 // ══════════════════════════════════════════════════════════════════════════════
 
 class _AddCorrectionSheet extends StatefulWidget {
@@ -1472,13 +1117,12 @@ class _AddCorrectionSheet extends StatefulWidget {
 class _AddCorrectionSheetState extends State<_AddCorrectionSheet> {
   bool _isSaving = false;
 
-  // ── Light-theme colours (Sky Blue / Navy) ──────────────────────────────────
-  static const _sheetBg      = Color(0xFFEAF4FB); // _bg
+  static const _sheetBg      = Color(0xFFEAF4FB);
   static const _sheetSurface = Color(0xFFFFFFFF);
-  static const _labelColor   = Color(0xFF5A7A96); // _textSub
-  static const _textColor    = Color(0xFF0D2B4E); // _textDark
+  static const _labelColor   = Color(0xFF5A7A96);
+  static const _textColor    = Color(0xFF0D2B4E);
   static const _accent       = Color(0xFF0077B6);
-  static const _accentLight  = Color(0xFFD6EEFF); // _surface
+  static const _accentLight  = Color(0xFFD6EEFF);
   static const _borderColor  = Color(0xFFB8D4E8);
   static const _hintColor    = Color(0xFF8AAEC8);
 
@@ -1517,7 +1161,6 @@ class _AddCorrectionSheetState extends State<_AddCorrectionSheet> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Drag handle
             Center(
               child: Container(
                 width: 36, height: 4,
@@ -1528,8 +1171,6 @@ class _AddCorrectionSheetState extends State<_AddCorrectionSheet> {
               ),
             ),
             const SizedBox(height: 20),
-
-            // Title row
             Row(
               children: [
                 Container(
@@ -1552,28 +1193,25 @@ class _AddCorrectionSheetState extends State<_AddCorrectionSheet> {
                             color: _textColor)),
                     SizedBox(height: 2),
                     Text('Tell CleftTune what it heard wrong.',
-                        style: TextStyle(fontSize: 12, color: _labelColor)),
+                        style: TextStyle(
+                            fontSize: 12, color: _labelColor)),
                   ],
                 ),
               ],
             ),
             const SizedBox(height: 24),
-
-            // Wrong field
             _label('WHAT WAS HEARD (WRONG)'),
             const SizedBox(height: 6),
             _field(widget.wrongController,
-                hint: 'e.g. "kea"', icon: Icons.hearing_outlined),
+                hint: 'e.g. "kea"',
+                icon: Icons.hearing_outlined),
             const SizedBox(height: 16),
-
-            // Correct field
             _label('WHAT IT SHOULD BE (CORRECT)'),
             const SizedBox(height: 6),
             _field(widget.correctController,
-                hint: 'e.g. "tea"', icon: Icons.check_circle_outline),
+                hint: 'e.g. "tea"',
+                icon: Icons.check_circle_outline),
             const SizedBox(height: 28),
-
-            // Buttons
             Row(
               children: [
                 Expanded(
@@ -1583,13 +1221,16 @@ class _AddCorrectionSheetState extends State<_AddCorrectionSheet> {
                       side: const BorderSide(color: _borderColor),
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12)),
-                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      padding:
+                          const EdgeInsets.symmetric(vertical: 14),
                       backgroundColor: _sheetSurface,
                     ),
-                    onPressed: _isSaving ? null : () => Navigator.pop(context),
+                    onPressed:
+                        _isSaving ? null : () => Navigator.pop(context),
                     child: const Text('Cancel',
                         style: TextStyle(
-                            color: _textColor, fontWeight: FontWeight.w600)),
+                            color: _textColor,
+                            fontWeight: FontWeight.w600)),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -1597,10 +1238,12 @@ class _AddCorrectionSheetState extends State<_AddCorrectionSheet> {
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
                       backgroundColor: _accent,
-                      disabledBackgroundColor: _accent.withOpacity(0.6),
+                      disabledBackgroundColor:
+                          _accent.withOpacity(0.6),
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12)),
-                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      padding:
+                          const EdgeInsets.symmetric(vertical: 14),
                       elevation: 0,
                     ),
                     onPressed: _isSaving ? null : _handleSave,
@@ -1662,7 +1305,8 @@ class _AddCorrectionSheetState extends State<_AddCorrectionSheet> {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: _accent, width: 1.5),
+          borderSide:
+              const BorderSide(color: _accent, width: 1.5),
         ),
       ),
     );

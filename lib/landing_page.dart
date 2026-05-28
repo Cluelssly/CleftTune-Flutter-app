@@ -25,13 +25,13 @@ class _LandingPageState extends State<LandingPage>
   late Animation<double> _pulse;
 
   // ─── PALETTE (Sky Blue / Navy) ───────────────────────────────────────────────
-  static const Color _bg        = Color(0xFFEAF4FB); // Ice blue light
-  static const Color _surface   = Color(0xFFD6EEFF); // Soft sky blue
-  static const Color _accent    = Color(0xFF0077B6); // Bright teal blue
-  static const Color _accentDim = Color(0xFF005F8E); // Accent darker (shadows)
-  static const Color _textDark  = Color(0xFF0D2B4E); // Dark Navy
-  static const Color _textSub   = Color(0xFF5A7A96); // Subtle gray-blue
-  static const Color _label     = Color(0xFF0077B6); // Label teal
+  static const Color _bg        = Color(0xFFEAF4FB);
+  static const Color _surface   = Color(0xFFD6EEFF);
+  static const Color _accent    = Color(0xFF0077B6);
+  static const Color _accentDim = Color(0xFF005F8E);
+  static const Color _textDark  = Color(0xFF0D2B4E);
+  static const Color _textSub   = Color(0xFF5A7A96);
+  static const Color _label     = Color(0xFF0077B6);
 
   @override
   void initState() {
@@ -116,9 +116,9 @@ class _LandingPageState extends State<LandingPage>
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [
-              Color(0xFFEAF4FB), // Ice blue light
-              Color(0xFFD6EEFF), // Sky blue mid
-              Color(0xFFBFDFF7), // Sky blue deeper
+              Color(0xFFEAF4FB),
+              Color(0xFFD6EEFF),
+              Color(0xFFBFDFF7),
             ],
           ),
         ),
@@ -353,68 +353,33 @@ class _LandingPageState extends State<LandingPage>
             ),
           ),
 
-          // ── BUTTONS ROW ─────────────────────────────────────────────────
+          // ── BUTTON ──────────────────────────────────────────────────────
           SlideTransition(
             position: _buttonSlide,
             child: FadeTransition(
               opacity: _fadeIn,
-              child: Row(
-                children: [
-                  Expanded(
-                    child: SizedBox(
-                      height: (screenH * 0.068).clamp(44.0, 54.0),
-                      child: ElevatedButton(
-                        onPressed: widget.onContinue,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: _textDark,
-                          elevation: 6,
-                          shadowColor: _accentDim.withOpacity(0.3),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                        ),
-                        child: Text(
-                          "Start free",
-                          style: TextStyle(
-                            fontSize: (screenH * 0.02).clamp(13.0, 16.0),
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ),
+              child: SizedBox(
+                width: double.infinity,
+                height: (screenH * 0.068).clamp(44.0, 54.0),
+                child: ElevatedButton(
+                  onPressed: widget.onContinue,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _textDark,
+                    elevation: 6,
+                    shadowColor: _accentDim.withOpacity(0.3),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
                     ),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: SizedBox(
-                      height: (screenH * 0.068).clamp(44.0, 54.0),
-                      child: OutlinedButton(
-                        onPressed: widget.onContinue,
-                        style: OutlinedButton.styleFrom(
-                          side: BorderSide(color: _textDark.withOpacity(0.4), width: 1.5),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Text(
-                              "See demo",
-                              style: TextStyle(
-                                fontSize: (screenH * 0.02).clamp(13.0, 16.0),
-                                fontWeight: FontWeight.w600,
-                                color: _textDark,
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-                            Icon(Icons.arrow_forward_rounded, color: _textDark, size: 16),
-                          ],
-                        ),
-                      ),
+                  child: Text(
+                    "Get started",
+                    style: TextStyle(
+                      fontSize: (screenH * 0.02).clamp(13.0, 16.0),
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
                     ),
                   ),
-                ],
+                ),
               ),
             ),
           ),
@@ -468,63 +433,27 @@ class _LandingPageState extends State<LandingPage>
                   position: _buttonSlide,
                   child: FadeTransition(
                     opacity: _fadeIn,
-                    child: Row(
-                      children: [
-                        SizedBox(
-                          height: 52,
-                          child: ElevatedButton(
-                            onPressed: widget.onContinue,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: _textDark,
-                              padding: const EdgeInsets.symmetric(horizontal: 28),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              elevation: 4,
-                            ),
-                            child: const Text(
-                              "Start free",
-                              style: TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white,
-                              ),
-                            ),
+                    child: SizedBox(
+                      height: 52,
+                      child: ElevatedButton(
+                        onPressed: widget.onContinue,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _textDark,
+                          padding: const EdgeInsets.symmetric(horizontal: 28),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          elevation: 4,
+                        ),
+                        child: const Text(
+                          "Get started",
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
                           ),
                         ),
-                        const SizedBox(width: 14),
-                        SizedBox(
-                          height: 52,
-                          child: OutlinedButton(
-                            onPressed: widget.onContinue,
-                            style: OutlinedButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(horizontal: 24),
-                              side: BorderSide(
-                                color: _textDark.withOpacity(0.35),
-                                width: 1.5,
-                              ),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                            child: Row(
-                              children: [
-                                Text(
-                                  "See demo",
-                                  style: TextStyle(
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w600,
-                                    color: _textDark,
-                                  ),
-                                ),
-                                const SizedBox(width: 6),
-                                Icon(Icons.arrow_forward_rounded,
-                                    color: _textDark, size: 16),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
                   ),
                 ),
@@ -576,7 +505,6 @@ class _LandingPageState extends State<LandingPage>
         return Stack(
           alignment: Alignment.center,
           children: [
-            // Pale blue blob behind logo
             Container(
               width: size * 1.6,
               height: size * 1.6,
@@ -585,7 +513,6 @@ class _LandingPageState extends State<LandingPage>
                 color: const Color(0xFFD6EEFF).withOpacity(0.6),
               ),
             ),
-            // Outer glow ring 2
             Transform.scale(
               scale: 1.0 + (_waveController.value * 0.08),
               child: Container(
@@ -602,7 +529,6 @@ class _LandingPageState extends State<LandingPage>
                 ),
               ),
             ),
-            // Outer glow ring 1
             Transform.scale(
               scale: 1.0 + (_pulseController.value * 0.04),
               child: Container(
@@ -617,17 +543,14 @@ class _LandingPageState extends State<LandingPage>
                 ),
               ),
             ),
-            // Waveform lines left
             Positioned(
               left: 0,
               child: _buildWaveformSide(size * 0.38, mirrored: false),
             ),
-            // Waveform lines right
             Positioned(
               right: 0,
               child: _buildWaveformSide(size * 0.38, mirrored: true),
             ),
-            // Main logo circle — sky blue gradient with teal border
             Transform.scale(
               scale: _pulse.value,
               child: Container(
@@ -637,8 +560,8 @@ class _LandingPageState extends State<LandingPage>
                   shape: BoxShape.circle,
                   gradient: const RadialGradient(
                     colors: [
-                      Color(0xFFD6EEFF), // Sky blue mid
-                      Color(0xFFBFDFF7), // Sky blue deeper
+                      Color(0xFFD6EEFF),
+                      Color(0xFFBFDFF7),
                     ],
                     center: Alignment.topLeft,
                     radius: 1.4,
@@ -912,7 +835,7 @@ class _LandingPageState extends State<LandingPage>
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Text(
-              "Start free",
+              "Get started",
               style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.bold,

@@ -55,7 +55,8 @@ class NotificationHelper {
     });
   }
 
-  static Future<void> trainingStarted()  => send(
+  // ── Training ──────────────────────────────────────────────────────────────
+  static Future<void> trainingStarted() => send(
     title: 'Voice Training Started',
     body:  'CleftTune is now learning your voice. This may take a few moments.',
     type:  'training',
@@ -72,6 +73,8 @@ class NotificationHelper {
     body:  'Voice training encountered an issue. Please try again.',
     type:  'training',
   );
+
+  // ── Words ─────────────────────────────────────────────────────────────────
   static Future<void> wordDeleted(String word) => send(
     title: 'Word Removed',
     body:  '"$word" has been deleted from your corrected words list.',
@@ -87,31 +90,8 @@ class NotificationHelper {
     body:  '"$oldWord" has been updated to "$newWord".',
     type:  'word_added',
   );
-  static Future<void> premiumPaymentReminder({int daysLeft = 3}) => send(
-    title: 'Payment Due in $daysLeft Days 💳',
-    body:  'Your subscription renews in $daysLeft days.',
-    type:  'premium_pay',
-  );
-  static Future<void> premiumActivated({String method = ''}) => send(
-    title: 'Premium Activated 🎉',
-    body:  method.isNotEmpty ? 'Confirmed via $method. Enjoy all features!' : 'Your Premium subscription is now active!',
-    type:  'premium_active',
-  );
-  static Future<void> premiumRenewed({String method = ''}) => send(
-    title: 'Subscription Renewed ✅',
-    body:  'CleftTune Premium renewed successfully. Thank you!',
-    type:  'premium_active',
-  );
-  static Future<void> premiumCancelled() => send(
-    title: 'Subscription Cancelled',
-    body:  'Your Premium subscription has been cancelled.',
-    type:  'premium_cancel',
-  );
-  static Future<void> premiumExpiringSoon() => send(
-    title: 'Premium Expiring Soon ⚠️',
-    body:  'Your Premium expires tomorrow. Renew now.',
-    type:  'premium_pay',
-  );
+
+  // ── App Updates ───────────────────────────────────────────────────────────
   static Future<void> appUpdateAvailable({required String version, String? changelog}) => send(
     title: 'Update Available — v$version 🚀',
     body:  changelog ?? 'A new version of CleftTune is ready.',
@@ -122,15 +102,47 @@ class NotificationHelper {
     body:  'CleftTune updated successfully. Enjoy the new features!',
     type:  'app_update',
   );
-  static Future<void> syncCompleted() => send(
-    title: 'Sync Complete',
-    body:  'Your data has been synced to the cloud successfully.',
-    type:  'sync',
+
+  // ── Gamification ──────────────────────────────────────────────────────────
+  static Future<void> badgeEarned({required String badge}) => send(
+    title: 'Badge Unlocked 🏅',
+    body:  'You earned the "$badge" badge. Keep it up!',
+    type:  'badge',
   );
-  static Future<void> cloudBackupDone() => send(
-    title: 'Cloud Backup Done ☁️',
-    body:  'Your voice model and history have been backed up securely.',
-    type:  'cloud',
+  static Future<void> levelUp({required int level}) => send(
+    title: 'Level Up! 🎉',
+    body:  'Congratulations! You reached Level $level.',
+    type:  'level_up',
+  );
+  static Future<void> streakMilestone({required int days}) => send(
+    title: '$days-Day Streak 🔥',
+    body:  'Amazing! You\'ve trained for $days days in a row.',
+    type:  'streak',
+  );
+  static Future<void> streakAtRisk() => send(
+    title: 'Streak at Risk ⚠️',
+    body:  'Train today to keep your streak alive!',
+    type:  'streak',
+  );
+  static Future<void> challengeCompleted({required String challenge}) => send(
+    title: 'Challenge Complete 🏆',
+    body:  'You completed the "$challenge" challenge!',
+    type:  'challenge',
+  );
+  static Future<void> newChallengeAvailable({required String challenge}) => send(
+    title: 'New Challenge Available 🎯',
+    body:  '"$challenge" is now available. Give it a try!',
+    type:  'challenge',
+  );
+  static Future<void> xpEarned({required int xp}) => send(
+    title: '+$xp XP Earned ⭐',
+    body:  'You gained $xp experience points from your last session.',
+    type:  'xp',
+  );
+  static Future<void> leaderboardRankUp({required int rank}) => send(
+    title: 'Leaderboard Rank Up 📈',
+    body:  'You climbed to #$rank on the leaderboard!',
+    type:  'leaderboard',
   );
 }
 
@@ -143,13 +155,12 @@ class NotificationsScreen extends StatefulWidget {
 
 class _NotificationsScreenState extends State<NotificationsScreen> {
   // ── Design tokens (Sky Blue / Navy palette) ─────────────────────────────
-  static const _bg        = Color(0xFFEAF4FB); // Ice blue light
-  static const _surface   = Color(0xFFD6EEFF); // Soft sky blue
-  static const _card      = Color(0xFFBFDEF7); // Slightly deeper card surface
-  static const _accent    = Color(0xFF0077B6); // Bright teal blue
-  static const _accentDim = Color(0xFF005F8E); // Accent darker (shadows)
-  static const _textDark  = Color(0xFF0D2B4E); // Dark Navy
-  static const _textSub   = Color(0xFF5A7A96); // Subtle gray-blue
+  static const _bg        = Color(0xFFEAF4FB);
+  static const _surface   = Color(0xFFD6EEFF);
+  static const _card      = Color(0xFFBFDEF7);
+  static const _accent    = Color(0xFF0077B6);
+  static const _textDark  = Color(0xFF0D2B4E);
+  static const _textSub   = Color(0xFF5A7A96);
 
   List<NotifItem> _items   = [];
   bool            _loading = true;
@@ -157,12 +168,15 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   String?         _filter;
 
   static const _filters = [
-    ['All',      null],
-    ['Training', 'training'],
-    ['Words',    'word'],
-    ['Premium',  'premium'],
-    ['Updates',  'app_update'],
-    ['Sync',     'sync'],
+    ['All',        null],
+    ['Training',   'training'],
+    ['Words',      'word'],
+    ['Badges',     'badge'],
+    ['Levels',     'level_up'],
+    ['Streaks',    'streak'],
+    ['Challenges', 'challenge'],
+    ['XP',         'xp'],
+    ['Updates',    'app_update'],
   ];
 
   @override
@@ -183,7 +197,6 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         .snapshots()
         .listen(
           (snapshot) {
-            debugPrint('📬 Notifications received: ${snapshot.docs.length}');
             setState(() {
               _items   = snapshot.docs.map(NotifItem.fromFirestore).toList();
               _loading = false;
@@ -191,7 +204,6 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             });
           },
           onError: (e) {
-            debugPrint('❌ Firestore notifications error: $e');
             setState(() { _loading = false; _error = e.toString(); });
           },
         );
@@ -297,46 +309,49 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
   IconData _icon(String t) {
     switch (t) {
-      case 'training':       return Icons.mic_rounded;
-      case 'word_deleted':   return Icons.delete_rounded;
-      case 'word_added':     return Icons.spellcheck_rounded;
-      case 'premium_active': return Icons.star_rounded;
-      case 'premium_pay':    return Icons.credit_card_rounded;
-      case 'premium_cancel': return Icons.cancel_rounded;
-      case 'app_update':     return Icons.system_update_rounded;
-      case 'sync':           return Icons.sync_rounded;
-      case 'cloud':          return Icons.cloud_done_rounded;
-      default:               return Icons.notifications_rounded;
+      case 'training':     return Icons.mic_rounded;
+      case 'word_deleted': return Icons.delete_rounded;
+      case 'word_added':   return Icons.spellcheck_rounded;
+      case 'badge':        return Icons.military_tech_rounded;
+      case 'level_up':     return Icons.trending_up_rounded;
+      case 'streak':       return Icons.local_fire_department_rounded;
+      case 'challenge':    return Icons.emoji_events_rounded;
+      case 'xp':           return Icons.stars_rounded;
+      case 'leaderboard':  return Icons.leaderboard_rounded;
+      case 'app_update':   return Icons.system_update_rounded;
+      default:             return Icons.notifications_rounded;
     }
   }
 
   Color _accentColor(String t) {
     switch (t) {
       case 'training':
-      case 'word_added':
-      case 'sync':           return const Color(0xFF0077B6); // accent blue
-      case 'word_deleted':
-      case 'premium_cancel': return const Color(0xFFD62839); // red
-      case 'premium_active':
-      case 'premium_pay':    return const Color(0xFF0096C7); // lighter blue
-      case 'app_update':
-      case 'cloud':          return const Color(0xFF005F8E); // accentDim
-      default:               return const Color(0xFF0077B6); // accent blue
+      case 'word_added':   return const Color(0xFF0077B6);
+      case 'word_deleted': return const Color(0xFFD62839);
+      case 'badge':        return const Color(0xFFFFB703);
+      case 'level_up':     return const Color(0xFF2196F3);
+      case 'streak':       return const Color(0xFFFF6B35);
+      case 'challenge':    return const Color(0xFF7B2FBE);
+      case 'xp':           return const Color(0xFF00B4D8);
+      case 'leaderboard':  return const Color(0xFF06D6A0);
+      case 'app_update':   return const Color(0xFF005F8E);
+      default:             return const Color(0xFF0077B6);
     }
   }
 
   Color _iconBg(String t) {
     switch (t) {
       case 'training':
-      case 'word_added':
-      case 'sync':           return const Color(0xFFCCE8F6); // light accent wash
-      case 'word_deleted':
-      case 'premium_cancel': return const Color(0xFFF8D7DA); // soft red wash
-      case 'premium_active':
-      case 'premium_pay':    return const Color(0xFFBFE8F7); // lighter blue wash
-      case 'app_update':
-      case 'cloud':          return const Color(0xFFB8D8EE); // muted blue wash
-      default:               return const Color(0xFFD6EEFF); // surface
+      case 'word_added':   return const Color(0xFFCCE8F6);
+      case 'word_deleted': return const Color(0xFFF8D7DA);
+      case 'badge':        return const Color(0xFFFFF3CD);
+      case 'level_up':     return const Color(0xFFBBDEFB);
+      case 'streak':       return const Color(0xFFFFE0D0);
+      case 'challenge':    return const Color(0xFFEDD9FF);
+      case 'xp':           return const Color(0xFFCCF2FA);
+      case 'leaderboard':  return const Color(0xFFC8F7E8);
+      case 'app_update':   return const Color(0xFFB8D8EE);
+      default:             return const Color(0xFFD6EEFF);
     }
   }
 
@@ -378,7 +393,6 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 18),
               child: Row(
                 children: [
-                  // Back button
                   GestureDetector(
                     onTap: () => Navigator.pop(context),
                     child: Container(
@@ -651,17 +665,14 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // Left accent bar (unread only)
                 if (!item.isRead)
                   Container(width: 3, color: accent),
-
                 Expanded(
                   child: Padding(
                     padding: const EdgeInsets.all(14),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // Icon container
                         Container(
                           width: 42, height: 42,
                           decoration: BoxDecoration(
@@ -672,8 +683,6 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                           child: Icon(_icon(item.type), color: accent, size: 19),
                         ),
                         const SizedBox(width: 12),
-
-                        // Content
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -697,8 +706,6 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                           ),
                         ),
                         const SizedBox(width: 10),
-
-                        // Timestamp + unread dot
                         Column(
                           crossAxisAlignment: CrossAxisAlignment.end,
                           children: [

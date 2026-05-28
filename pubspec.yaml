@@ -78,7 +78,7 @@ flutter:
     - assets/images/logo.png
     - assets/images/cleft.png
     - assets/images/appicon.png
-    
+    - assets/images/log.png
 
   # To add assets to your application, add an assets section, like this:
   # assets:

@@ -12,7 +12,6 @@ class ProfileScreen extends StatefulWidget {
 class _ProfileScreenState extends State<ProfileScreen> {
   String _name        = '';
   String _email       = '';
-  String _plan        = 'free';
   String _memberSince = '';
   bool   _isLoading   = true;
 
@@ -20,19 +19,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
   double _trainingProgress = 0.0;
   double _trainedHours     = 0.0;
 
-  static const _bg         = Color(0xFF0D2B2B);
-  static const _bgMid      = Color(0xFF0E2233);
-  static const _bgDark     = Color(0xFF0B1A28);
-  static const _card       = Color(0x0AFFFFFF);
-  static const _teal       = Color(0xFF1D9E75);
-  static const _tealDim    = Color(0x261D9E75);
-  static const _tealBorder = Color(0x401D9E75);
-  static const _white70    = Color(0xB3FFFFFF);
-  static const _white40    = Color(0x66FFFFFF);
-  static const _white20    = Color(0x33FFFFFF);
-  static const _fieldBg    = Color(0xFF0D2020);
-
-  bool get _isPremium => _plan == 'premium';
+  // ─── PALETTE (Sky Blue / Navy — matches LandingPage) ──────────────────────
+  static const _bg           = Color(0xFFEAF4FB);
+  static const _bgMid        = Color(0xFFD6EEFF);
+  static const _bgDark       = Color(0xFFBFDFF7);
+  static const _card         = Color(0x99FFFFFF);
+  static const _accent       = Color(0xFF0077B6);
+  static const _accentDim    = Color(0x260077B6);
+  static const _accentBorder = Color(0x400077B6);
+  static const _textDark     = Color(0xFF0D2B4E);
+  static const _textSub      = Color(0xFF5A7A96);
+  static const _fieldBg      = Color(0xFFD6EEFF);
 
   @override
   void initState() {
@@ -64,7 +61,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
       setState(() {
         _name             = data?['name']  ?? user.displayName ?? 'User';
         _email            = data?['email'] ?? user.email       ?? '';
-        _plan             = data?['plan']  ?? 'free';
         _memberSince      = memberSince;
         _sessionCount     = (data?['sessionCount']     ?? 0) as int;
         _trainingProgress = (data?['trainingProgress'] ?? 0.0).toDouble().clamp(0.0, 1.0);
@@ -125,29 +121,28 @@ class _ProfileScreenState extends State<ProfileScreen> {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: const Color(0xFF112828),
+        backgroundColor: _bgMid,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: const Text('Log out?',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            style: TextStyle(color: _textDark, fontWeight: FontWeight.bold)),
         content: const Text(
           'You will be signed out of your CleftTune account.',
-          style: TextStyle(color: _white40, fontSize: 13),
+          style: TextStyle(color: _textSub, fontSize: 13),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel', style: TextStyle(color: _white40)),
+            child: const Text('Cancel', style: TextStyle(color: _textSub)),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red.shade700,
+              backgroundColor: Colors.red.shade600,
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(10)),
             ),
             onPressed: _logout,
             child: const Text('Logout',
-                style: TextStyle(
-                    color: Colors.white, fontWeight: FontWeight.bold)),
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -155,36 +150,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   // ── DELETE ACCOUNT ─────────────────────────────────────────────────────────
-  /// Permanently deletes:
-  ///   1. The Firestore user document at users/{uid}
-  ///   2. The Firebase Auth account
-  /// Then navigates back to the first route (premium.dart / auth gate),
-  /// just like logout — but the account is gone for real.
   Future<void> _deleteAccount() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
 
-    // Close the confirmation dialog first so there's no dangling overlay.
     if (mounted) Navigator.of(context).pop();
 
     try {
-      // 1. Delete Firestore document
       await FirebaseFirestore.instance
           .collection('users')
           .doc(user.uid)
           .delete();
 
-      // 2. Delete Firebase Auth user (this also signs them out)
       await user.delete();
 
-      // 3. Navigate to the root route (premium.dart / auth gate)
-      //    popUntil(isFirst) works the same way as logout.
       if (!mounted) return;
       Navigator.of(context).popUntil((route) => route.isFirst);
     } on FirebaseAuthException catch (e) {
-      // If the user's session is too old, Firebase requires re-authentication
-      // before deletion. Surface a friendly message so the user knows to
-      // log out and back in first.
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -193,7 +175,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ? 'Please log out and log back in before deleting your account.'
                 : 'Could not delete account: ${e.message}',
           ),
-          backgroundColor: Colors.red.shade700,
+          backgroundColor: Colors.red.shade600,
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -202,7 +184,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Could not delete account: $e'),
-          backgroundColor: Colors.red.shade700,
+          backgroundColor: Colors.red.shade600,
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -212,18 +194,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void _confirmDeleteAccount() {
     showDialog(
       context: context,
-      barrierDismissible: false, // force an explicit choice
+      barrierDismissible: false,
       builder: (_) => AlertDialog(
-        backgroundColor: const Color(0xFF1A0A0A),
+        backgroundColor: const Color(0xFFEAF4FB),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Row(
           children: [
             Icon(Icons.warning_amber_rounded,
-                color: Colors.red.shade400, size: 22),
+                color: Colors.red.shade500, size: 22),
             const SizedBox(width: 8),
             const Text('Delete Account?',
                 style: TextStyle(
-                    color: Colors.white,
+                    color: _textDark,
                     fontWeight: FontWeight.bold,
                     fontSize: 16)),
           ],
@@ -234,26 +216,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
           children: [
             Text(
               'This will permanently delete your CleftTune account and all associated data. This action cannot be undone.',
-              style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 13, height: 1.5),
+              style: TextStyle(color: _textSub, fontSize: 13, height: 1.5),
             ),
             const SizedBox(height: 12),
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.red.withOpacity(0.08),
+                color: Colors.red.withOpacity(0.06),
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(color: Colors.red.withOpacity(0.2)),
               ),
               child: Row(
                 children: [
                   Icon(Icons.info_outline_rounded,
-                      color: Colors.red.shade300, size: 14),
+                      color: Colors.red.shade400, size: 14),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       'Sessions, progress and preferences will be lost forever.',
                       style: TextStyle(
-                          color: Colors.red.shade300,
+                          color: Colors.red.shade400,
                           fontSize: 11,
                           height: 1.4),
                     ),
@@ -266,11 +248,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel', style: TextStyle(color: _white40)),
+            child: const Text('Cancel', style: TextStyle(color: _textSub)),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red.shade800,
+              backgroundColor: Colors.red.shade600,
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(10)),
             ),
@@ -300,7 +282,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               bottom: MediaQuery.of(context).viewInsets.bottom),
           child: Container(
             decoration: const BoxDecoration(
-              color: Color(0xFF112828),
+              color: Color(0xFFEAF4FB),
               borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
             ),
             padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
@@ -312,7 +294,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   child: Container(
                     width: 36, height: 4,
                     decoration: BoxDecoration(
-                      color: _white20,
+                      color: _accentBorder,
                       borderRadius: BorderRadius.circular(2),
                     ),
                   ),
@@ -322,7 +304,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     style: TextStyle(
                         fontSize: 17,
                         fontWeight: FontWeight.bold,
-                        color: Colors.white)),
+                        color: _textDark)),
                 const SizedBox(height: 20),
                 _sheetLabel('FULL NAME'),
                 const SizedBox(height: 6),
@@ -339,21 +321,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     Expanded(
                       child: OutlinedButton(
                         style: OutlinedButton.styleFrom(
-                          side: const BorderSide(color: _white20),
+                          side: const BorderSide(color: _accentBorder),
                           shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(12)),
                           padding: const EdgeInsets.symmetric(vertical: 14),
                         ),
                         onPressed: () => Navigator.pop(context),
                         child: const Text('Cancel',
-                            style: TextStyle(color: _white70)),
+                            style: TextStyle(color: _textSub)),
                       ),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
                       child: ElevatedButton(
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: _teal,
+                          backgroundColor: _accent,
                           shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(12)),
                           padding: const EdgeInsets.symmetric(vertical: 14),
@@ -407,7 +389,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (_isLoading) {
       return const Scaffold(
         backgroundColor: _bg,
-        body: Center(child: CircularProgressIndicator(color: _teal)),
+        body: Center(child: CircularProgressIndicator(color: _accent)),
       );
     }
 
@@ -446,10 +428,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
           const SizedBox(height: 20),
           _buildStatsRow(),
           const SizedBox(height: 20),
-          if (_isPremium) ...[
-            _buildPremiumActiveCard(),
-            const SizedBox(height: 20),
-          ],
           _buildSectionLabel('ACCOUNT'),
           const SizedBox(height: 10),
           _buildInfoCard(),
@@ -478,10 +456,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 _buildAvatarSection(),
                 const SizedBox(height: 20),
                 _buildStatsRow(),
-                if (_isPremium) ...[
-                  const SizedBox(height: 20),
-                  _buildPremiumActiveCard(),
-                ],
               ],
             ),
           ),
@@ -514,7 +488,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         children: [
           IconButton(
             icon: const Icon(Icons.arrow_back_ios_new,
-                color: Colors.white, size: 18),
+                color: _textDark, size: 18),
             onPressed: () => Navigator.pop(context),
           ),
           const Expanded(
@@ -523,7 +497,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   style: TextStyle(
                       fontWeight: FontWeight.bold,
                       fontSize: 18,
-                      color: Colors.white)),
+                      color: _textDark)),
             ),
           ),
           GestureDetector(
@@ -531,11 +505,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
             child: Container(
               width: 36, height: 36,
               decoration: BoxDecoration(
-                color: _tealDim,
+                color: _accentDim,
                 borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: _tealBorder),
+                border: Border.all(color: _accentBorder),
               ),
-              child: const Icon(Icons.edit_outlined, size: 17, color: _teal),
+              child: const Icon(Icons.edit_outlined, size: 17, color: _accent),
             ),
           ),
         ],
@@ -555,14 +529,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             gradient: const LinearGradient(
-              colors: [Color(0xFF1D9E75), Color(0xFF0E5C47)],
+              colors: [Color(0xFF0077B6), Color(0xFF005F8E)],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
-            border: Border.all(color: _teal, width: 2),
+            border: Border.all(color: _accent, width: 2),
             boxShadow: [
               BoxShadow(
-                color: _teal.withOpacity(0.3),
+                color: _accent.withOpacity(0.25),
                 blurRadius: 20,
                 spreadRadius: 2,
               ),
@@ -581,57 +555,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
             style: const TextStyle(
                 fontSize: 20,
                 fontWeight: FontWeight.w800,
-                color: Colors.white)),
+                color: _textDark)),
         const SizedBox(height: 4),
         Text(_email,
-            style: const TextStyle(fontSize: 13, color: _white40)),
-        const SizedBox(height: 10),
-        _isPremium
-            ? Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 12, vertical: 5),
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFF1D9E75), Color(0xFF0E5C47)],
-                  ),
-                  borderRadius: BorderRadius.circular(20),
-                  boxShadow: [
-                    BoxShadow(
-                      color: _teal.withOpacity(0.35),
-                      blurRadius: 10,
-                      spreadRadius: 1,
-                    ),
-                  ],
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.star_rounded, color: Colors.white, size: 13),
-                    SizedBox(width: 5),
-                    Text('Premium Member',
-                        style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.white,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 0.3)),
-                  ],
-                ),
-              )
-            : Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 12, vertical: 5),
-                decoration: BoxDecoration(
-                  color: _tealDim,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: _tealBorder),
-                ),
-                child: const Text('Free Plan',
-                    style: TextStyle(
-                        fontSize: 12,
-                        color: _teal,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: 0.3)),
-              ),
+            style: const TextStyle(fontSize: 13, color: _textSub)),
       ],
     );
   }
@@ -656,7 +583,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
         decoration: BoxDecoration(
           color: _card,
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: _white20),
+          border: Border.all(color: _accentBorder),
+          boxShadow: [
+            BoxShadow(
+              color: _accent.withOpacity(0.06),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
         ),
         child: Column(
           children: [
@@ -664,113 +598,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 style: const TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.w800,
-                    color: _teal)),
+                    color: _accent)),
             const SizedBox(height: 3),
             Text(label,
-                style: const TextStyle(fontSize: 11, color: _white40)),
+                style: const TextStyle(fontSize: 11, color: _textSub)),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildPremiumActiveCard() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFF0E5C47), Color(0xFF1D9E75)],
-        ),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white.withOpacity(0.15)),
-        boxShadow: [
-          BoxShadow(
-            color: _teal.withOpacity(0.3),
-            blurRadius: 16,
-            spreadRadius: 2,
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: const Row(
-                  children: [
-                    Icon(Icons.star_rounded, color: Colors.white, size: 12),
-                    SizedBox(width: 4),
-                    Text('PREMIUM ACTIVE',
-                        style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 0.8)),
-                  ],
-                ),
-              ),
-              const Spacer(),
-              const Icon(Icons.verified_rounded,
-                  color: Colors.white, size: 20),
-            ],
-          ),
-          const SizedBox(height: 12),
-          const Text(
-            "You're all set! 🎉",
-            style: TextStyle(
-                fontSize: 18,
-                color: Colors.white,
-                fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            'Enjoy unlimited words, Noise Cancellation\nand Real-time Translation.',
-            style: TextStyle(
-                color: Colors.white70, fontSize: 12, height: 1.5),
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 6, runSpacing: 6,
-            children: [
-              _premiumChip(Icons.closed_caption_rounded, 'Unlimited Words'),
-              _premiumChip(Icons.graphic_eq_rounded, 'Noise Cancellation'),
-              _premiumChip(Icons.block_rounded, 'Ad-Free'),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _premiumChip(IconData icon, String label) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.15),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withOpacity(0.2)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, color: Colors.white, size: 11),
-          const SizedBox(width: 4),
-          Text(label,
-              style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w500)),
-        ],
       ),
     );
   }
@@ -781,42 +614,38 @@ class _ProfileScreenState extends State<ProfileScreen> {
       decoration: BoxDecoration(
         color: _card,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _white20),
+        border: Border.all(color: _accentBorder),
+        boxShadow: [
+          BoxShadow(
+            color: _accent.withOpacity(0.06),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
       ),
       child: Column(
         children: [
           _infoRow(Icons.person_outline_rounded, 'Full Name', _name),
-          Divider(color: Colors.white.withOpacity(0.07), height: 20),
+          Divider(color: _accent.withOpacity(0.1), height: 20),
           _infoRow(Icons.email_outlined, 'Email', _email),
-          Divider(color: Colors.white.withOpacity(0.07), height: 20),
+          Divider(color: _accent.withOpacity(0.1), height: 20),
           _infoRow(Icons.calendar_today_outlined, 'Member Since',
               _memberSince.isEmpty ? '—' : _memberSince),
-          Divider(color: Colors.white.withOpacity(0.07), height: 20),
-          _infoRow(
-            _isPremium ? Icons.star_rounded : Icons.star_border_rounded,
-            'Plan',
-            _isPremium ? 'Premium' : 'Free',
-          ),
         ],
       ),
     );
   }
 
   Widget _infoRow(IconData icon, String label, String value) {
-    final isPlanRow = label == 'Plan';
     return Row(
       children: [
         Container(
           width: 34, height: 34,
           decoration: BoxDecoration(
-            color: isPlanRow && _isPremium
-                ? const Color(0xFF1D9E75).withOpacity(0.3)
-                : _tealDim,
+            color: _accentDim,
             borderRadius: BorderRadius.circular(8),
           ),
-          child: Icon(icon,
-              color: isPlanRow && _isPremium ? Colors.white : _teal,
-              size: 16),
+          child: Icon(icon, color: _accent, size: 16),
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -825,32 +654,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
             children: [
               Text(label,
                   style: const TextStyle(
-                      fontSize: 10, color: _white40, letterSpacing: 0.3)),
+                      fontSize: 10, color: _textSub, letterSpacing: 0.3)),
               const SizedBox(height: 2),
               Text(value,
-                  style: TextStyle(
+                  style: const TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w500,
-                      color: isPlanRow && _isPremium
-                          ? _teal
-                          : Colors.white)),
+                      color: _textDark)),
             ],
           ),
         ),
-        if (isPlanRow && _isPremium)
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(
-              color: _tealDim,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: _tealBorder),
-            ),
-            child: const Text('Active',
-                style: TextStyle(
-                    color: _teal,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w600)),
-          ),
       ],
     );
   }
@@ -862,17 +675,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: Colors.red.withOpacity(0.07),
+          color: Colors.red.withOpacity(0.05),
           borderRadius: BorderRadius.circular(14),
           border: Border.all(color: Colors.red.withOpacity(0.2)),
         ),
         child: Row(
           children: [
-            Icon(Icons.logout, color: Colors.red.shade400, size: 20),
+            Icon(Icons.logout, color: Colors.red.shade500, size: 20),
             const SizedBox(width: 12),
             Text('Logout',
                 style: TextStyle(
-                    color: Colors.red.shade400,
+                    color: Colors.red.shade500,
                     fontSize: 14,
                     fontWeight: FontWeight.w500)),
           ],
@@ -889,18 +702,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
         decoration: BoxDecoration(
           color: Colors.red.withOpacity(0.04),
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: Colors.red.withOpacity(0.35)),
+          border: Border.all(color: Colors.red.withOpacity(0.3)),
         ),
         child: Row(
           children: [
             Container(
               width: 34, height: 34,
               decoration: BoxDecoration(
-                color: Colors.red.withOpacity(0.12),
+                color: Colors.red.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Icon(Icons.delete_forever_rounded,
-                  color: Colors.red.shade400, size: 18),
+                  color: Colors.red.shade500, size: 18),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -909,7 +722,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 children: [
                   Text('Delete Account',
                       style: TextStyle(
-                          color: Colors.red.shade400,
+                          color: Colors.red.shade500,
                           fontSize: 14,
                           fontWeight: FontWeight.w600)),
                   const SizedBox(height: 2),
@@ -933,14 +746,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
       alignment: Alignment.centerLeft,
       child: Text(label,
           style: const TextStyle(
-              color: _white40, fontSize: 11, letterSpacing: 0.8)),
+              color: _textSub, fontSize: 11, letterSpacing: 0.8)),
     );
   }
 
   Widget _sheetLabel(String label) {
     return Text(label,
         style: const TextStyle(
-            fontSize: 11, color: _white40, letterSpacing: 0.8));
+            fontSize: 11, color: _textSub, letterSpacing: 0.8));
   }
 
   Widget _sheetField(
@@ -951,23 +764,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return TextField(
       controller: controller,
       keyboardType: type,
-      style: const TextStyle(color: Colors.white, fontSize: 14),
+      style: const TextStyle(color: _textDark, fontSize: 14),
       decoration: InputDecoration(
         hintText: hint,
-        hintStyle: const TextStyle(color: _white40),
+        hintStyle: const TextStyle(color: _textSub),
         filled: true,
         fillColor: _fieldBg,
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: _white20),
+          borderSide: const BorderSide(color: _accentBorder),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: _white20),
+          borderSide: const BorderSide(color: _accentBorder),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: _teal, width: 1.2),
+          borderSide: const BorderSide(color: _accent, width: 1.2),
         ),
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
