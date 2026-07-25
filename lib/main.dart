@@ -137,6 +137,13 @@ class _AppShellState extends State<AppShell> {
   static const _accentTint = Color(0x260077B6);
   static const _navBg      = Color(0xFFDAEEFA);
 
+  // Reference width at which the rail sits at 1.0x scale (a normal desktop
+  // window). Anything wider — like a TV — scales the rail up so icons,
+  // labels, and the badge stay clear instead of looking tiny on a huge screen.
+  static const double _railReferenceWidth = 1200.0;
+  static const double _minRailScale = 1.0;
+  static const double _maxRailScale = 2.6; // caps growth on very large TVs
+
   void _switchPage(int index) => setState(() => _currentIndex = index);
 
   Widget get _currentScreen {
@@ -197,7 +204,22 @@ class _AppShellState extends State<AppShell> {
       builder: (context, constraints) {
         final bool isWide = constraints.maxWidth >= 800;
 
+        // ── Responsive scale factor for the wide/TV nav rail ──────────────
+        // 1.0x at a normal desktop width, growing smoothly up to 2.6x on
+        // very large (TV-sized) screens so nothing ever looks tiny/cramped.
+        final double railScale = isWide
+            ? (constraints.maxWidth / _railReferenceWidth)
+                .clamp(_minRailScale, _maxRailScale)
+            : 1.0;
+
         if (isWide) {
+          final double iconSize      = 24 * railScale;
+          final double labelFontSize = 12 * railScale;
+          final double railMinWidth  = 72 * railScale;
+          final double avatarSize    = 36 * railScale;
+          final double avatarIcon    = 18 * railScale;
+          final double dividerWidth  = (0.5 * railScale).clamp(0.5, 2.0);
+
           return Scaffold(
             backgroundColor: const Color(0xFFEAF4FB),
             body: Row(
@@ -209,29 +231,31 @@ class _AppShellState extends State<AppShell> {
                     selectedIndex: _currentIndex,
                     onDestinationSelected: _switchPage,
                     labelType: NavigationRailLabelType.all,
+                    minWidth: railMinWidth,
+                    minExtendedWidth: railMinWidth * 2,
                     selectedIconTheme:
-                        const IconThemeData(color: _accent),
+                        IconThemeData(color: _accent, size: iconSize),
                     unselectedIconTheme:
-                        const IconThemeData(color: Color(0xFF5A7A96)),
-                    selectedLabelTextStyle: const TextStyle(
+                        IconThemeData(color: const Color(0xFF5A7A96), size: iconSize),
+                    selectedLabelTextStyle: TextStyle(
                         color: _accent,
-                        fontSize: 12,
+                        fontSize: labelFontSize,
                         fontWeight: FontWeight.w600),
-                    unselectedLabelTextStyle: const TextStyle(
-                        color: Color(0xFF5A7A96), fontSize: 12),
+                    unselectedLabelTextStyle: TextStyle(
+                        color: const Color(0xFF5A7A96), fontSize: labelFontSize),
                     leading: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      padding: EdgeInsets.symmetric(vertical: 16 * railScale),
                       child: Container(
-                        width: 36,
-                        height: 36,
+                        width: avatarSize,
+                        height: avatarSize,
                         decoration: BoxDecoration(
                           color: _accentTint,
                           shape: BoxShape.circle,
                           border: Border.all(
                               color: const Color(0x400077B6)),
                         ),
-                        child: const Icon(Icons.graphic_eq_rounded,
-                            color: _accent, size: 18),
+                        child: Icon(Icons.graphic_eq_rounded,
+                            color: _accent, size: avatarIcon),
                       ),
                     ),
                     destinations: _items
@@ -242,12 +266,14 @@ class _AppShellState extends State<AppShell> {
                                   ? _BadgeIcon(
                                       icon: e.value.icon,
                                       selected: false,
+                                      size: iconSize,
                                     )
                                   : Icon(e.value.icon),
                               selectedIcon: e.value.showBadge
                                   ? _BadgeIcon(
                                       icon: e.value.selectedIcon,
                                       selected: true,
+                                      size: iconSize,
                                     )
                                   : Icon(e.value.selectedIcon),
                               label: Text(e.value.label),
@@ -256,7 +282,7 @@ class _AppShellState extends State<AppShell> {
                   ),
                 ),
                 Container(
-                    width: 0.5, color: const Color(0x400077B6)),
+                    width: dividerWidth, color: const Color(0x400077B6)),
                 Expanded(child: ClipRect(child: _currentScreen)),
               ],
             ),
@@ -330,12 +356,23 @@ class _NavItem {
 class _BadgeIcon extends StatelessWidget {
   final IconData icon;
   final bool selected;
+  final double size;
 
-  const _BadgeIcon({required this.icon, required this.selected});
+  const _BadgeIcon({required this.icon, required this.selected, this.size = 24});
 
   @override
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
+
+    // Scale the badge itself along with the icon so it stays legible
+    // (and proportionate) at any nav-rail size, including TV scale.
+    final double scale       = size / 24.0;
+    final double badgeFont   = (9 * scale).clamp(9, 26);
+    final double badgePadH   = 5 * scale;
+    final double badgePadV   = 2 * scale;
+    final double badgeBorder = (1.5 * scale).clamp(1.5, 4);
+    final double badgeTop    = -4 * scale;
+    final double badgeRight  = -6 * scale;
 
     return StreamBuilder<QuerySnapshot>(
       stream: user == null
@@ -352,25 +389,25 @@ class _BadgeIcon extends StatelessWidget {
         return Stack(
           clipBehavior: Clip.none,
           children: [
-            Icon(icon),
+            Icon(icon, size: size),
             if (unread > 0)
               Positioned(
-                top: -4,
-                right: -6,
+                top: badgeTop,
+                right: badgeRight,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 5, vertical: 2),
+                  padding: EdgeInsets.symmetric(
+                      horizontal: badgePadH, vertical: badgePadV),
                   decoration: BoxDecoration(
                     color: const Color(0xFF0077B6),
-                    borderRadius: BorderRadius.circular(10),
+                    borderRadius: BorderRadius.circular(10 * scale),
                     border: Border.all(
-                        color: const Color(0xFFDAEEFA), width: 1.5),
+                        color: const Color(0xFFDAEEFA), width: badgeBorder),
                   ),
                   child: Text(
                     '$unread',
-                    style: const TextStyle(
+                    style: TextStyle(
                         color: Colors.white,
-                        fontSize: 9,
+                        fontSize: badgeFont,
                         fontWeight: FontWeight.w800),
                   ),
                 ),
@@ -405,8 +442,6 @@ class _HistoryScreenState extends State<HistoryScreen>
   // ── State ──────────────────────────────────────────────────────────────────
   String _searchQuery = '';
   final TextEditingController _searchCtrl = TextEditingController();
-
-
 
   @override
   void dispose() {
@@ -683,14 +718,20 @@ class _HistoryScreenState extends State<HistoryScreen>
                   fontSize: 16,
                   letterSpacing: 0.5)),
         ]),
-        Container(
-          width: 38, height: 38,
-          decoration: BoxDecoration(
-            color: _accentTint,
-            shape: BoxShape.circle,
-            border: Border.all(color: _accentBorder),
+        GestureDetector(
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const ProfileScreen()),
           ),
-          child: const Icon(Icons.person, color: _accent, size: 18),
+          child: Container(
+            width: 38, height: 38,
+            decoration: BoxDecoration(
+              color: _accentTint,
+              shape: BoxShape.circle,
+              border: Border.all(color: _accentBorder),
+            ),
+            child: const Icon(Icons.person, color: _accent, size: 18),
+          ),
         ),
       ],
     );
@@ -945,7 +986,6 @@ class _HistoryScreenState extends State<HistoryScreen>
         ? timeStr
         : '${DateFormat('MMM d').format(dt)} · $timeStr';
 
-    // Static card colours
     final bgColor     = const Color(0xFFDAEEFA);
     final borderColor = _accentBorder;
 
@@ -1181,6 +1221,7 @@ class _PulsingDotState extends State<_PulsingDot>
     );
   }
 }
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SETTINGS SCREEN  (now: Gamification / Progress only — no feedback)
 // ─────────────────────────────────────────────────────────────────────────────

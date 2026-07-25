@@ -581,6 +581,65 @@ class _TranslatorScreenState extends State<TranslatorScreen>
     );
   }
 
+  // ── SUBTITLE-STYLE LIVE CAPTION ──────────────────────────────────────────
+  // Confirmed speech (_committedText) renders solid and fades/slides in like
+  // a settled subtitle line each time a new final phrase lands. The part
+  // still being recognized (_currentSegment) renders dimmed + italic right
+  // after it and updates instantly, same convention as YouTube/Netflix live
+  // captions (confirmed vs. interim text).
+  Widget _buildLiveCaption() {
+    final hasCommitted = _committedText.trim().isNotEmpty;
+    final hasSegment   = _currentSegment.trim().isNotEmpty;
+
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 260),
+      switchInCurve: Curves.easeOut,
+      switchOutCurve: Curves.easeIn,
+      transitionBuilder: (child, animation) => FadeTransition(
+        opacity: animation,
+        child: SlideTransition(
+          position: Tween<Offset>(
+            begin: const Offset(0, 0.12),
+            end: Offset.zero,
+          ).animate(animation),
+          child: child,
+        ),
+      ),
+      // Keying on _committedText means the fade/slide only triggers when a
+      // new phrase is confirmed — the live partial segment below still
+      // updates immediately without re-triggering the whole animation,
+      // exactly like real subtitles settling into place.
+      child: RichText(
+        key: ValueKey(_committedText),
+        textAlign: TextAlign.center,
+        text: TextSpan(
+          children: [
+            TextSpan(
+              text: _committedText,
+              style: const TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.w600,
+                color: _textDark,
+                height: 1.5,
+              ),
+            ),
+            if (hasSegment)
+              TextSpan(
+                text: (hasCommitted ? ' ' : '') + _currentSegment,
+                style: TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w500,
+                  color: _textDark.withOpacity(0.5),
+                  fontStyle: FontStyle.italic,
+                  height: 1.5,
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildTranslatorBody() {
     final hint    = _subtitleHint;
     final hasText = _displayText.isNotEmpty;
@@ -675,15 +734,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                   Flexible(
                     child: SingleChildScrollView(
                       physics: const BouncingScrollPhysics(),
-                      child: Text(
-                        _displayText,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.w600,
-                            color: _textDark,
-                            height: 1.5),
-                      ),
+                      child: _buildLiveCaption(),
                     ),
                   ),
                 if (hasText) ...[
