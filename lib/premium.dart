@@ -389,7 +389,7 @@ class _PremiumScreenState extends State<PremiumScreen>
   Widget _buildBoxShapes() {
     final f = _orbAnim.value;
     return Stack(
-      children: [
+      children: [ 
         // ── Top-right cluster ──
         _box(top: 28  - 10 * f, right: 235, size: 50,  rotate: 0.49,  color: _geoGreen.withOpacity(0.07)),
         _box(top: 78  -  6 * f, right: 172, size: 33,  rotate: -0.31, color: _geoAccent.withOpacity(0.07)),

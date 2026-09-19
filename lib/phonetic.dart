@@ -463,6 +463,10 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
   Future<void> _saveTrainingProgress() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
+
+    final currentLevel = (_trainingProgress * 100).round().clamp(0, 100);
+    final totalPoints = (currentLevel * 10).clamp(0, 999999);
+
     await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
       'trainingProgress': _trainingProgress,
       'patternCount':     _nlp.patternCount,
@@ -470,6 +474,36 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
       'trainedHours':     _trainedHours,
       'lastTrainedAt':    FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
+
+    await FirebaseFirestore.instance.collection('progress').doc(user.uid).set({
+      'progress_id': user.uid,
+      'user_id': user.uid,
+      'current_level': currentLevel,
+      'total_points': totalPoints,
+      'completed_tasks': _sessionCount,
+      'streak_days': 0,
+      'last_activity': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> _saveTrainingSession({
+    required int trainingLevel,
+    required double accuracyLevel,
+  }) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    final sessionRef = FirebaseFirestore.instance
+        .collection('training_sessions')
+        .doc();
+
+    await sessionRef.set({
+      'session_id': sessionRef.id,
+      'user_id': user.uid,
+      'training_level': trainingLevel,
+      'accuracy_level': accuracyLevel,
+      'createdAt': FieldValue.serverTimestamp(),
+    });
   }
 
   Future<void> _initSpeech() async {
@@ -544,15 +578,22 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
     );
 
     final gain = 0.003 * (1.0 - _trainingProgress);
+    final finalTrainingProgress = (_trainingProgress + gain).clamp(0.0, 1.0);
+    final sessionAccuracyLevel = phoneme.clarityScore.toDouble();
+    final trainingLevel = (finalTrainingProgress * 100).round().clamp(0, 100);
 
     setState(() {
       _correctedOutput  = correctedText;
       _phonemeResult    = phoneme;
       _isProcessing     = false;
-      _trainingProgress = (_trainingProgress + gain).clamp(0.0, 1.0);
+      _trainingProgress = finalTrainingProgress;
     });
 
     await _saveTrainingProgress();
+    await _saveTrainingSession(
+      trainingLevel: trainingLevel,
+      accuracyLevel: sessionAccuracyLevel,
+    );
     await NotificationHelper.trainingCompleted(accuracy: _trainingProgress * 100);
   }
 
@@ -1759,4 +1800,4 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ));
-}
+} 
