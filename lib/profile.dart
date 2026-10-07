@@ -56,7 +56,7 @@ class _GamificationHelper {
       'Vocal Virtuoso',
       'Resonance Master',
       'Elite Communicator',
-      'CleftTune Legend',
+      'VoiceMate Legend',
     ];
     return titles[lvl.clamp(1, 10)];
   }
@@ -228,7 +228,7 @@ class _ProfileScreenState extends State<ProfileScreen>
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: const Text('Log out?',
             style: TextStyle(color: _textDark, fontWeight: FontWeight.bold)),
-        content: const Text('You will be signed out of your CleftTune account.',
+        content: const Text('You will be signed out of your VoiceMate account.',
             style: TextStyle(color: _textSub, fontSize: 13)),
         actions: [
           TextButton(
@@ -305,7 +305,7 @@ class _ProfileScreenState extends State<ProfileScreen>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'This will permanently delete your CleftTune account and all associated data. This action cannot be undone.',
+              'This will permanently delete your VoiceMate account and all associated data. This action cannot be undone.',
               style: TextStyle(color: _textSub, fontSize: 13, height: 1.5),
             ),
             const SizedBox(height: 12),

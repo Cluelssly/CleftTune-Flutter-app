@@ -270,7 +270,7 @@ class _LandingPageState extends State<LandingPage>
           _anim(
             _subSlide,
             Text(
-              'CleftTune uses adaptive AI to enhance voice clarity for people '
+              'VoiceMate uses adaptive AI to enhance voice clarity for people '
               'with cleft conditions — clear, confident communication starts here.',
               textAlign: TextAlign.center,
               style: TextStyle(
@@ -323,7 +323,7 @@ class _LandingPageState extends State<LandingPage>
                 _anim(
                   _subSlide,
                   Text(
-                    'CleftTune uses adaptive AI to enhance voice clarity\n'
+                    'VoiceMate uses adaptive AI to enhance voice clarity\n'
                     'for people with cleft conditions — clear, confident\n'
                     'communication starts here.',
                     style: const TextStyle(
@@ -656,7 +656,7 @@ class _LandingPageState extends State<LandingPage>
           ),
         ),
         TextSpan(
-          text: 'CleftTune Team',
+          text: 'VoiceMate Team',
           style: TextStyle(
             fontFamily: 'DMSans',
             fontSize: 11,
@@ -859,7 +859,7 @@ class _LandingPageState extends State<LandingPage>
           const SizedBox(height: 10),
           Text(
             'Every voice deserves to be understood. '
-            'CleftTune bridges the gap — one word at a time.',
+            'VoiceMate bridges the gap — one word at a time.',
             style: TextStyle(
               fontFamily: 'DMSans',
               fontSize: 13,
@@ -870,7 +870,7 @@ class _LandingPageState extends State<LandingPage>
           ),
           const SizedBox(height: 9),
           Text(
-            '— CleftTune Team',
+            '— VoiceMate Team',
             style: TextStyle(
               fontFamily: 'DMSans',
               fontSize: 11.5,

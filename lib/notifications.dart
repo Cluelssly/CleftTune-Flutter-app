@@ -58,7 +58,7 @@ class NotificationHelper {
   // ── Training ──────────────────────────────────────────────────────────────
   static Future<void> trainingStarted() => send(
     title: 'Voice Training Started',
-    body:  'CleftTune is now learning your voice. This may take a few moments.',
+    body:  'VoiceMate is now learning your voice. This may take a few moments.',
     type:  'training',
   );
   static Future<void> trainingCompleted({double? accuracy}) => send(
@@ -94,12 +94,12 @@ class NotificationHelper {
   // ── App Updates ───────────────────────────────────────────────────────────
   static Future<void> appUpdateAvailable({required String version, String? changelog}) => send(
     title: 'Update Available — v$version 🚀',
-    body:  changelog ?? 'A new version of CleftTune is ready.',
+    body:  changelog ?? 'A new version of VoiceMate is ready.',
     type:  'app_update',
   );
   static Future<void> appUpdatedSuccess({required String version}) => send(
     title: 'App Updated to v$version',
-    body:  'CleftTune updated successfully. Enjoy the new features!',
+    body:  'VoiceMate updated successfully. Enjoy the new features!',
     type:  'app_update',
   );
 

@@ -924,7 +924,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                                     fontSize: 15)),
                             const SizedBox(height: 6),
                             const Text(
-                              'Use the mic, then tap "Correct"\nto teach CleftTune your patterns.',
+                              'Use the mic, then tap "Correct"\nto teach VoiceMate your patterns.',
                               textAlign: TextAlign.center,
                               style: TextStyle(
                                   color: _textSub,
@@ -1209,7 +1209,7 @@ class _AddCorrectionSheetState extends State<_AddCorrectionSheet> {
                           fontWeight: FontWeight.bold,
                           color: _textColor)),
                   SizedBox(height: 2),
-                  Text('Tell CleftTune what it heard wrong.',
+                  Text('Tell VoiceMate what it heard wrong.',
                       style: TextStyle(
                           fontSize: 12, color: _labelColor)),
                 ],

@@ -325,7 +325,7 @@ class _PremiumScreenState extends State<PremiumScreen>
             const Text("Account Created!", style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: _textDark, letterSpacing: -0.3)),
             const SizedBox(height: 8),
             Text(
-              isGoogle ? "Welcome, $name!\nSigned in with Google successfully." : "Welcome to CleftTune.\nYou're all set to get started!",
+              isGoogle ? "Welcome, $name!\nSigned in with Google successfully." : "Welcome to VoiceMate.\nYou're all set to get started!",
               textAlign: TextAlign.center,
               style: const TextStyle(fontSize: 13, color: _textSub, height: 1.6),
             ),
@@ -761,7 +761,7 @@ class _PremiumScreenState extends State<PremiumScreen>
         Text(isLoginMode ? "Sign In" : "Create Account",
             style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: _textDark)),
         const SizedBox(height: 4),
-        Text(isLoginMode ? "Welcome back to CleftTune" : "Join CleftTune today",
+        Text(isLoginMode ? "Welcome back to VoiceMate" : "Join VoiceMate today",
             style: const TextStyle(fontSize: 12, color: _textSub)),
         const SizedBox(height: 28),
 
@@ -1238,7 +1238,7 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
             style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: _textDark, letterSpacing: -0.3))),
         const SizedBox(height: 8),
         const Center(child: Text(
-          "Enter the email address linked to your CleftTune account and we'll send you a reset link.",
+          "Enter the email address linked to your VoiceMate account and we'll send you a reset link.",
           textAlign: TextAlign.center,
           style: TextStyle(fontSize: 13, color: _textSub, height: 1.6),
         )),
@@ -1434,7 +1434,7 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
 
   Widget _instructionCard() {
     final steps = [
-      (Icons.email_outlined,    "Open the email from CleftTune"),
+      (Icons.email_outlined,    "Open the email from VoiceMate"),
       (Icons.link_rounded,      'Tap the "Reset Password" link'),
       (Icons.lock_open_rounded, "Create a new strong password"),
       (Icons.login_rounded,     "Sign in with your new password"),

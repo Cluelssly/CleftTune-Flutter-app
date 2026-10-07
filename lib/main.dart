@@ -31,7 +31,7 @@ class CleftTuneApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'CleftTune',
+      title: 'VoiceMate',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.light().copyWith(
         primaryColor: const Color(0xFF0077B6),
@@ -711,7 +711,7 @@ class _HistoryScreenState extends State<HistoryScreen>
             child: const Icon(Icons.graphic_eq_rounded, color: _accent, size: 16),
           ),
           const SizedBox(width: 10),
-          const Text('CleftTune',
+          const Text('VoiceMate',
               style: TextStyle(
                   color: _accent,
                   fontWeight: FontWeight.bold,
@@ -1819,7 +1819,7 @@ class _RateUsScreenState extends State<RateUsScreen> {
                     const SizedBox(height: 20),
 
                     const Center(
-                      child: Text('Enjoying CleftTune?',
+                      child: Text('Enjoying VoiceMate?',
                           style: TextStyle(
                               color: _textDark,
                               fontSize: 22,
@@ -1886,7 +1886,7 @@ class _RateUsScreenState extends State<RateUsScreen> {
                     fontWeight: FontWeight.w800)),
             const SizedBox(height: 8),
             const Text(
-              'Your feedback has been received.\nIt helps us improve CleftTune for everyone.',
+              'Your feedback has been received.\nIt helps us improve VoiceMate for everyone.',
               textAlign: TextAlign.center,
               style: TextStyle(
                   color: Color(0xFF5A7A96), fontSize: 13, height: 1.5),
