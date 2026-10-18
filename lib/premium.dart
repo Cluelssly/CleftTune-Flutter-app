@@ -502,7 +502,9 @@ class _PremiumScreenState extends State<PremiumScreen>
                 ),
               Expanded(
                 child: LayoutBuilder(builder: (context, constraints) {
-                  return constraints.maxWidth < 800 ? _buildMobile() : _buildDesktop();
+                  return constraints.maxWidth < 1100
+                      ? _buildMobile(constraints)
+                      : _buildDesktop();
                 }),
               ),
             ]),
@@ -512,42 +514,66 @@ class _PremiumScreenState extends State<PremiumScreen>
     );
   }
 
-  Widget _buildMobile() => SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          _buildAboutSection(),
-          const SizedBox(height: 28),
-          _buildLoginCard(),
-          const SizedBox(height: 24),
-        ]),
-      );
-
-  Widget _buildDesktop() => Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.all(32),
-              child: _buildAboutSection(),
-            ),
-          ),
-          Container(width: 1, color: _accent.withOpacity(0.15)),
-          Expanded(
-            child: Center(
-              child: SizedBox(
-                width: 380,
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(40),
+  Widget _buildMobile(BoxConstraints constraints) {
+    final horizontalPadding = (constraints.maxWidth * 0.05).clamp(14.0, 24.0);
+    return SingleChildScrollView(
+      padding: EdgeInsets.symmetric(
+        horizontal: horizontalPadding,
+        vertical: 16,
+      ),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 620),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildAboutSection(compact: true),
+              const SizedBox(height: 28),
+              Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 460),
                   child: _buildLoginCard(),
                 ),
               ),
-            ),
+              const SizedBox(height: 24),
+            ],
           ),
-        ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDesktop() => Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1600),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(32),
+                  child: _buildAboutSection(compact: true),
+                ),
+              ),
+              Container(width: 1, color: _accent.withOpacity(0.15)),
+              Expanded(
+                child: Center(
+                  child: SizedBox(
+                    width: 380,
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.all(40),
+                      child: _buildLoginCard(),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       );
 
   // ── ABOUT SECTION ─────────────────────────────────────────────────────────
-  Widget _buildAboutSection() => Column(
+  Widget _buildAboutSection({bool compact = false}) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(children: [
@@ -576,8 +602,11 @@ class _PremiumScreenState extends State<PremiumScreen>
               style: TextStyle(fontSize: 12, color: _textSub, height: 1.6)),
           const SizedBox(height: 16),
 
-          Expanded(
-            child: LayoutBuilder(
+          if (compact)
+            _buildCompactInfoGrid()
+          else
+            Expanded(
+              child: LayoutBuilder(
               builder: (context, constraints) {
                 return Column(
                   children: [
@@ -619,8 +648,8 @@ class _PremiumScreenState extends State<PremiumScreen>
                                 const SizedBox(height: 3),
                                 const Text('Train daily to keep it alive.', style: TextStyle(color: Colors.white70, fontSize: 10, height: 1.3)),
                               ]),
+                              ),
                             ),
-                          ),
                         ),
                         const SizedBox(width: 10),
                         Expanded(
@@ -691,6 +720,125 @@ class _PremiumScreenState extends State<PremiumScreen>
             ),
           ),
         ],
+      );
+
+  Widget _buildCompactInfoGrid() => LayoutBuilder(
+        builder: (context, constraints) {
+          final columns = constraints.maxWidth < 480 ? 2 : 3;
+          return GridView.count(
+            crossAxisCount: columns,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            crossAxisSpacing: 10,
+            mainAxisSpacing: 10,
+            childAspectRatio: 1.05,
+            children: [
+              _buildCompactFeatureCard(
+                Icons.mic_rounded,
+                'Speak',
+                'Capture speech in real time via mic.',
+                _accent,
+                _cardBlueBg,
+              ),
+              _buildCompactFeatureCard(
+                Icons.auto_fix_high_rounded,
+                'Correct',
+                'Teach AI when it mishears you.',
+                _green,
+                _cardGreenBg,
+              ),
+              _buildCompactFeatureCard(
+                Icons.trending_up_rounded,
+                'Improve',
+                'AI learns your patterns every session.',
+                _gold,
+                _cardGoldBg,
+              ),
+              _buildCompactFeatureCard(
+                Icons.local_fire_department_rounded,
+                'Daily Streak',
+                'Train daily to keep it alive.',
+                _accent,
+                _cardBlueBg,
+              ),
+              _buildCompactFeatureCard(
+                Icons.task_alt_rounded,
+                'Daily Tasks',
+                '5 corrections  ·  3 sentences  ·  10 words',
+                _accent,
+                Colors.white,
+              ),
+              _buildCompactFeatureCard(
+                Icons.shield_outlined,
+                'Private & Safe',
+                'Speech data stays private and tied to your account.',
+                _green,
+                Colors.white,
+              ),
+            ],
+          );
+        },
+      );
+
+  Widget _buildCompactFeatureCard(
+    IconData icon,
+    String title,
+    String subtitle,
+    Color color,
+    Color background,
+  ) =>
+      Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: background,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: color.withOpacity(0.3)),
+          boxShadow: [
+            BoxShadow(
+              color: color.withOpacity(0.08),
+              blurRadius: 8,
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.14),
+                borderRadius: BorderRadius.circular(9),
+              ),
+              child: Icon(icon, color: color, size: 17),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              title,
+              style: const TextStyle(
+                color: _textDark,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Expanded(
+              child: Align(
+                alignment: Alignment.topLeft,
+                child: Text(
+                  subtitle,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: _textSub,
+                    fontSize: 10,
+                    height: 1.3,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       );
 
   Widget _squareInfoCard({

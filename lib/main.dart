@@ -202,7 +202,8 @@ class _AppShellState extends State<AppShell> {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final bool isWide = constraints.maxWidth >= 800;
+        final bool isWide =
+            constraints.maxWidth >= 800 && constraints.maxHeight >= 500;
 
         // ── Responsive scale factor for the wide/TV nav rail ──────────────
         // 1.0x at a normal desktop width, growing smoothly up to 2.6x on
@@ -299,7 +300,9 @@ class _AppShellState extends State<AppShell> {
                 top: BorderSide(color: Color(0x400077B6), width: 0.5),
               ),
             ),
-            child: BottomNavigationBar(
+            child: constraints.maxWidth < 600
+                ? _buildCompactNavigation()
+                : BottomNavigationBar(
               backgroundColor: Colors.transparent,
               elevation: 0,
               selectedItemColor: _accent,
@@ -333,6 +336,76 @@ class _AppShellState extends State<AppShell> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildCompactNavigation() {
+    const visibleIndices = [0, 1, 3, 5];
+    final selectedIndex = switch (_currentIndex) {
+      0 => 0,
+      1 => 1,
+      3 => 2,
+      5 => 3,
+      _ => 4,
+    };
+    final visibleItems = visibleIndices
+        .map((index) => _items[index])
+        .toList(growable: false);
+
+    return BottomNavigationBar(
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      selectedItemColor: _accent,
+      unselectedItemColor: const Color(0xFF5A7A96),
+      currentIndex: selectedIndex,
+      onTap: (index) {
+        if (index == visibleIndices.length) {
+          _showMoreDestinations();
+        } else {
+          _switchPage(visibleIndices[index]);
+        }
+      },
+      type: BottomNavigationBarType.fixed,
+      selectedLabelStyle:
+          const TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
+      unselectedLabelStyle: const TextStyle(fontSize: 10),
+      items: [
+        ...visibleItems.map((item) => BottomNavigationBarItem(
+              icon: Icon(item.icon),
+              activeIcon: Icon(item.selectedIcon),
+              label: item.label,
+            )),
+        const BottomNavigationBarItem(
+          icon: _BadgeIcon(icon: Icons.more_horiz_rounded, selected: false),
+          activeIcon: _BadgeIcon(icon: Icons.more_horiz_rounded, selected: true),
+          label: 'More',
+        ),
+      ],
+    );
+  }
+
+  void _showMoreDestinations() {
+    const hiddenIndices = [2, 4, 6];
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final index in hiddenIndices)
+              ListTile(
+                leading: Icon(_items[index].icon, color: _accent),
+                title: Text(_items[index].label),
+                selected: _currentIndex == index,
+                onTap: () {
+                  Navigator.pop(context);
+                  _switchPage(index);
+                },
+              ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -858,11 +931,15 @@ class _HistoryScreenState extends State<HistoryScreen>
         }
 
         if (snapshot.hasError) {
-          final err = snapshot.error.toString();
+          final error = snapshot.error;
+          final permissionDenied =
+              error is FirebaseException && error.code == 'permission-denied';
           return _emptyState(
             icon: Icons.error_outline,
             message: 'Failed to load history',
-            subtitle: err,
+            subtitle: permissionDenied
+                ? 'Firestore denied access. Deploy the project Firestore rules with: firebase deploy --only firestore:rules'
+                : error.toString(),
           );
         }
 

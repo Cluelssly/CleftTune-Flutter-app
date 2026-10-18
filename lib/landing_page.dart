@@ -170,7 +170,7 @@ class _LandingPageState extends State<LandingPage>
           SafeArea(
             child: LayoutBuilder(
               builder: (ctx, c) =>
-                  c.maxWidth < 800 ? _buildMobile(c) : _buildDesktop(),
+                  c.maxWidth < 1024 ? _buildMobile(c) : _buildDesktop(c),
             ),
           ),
         ],
@@ -254,8 +254,9 @@ class _LandingPageState extends State<LandingPage>
   // ── MOBILE ────────────────────────────────────────────────────────────────
   Widget _buildMobile(BoxConstraints c) {
     final h = c.maxHeight;
+    final horizontalPadding = (c.maxWidth * 0.055).clamp(14.0, 28.0);
     return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 22),
+      padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
@@ -265,7 +266,7 @@ class _LandingPageState extends State<LandingPage>
           _anim(_logoSlide, _buildLogoRing((h * 0.18).clamp(90, 130))),
           SizedBox(height: h * 0.022),
           _anim(_headlineSlide,
-              _buildHeadline((h * 0.042).clamp(24, 34), TextAlign.center)),
+              _buildHeadline((c.maxWidth * 0.078).clamp(24, 36), TextAlign.center)),
           SizedBox(height: h * 0.012),
           _anim(
             _subSlide,
@@ -305,9 +306,15 @@ class _LandingPageState extends State<LandingPage>
   }
 
   // ── DESKTOP ───────────────────────────────────────────────────────────────
-  Widget _buildDesktop() {
-    return Row(
-      children: [
+  Widget _buildDesktop(BoxConstraints constraints) {
+    return SingleChildScrollView(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(minHeight: constraints.maxHeight),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 1500),
+            child: Row(
+              children: [
         // LEFT
         Expanded(
           child: Padding(
@@ -367,15 +374,23 @@ class _LandingPageState extends State<LandingPage>
             ),
           ),
         ),
-      ],
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 
   // ── HELPERS ───────────────────────────────────────────────────────────────
-  Widget _anim(Animation<Offset> slide, Widget child) => SlideTransition(
-        position: slide,
-        child: FadeTransition(opacity: _fadeIn, child: child),
-      );
+  Widget _anim(Animation<Offset> slide, Widget child) {
+    if (MediaQuery.sizeOf(context).width < 1024) return child;
+
+    return SlideTransition(
+      position: slide,
+      child: FadeTransition(opacity: _fadeIn, child: child),
+    );
+  }
 
   // ── Badge ─────────────────────────────────────────────────────────────────
   Widget _buildBadge() {
