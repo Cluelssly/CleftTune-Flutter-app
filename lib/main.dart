@@ -44,7 +44,6 @@ class CleftTuneApp extends StatelessWidget {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ROOT ROUTER — uses authStateChanges() as single source of truth.
-// No more _showLanding bool that resets on every cold start.
 // ─────────────────────────────────────────────────────────────────────────────
 
 class RootRouter extends StatelessWidget {
@@ -55,7 +54,6 @@ class RootRouter extends StatelessWidget {
     return StreamBuilder<User?>(
       stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, snapshot) {
-        // Still resolving auth state on startup
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Scaffold(
             backgroundColor: Color(0xFFEAF4FB),
@@ -65,12 +63,10 @@ class RootRouter extends StatelessWidget {
           );
         }
 
-        // Already signed in → go straight to app, skip landing
         if (snapshot.hasData && snapshot.data != null) {
           return const AppShell();
         }
 
-        // Not signed in → show landing → login flow
         return LandingPage(
           onContinue: () {
             Navigator.of(context).push(
@@ -79,8 +75,6 @@ class RootRouter extends StatelessWidget {
                   onBack: () => Navigator.of(context).pop(),
                   onLogin: () {
                     Navigator.of(context).pop();
-                    // authStateChanges() fires automatically
-                    // and rebuilds this widget to show AppShell
                   },
                 ),
               ),
@@ -137,12 +131,9 @@ class _AppShellState extends State<AppShell> {
   static const _accentTint = Color(0x260077B6);
   static const _navBg      = Color(0xFFDAEEFA);
 
-  // Reference width at which the rail sits at 1.0x scale (a normal desktop
-  // window). Anything wider — like a TV — scales the rail up so icons,
-  // labels, and the badge stay clear instead of looking tiny on a huge screen.
   static const double _railReferenceWidth = 1200.0;
   static const double _minRailScale = 1.0;
-  static const double _maxRailScale = 2.6; // caps growth on very large TVs
+  static const double _maxRailScale = 2.6;
 
   void _switchPage(int index) => setState(() => _currentIndex = index);
 
@@ -205,9 +196,6 @@ class _AppShellState extends State<AppShell> {
         final bool isWide =
             constraints.maxWidth >= 800 && constraints.maxHeight >= 500;
 
-        // ── Responsive scale factor for the wide/TV nav rail ──────────────
-        // 1.0x at a normal desktop width, growing smoothly up to 2.6x on
-        // very large (TV-sized) screens so nothing ever looks tiny/cramped.
         final double railScale = isWide
             ? (constraints.maxWidth / _railReferenceWidth)
                 .clamp(_minRailScale, _maxRailScale)
@@ -437,8 +425,6 @@ class _BadgeIcon extends StatelessWidget {
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
 
-    // Scale the badge itself along with the icon so it stays legible
-    // (and proportionate) at any nav-rail size, including TV scale.
     final double scale       = size / 24.0;
     final double badgeFont   = (9 * scale).clamp(9, 26);
     final double badgePadH   = 5 * scale;
@@ -492,7 +478,7 @@ class _BadgeIcon extends StatelessWidget {
   }
 }
 
-//HISTORY YARN EH 
+//HISTORY YARN EH
 class HistoryScreen extends StatefulWidget {
   const HistoryScreen({super.key});
 
@@ -1300,8 +1286,39 @@ class _PulsingDotState extends State<_PulsingDot>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SETTINGS SCREEN  (now: Gamification / Progress only — no feedback)
+// PROGRESS / GAMIFICATION SCREEN
+// Connected to the admin panel: badge tiers + their 5 tasks come live from the
+// Firestore `badges` collection. User progress is saved on users/{uid}:
+//   badgeProgress : { badgeId: [completed task indexes] }
+//   level         : total completed tasks (admin reads this)
+//   streak        : mirrors trainingStreak (admin reads this)
+//   badgeId / badgeName / badgeEmoji : highest badge earned
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// Badge tier as defined by the admin.
+class _BadgeInfo {
+  final String id;
+  final String emoji;
+  final String label;
+  final int minLevel;
+  final Color color;
+  final List<String> tasks;
+
+  const _BadgeInfo({
+    required this.id,
+    required this.emoji,
+    required this.label,
+    required this.minLevel,
+    required this.color,
+    required this.tasks,
+  });
+
+  /// Indexes of tasks the admin actually filled in.
+  List<int> get activeTaskIndexes => [
+        for (int i = 0; i < tasks.length; i++)
+          if (tasks[i].trim().isNotEmpty) i
+      ];
+}
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -1316,15 +1333,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
   static const _accentBorder = Color(0x400077B6);
   static const _textDark     = Color(0xFF0D2B4E);
   static const _textSub      = Color(0xFF5A7A96);
-  static const _cardColor    = Color(0x1A0077B6);
   static const _gold         = Color(0xFFF5A623);
-  static const _goldTint     = Color(0x1FF5A623);
-  static const _goldBorder   = Color(0x40F5A623);
   static const _green        = Color(0xFF27AE60);
-  static const _greenTint    = Color(0x1F27AE60);
-  static const _greenBorder  = Color(0x4027AE60);
 
-  Future<Map<String, dynamic>> _loadGamification(String uid) async {
+  bool _saving = false;
+
+  // ── Stats (streak, corrections, etc.) ──────────────────────────────────────
+  Future<Map<String, dynamic>> _loadStats(String uid) async {
     final userDoc = await FirebaseFirestore.instance
         .collection('users').doc(uid).get();
     final userData = userDoc.data() ?? {};
@@ -1347,18 +1362,151 @@ class _SettingsScreenState extends State<SettingsScreen> {
         .get();
     final sentences = sentencesSnap.docs.length;
 
-    final totalSessions =
-        (userData['totalSessions'] as int?) ?? sentences;
-
     return {
-      'streak':        streak,
-      'corrections':   corrections,
-      'wordsAdded':    wordsAdded,
-      'sentences':     sentences,
-      'totalSessions': totalSessions,
+      'streak':      streak,
+      'corrections': corrections,
+      'wordsAdded':  wordsAdded,
+      'sentences':   sentences,
     };
   }
 
+  // ── Parse admin badges ─────────────────────────────────────────────────────
+  List<_BadgeInfo> _parseBadges(QuerySnapshot<Map<String, dynamic>> snap) {
+    final list = snap.docs.map((doc) {
+      final data = doc.data();
+      final rawTasks = data['tasks'];
+      final tasks = rawTasks is List
+          ? rawTasks.map((t) => t.toString()).toList()
+          : (data['badge_description'] ?? '')
+              .toString()
+              .split(' | ')
+              .where((t) => t.trim().isNotEmpty)
+              .toList();
+      while (tasks.length < 5) {
+        tasks.add('');
+      }
+      final rawColor = data['color'];
+      final colorValue = rawColor is num ? rawColor.toInt() : _accent.value;
+      return _BadgeInfo(
+        id:       doc.id,
+        emoji:    (data['emoji'] ?? '🏅').toString(),
+        label:    (data['badge_name'] ?? 'Unnamed Badge').toString(),
+        minLevel: (data['min_level'] as num?)?.toInt() ?? 0,
+        color:    Color(colorValue),
+        tasks:    tasks.take(5).toList(),
+      );
+    }).toList();
+    list.sort((a, b) => a.minLevel.compareTo(b.minLevel));
+    return list;
+  }
+
+  Map<String, Set<int>> _parseProgress(Map<String, dynamic> userData) {
+    final raw = userData['badgeProgress'];
+    final result = <String, Set<int>>{};
+    if (raw is Map) {
+      raw.forEach((k, v) {
+        if (v is List) {
+          result[k.toString()] =
+              v.whereType<num>().map((n) => n.toInt()).toSet();
+        }
+      });
+    }
+    return result;
+  }
+
+  // Only count tasks that still exist (admin may edit/remove them).
+  Set<int> _validDone(_BadgeInfo b, Map<String, Set<int>> progress) {
+    final active = b.activeTaskIndexes.toSet();
+    return (progress[b.id] ?? <int>{}).where(active.contains).toSet();
+  }
+
+  bool _isEarned(_BadgeInfo b, Map<String, Set<int>> progress, int level) {
+    final active = b.activeTaskIndexes;
+    if (active.isEmpty) return false;
+    return level >= b.minLevel &&
+        _validDone(b, progress).length == active.length;
+  }
+
+  int _levelFrom(List<_BadgeInfo> badges, Map<String, Set<int>> progress) {
+    int level = 0;
+    for (final b in badges) {
+      level += _validDone(b, progress).length;
+    }
+    return level;
+  }
+
+  _BadgeInfo? _highestEarned(
+      List<_BadgeInfo> badges, Map<String, Set<int>> progress, int level) {
+    _BadgeInfo? best;
+    for (final b in badges) {
+      if (_isEarned(b, progress, level)) {
+        if (best == null || b.minLevel >= best.minLevel) best = b;
+      }
+    }
+    return best;
+  }
+
+  // ── Toggle a task + save everything the admin needs ────────────────────────
+  Future<void> _toggleTask({
+    required String uid,
+    required List<_BadgeInfo> badges,
+    required Map<String, Set<int>> progress,
+    required _BadgeInfo badge,
+    required int taskIndex,
+    required int streak,
+    required int currentLevel,
+  }) async {
+    if (_saving) return;
+    setState(() => _saving = true);
+
+    try {
+      final newProgress = <String, Set<int>>{
+        for (final e in progress.entries) e.key: {...e.value},
+      };
+      final set = newProgress.putIfAbsent(badge.id, () => <int>{});
+      if (!set.add(taskIndex)) set.remove(taskIndex);
+
+      final newLevel = _levelFrom(badges, newProgress);
+      final earned   = _highestEarned(badges, newProgress, newLevel);
+      final wasEarned = _isEarned(badge, progress, currentLevel);
+      final nowEarned = _isEarned(badge, newProgress, newLevel);
+
+      await FirebaseFirestore.instance.collection('users').doc(uid).set({
+        'badgeProgress': {
+          badge.id: (set.toList()..sort()),
+        },
+        'level':      newLevel,
+        'streak':     streak,
+        'badgeId':    earned?.id ?? '',
+        'badgeName':  earned?.label ?? '',
+        'badgeEmoji': earned?.emoji ?? '',
+        'updatedAt':  FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      if (mounted && nowEarned && !wasEarned) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('${badge.emoji} Badge earned: ${badge.label}!',
+              style: const TextStyle(
+                  color: Colors.white, fontWeight: FontWeight.w700)),
+          backgroundColor: badge.color,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10)),
+          margin: const EdgeInsets.all(12),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not save progress: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  // ── Build ──────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
@@ -1412,22 +1560,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     _notSignedIn()
                   else
                     FutureBuilder<Map<String, dynamic>>(
-                      future: _loadGamification(user.uid),
-                      builder: (context, snap) {
-                        if (snap.connectionState ==
+                      future: _loadStats(user.uid),
+                      builder: (context, statSnap) {
+                        if (statSnap.connectionState ==
                             ConnectionState.waiting) {
                           return const Center(
                             child: Padding(
-                              padding:
-                                  EdgeInsets.symmetric(vertical: 60),
+                              padding: EdgeInsets.symmetric(vertical: 60),
                               child: CircularProgressIndicator(
                                   color: _accent, strokeWidth: 2),
                             ),
                           );
                         }
-                        final data = snap.data ?? {};
                         return _buildContent(
-                            context, user.uid, data);
+                            user.uid, statSnap.data ?? {});
                       },
                     ),
                 ]),
@@ -1439,113 +1585,359 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _buildContent(
-      BuildContext context, String uid, Map<String, dynamic> data) {
-    final streak      = data['streak']        as int? ?? 0;
-    final corrections = data['corrections']   as int? ?? 0;
-    final wordsAdded  = data['wordsAdded']    as int? ?? 0;
-    final sentences   = data['sentences']     as int? ?? 0;
-    final sessions    = data['totalSessions'] as int? ?? 0;
+  Widget _buildContent(String uid, Map<String, dynamic> stats) {
+    final streak      = stats['streak']      as int? ?? 0;
+    final corrections = stats['corrections'] as int? ?? 0;
+    final wordsAdded  = stats['wordsAdded']  as int? ?? 0;
+    final sentences   = stats['sentences']   as int? ?? 0;
 
-    final tasks = <_Task>[
-      _Task(
-        icon:    Icons.spellcheck_rounded,
-        title:   'Teach 5 Word Corrections',
-        desc:    'Add 5 corrections to train the AI on your speech.',
-        goal:    5,
-        current: corrections,
-        color:   _accent,
-      ),
-      _Task(
-        icon:    Icons.record_voice_over_rounded,
-        title:   'Speak 3 Full Sentences',
-        desc:    'Use the mic to capture 3 or more sentences today.',
-        goal:    3,
-        current: sentences,
-        color:   _green,
-      ),
-      _Task(
-        icon:    Icons.library_add_rounded,
-        title:   'Add 10 Words to AI',
-        desc:    'Build vocabulary — reach 10 total words trained.',
-        goal:    10,
-        current: wordsAdded,
-        color:   _gold,
-      ),
-      _Task(
-        icon:    Icons.mic_rounded,
-        title:   'Complete 5 Training Sessions',
-        desc:    'Start 5 sessions to help the AI learn your voice.',
-        goal:    5,
-        current: sessions,
-        color:   const Color(0xFF8E44AD),
-      ),
-      _Task(
-        icon:    Icons.auto_fix_high_rounded,
-        title:   'Reach 10 Corrections',
-        desc:    'Teach the AI 10 of your personal speech patterns.',
-        goal:    10,
-        current: corrections,
-        color:   _accent,
-      ),
-    ];
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance.collection('badges').snapshots(),
+      builder: (context, badgeSnap) {
+        return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+          stream: FirebaseFirestore.instance
+              .collection('users')
+              .doc(uid)
+              .snapshots(),
+          builder: (context, userSnap) {
+            if (badgeSnap.connectionState == ConnectionState.waiting ||
+                userSnap.connectionState == ConnectionState.waiting) {
+              return const Center(
+                child: Padding(
+                  padding: EdgeInsets.symmetric(vertical: 60),
+                  child: CircularProgressIndicator(
+                      color: _accent, strokeWidth: 2),
+                ),
+              );
+            }
 
-    final completedCount = tasks.where((t) => t.isDone).length;
+            final badges   = badgeSnap.hasData
+                ? _parseBadges(badgeSnap.data!)
+                : <_BadgeInfo>[];
+            final userData = userSnap.data?.data() ?? {};
+            final progress = _parseProgress(userData);
+            final level    = _levelFrom(badges, progress);
+            final earned   = _highestEarned(badges, progress, level);
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _streakCard(streak),
-        const SizedBox(height: 20),
-        _sectionLabel('YOUR TRAINING STATS'),
-        const SizedBox(height: 10),
-        Row(children: [
-          Expanded(child: _statChip(
-              '$corrections', 'Corrections',
-              Icons.spellcheck_rounded, _accent)),
-          const SizedBox(width: 8),
-          Expanded(child: _statChip(
-              '$wordsAdded', 'Words Added',
-              Icons.library_add_rounded, _gold)),
-          const SizedBox(width: 8),
-          Expanded(child: _statChip(
-              '$sentences', 'Sentences',
-              Icons.record_voice_over_rounded, _green)),
-        ]),
-        const SizedBox(height: 24),
-        Row(children: [
-          _sectionLabel('DAILY TASKS'),
-          const Spacer(),
-          Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
-            decoration: BoxDecoration(
-              color: completedCount == tasks.length
-                  ? _greenTint
-                  : _accentTint,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                  color: completedCount == tasks.length
-                      ? _greenBorder
-                      : _accentBorder),
-            ),
-            child: Text(
-              '$completedCount / ${tasks.length} done',
-              style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: completedCount == tasks.length
-                      ? _green
-                      : _accent),
-            ),
-          ),
-        ]),
-        const SizedBox(height: 10),
-        ...tasks.map((t) => _taskTile(t)),
-        const SizedBox(height: 40),
-      ],
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _streakCard(streak),
+                const SizedBox(height: 16),
+                _levelCard(level, earned, badges, progress),
+                const SizedBox(height: 20),
+                _sectionLabel('YOUR TRAINING STATS'),
+                const SizedBox(height: 10),
+                Row(children: [
+                  Expanded(child: _statChip('$corrections', 'Corrections',
+                      Icons.spellcheck_rounded, _accent)),
+                  const SizedBox(width: 8),
+                  Expanded(child: _statChip('$wordsAdded', 'Words Added',
+                      Icons.library_add_rounded, _gold)),
+                  const SizedBox(width: 8),
+                  Expanded(child: _statChip('$sentences', 'Sentences',
+                      Icons.record_voice_over_rounded, _green)),
+                ]),
+                const SizedBox(height: 24),
+                Row(children: [
+                  _sectionLabel('BADGES & TASKS'),
+                  const Spacer(),
+                  _countPill(
+                    '${badges.where((b) => _isEarned(b, progress, level)).length} / ${badges.length} earned',
+                  ),
+                ]),
+                const SizedBox(height: 10),
+                if (badgeSnap.hasError)
+                  _infoBox('Could not load badges. Check your Firestore rules.')
+                else if (badges.isEmpty)
+                  _infoBox('No badges have been set up yet. Check back soon!')
+                else
+                  ...badges.map((b) => _badgeCard(
+                        uid: uid,
+                        badge: b,
+                        badges: badges,
+                        progress: progress,
+                        level: level,
+                        streak: streak,
+                      )),
+                const SizedBox(height: 40),
+              ],
+            );
+          },
+        );
+      },
     );
   }
+
+  // ── Level card ─────────────────────────────────────────────────────────────
+  Widget _levelCard(int level, _BadgeInfo? earned, List<_BadgeInfo> badges,
+      Map<String, Set<int>> progress) {
+    // Next tier the user hasn't earned yet
+    _BadgeInfo? next;
+    for (final b in badges) {
+      if (!_isEarned(b, progress, level)) {
+        next = b;
+        break;
+      }
+    }
+    final color = earned?.color ?? _accent;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Row(children: [
+        Container(
+          width: 52, height: 52,
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.15),
+            shape: BoxShape.circle,
+          ),
+          child: Center(
+            child: Text(earned?.emoji ?? '🎯',
+                style: const TextStyle(fontSize: 24)),
+          ),
+        ),
+        const SizedBox(width: 14),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Level $level',
+                  style: TextStyle(
+                      color: color,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800)),
+              const SizedBox(height: 2),
+              Text(
+                earned != null
+                    ? 'Current badge: ${earned.label}'
+                    : 'No badge yet — complete tasks below to earn one.',
+                style: const TextStyle(
+                    color: _textDark,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600),
+              ),
+              if (next != null) ...[
+                const SizedBox(height: 2),
+                Text(
+                  level >= next.minLevel
+                      ? 'Next: finish all tasks for ${next.emoji} ${next.label}'
+                      : 'Next: reach level ${next.minLevel} for ${next.emoji} ${next.label}',
+                  style: const TextStyle(color: _textSub, fontSize: 11),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ]),
+    );
+  }
+
+  // ── Badge card with admin tasks ────────────────────────────────────────────
+  Widget _badgeCard({
+    required String uid,
+    required _BadgeInfo badge,
+    required List<_BadgeInfo> badges,
+    required Map<String, Set<int>> progress,
+    required int level,
+    required int streak,
+  }) {
+    final active    = badge.activeTaskIndexes;
+    final done      = _validDone(badge, progress);
+    final unlocked  = level >= badge.minLevel;
+    final earned    = _isEarned(badge, progress, level);
+    final ratio     = active.isEmpty ? 0.0 : done.length / active.length;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: earned
+            ? badge.color.withOpacity(0.08)
+            : const Color(0x1A0077B6),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+            color: earned
+                ? badge.color.withOpacity(0.5)
+                : _accentBorder,
+            width: earned ? 1.5 : 1),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Container(
+              width: 44, height: 44,
+              decoration: BoxDecoration(
+                color: badge.color.withOpacity(unlocked ? 0.15 : 0.06),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Center(
+                child: Opacity(
+                  opacity: unlocked ? 1 : 0.4,
+                  child: Text(badge.emoji,
+                      style: const TextStyle(fontSize: 22)),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(badge.label,
+                      style: TextStyle(
+                          color: unlocked ? badge.color : _textSub,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 2),
+                  Text(
+                    unlocked
+                        ? 'Min. level ${badge.minLevel}'
+                        : '🔒 Reach level ${badge.minLevel} to unlock',
+                    style: const TextStyle(color: _textSub, fontSize: 11),
+                  ),
+                ],
+              ),
+            ),
+            if (earned)
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: badge.color,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: const Text('EARNED',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.6)),
+              )
+            else
+              _countPill('${done.length}/${active.length}'),
+          ]),
+          const SizedBox(height: 10),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: ratio,
+              minHeight: 5,
+              backgroundColor: badge.color.withOpacity(0.12),
+              valueColor: AlwaysStoppedAnimation<Color>(badge.color),
+            ),
+          ),
+          const SizedBox(height: 8),
+          for (final i in active)
+            _taskRow(
+              badge: badge,
+              index: i,
+              checked: done.contains(i),
+              enabled: unlocked && !_saving,
+              onTap: () => _toggleTask(
+                uid: uid,
+                badges: badges,
+                progress: progress,
+                badge: badge,
+                taskIndex: i,
+                streak: streak,
+                currentLevel: level,
+              ),
+            ),
+          if (active.isEmpty)
+            const Padding(
+              padding: EdgeInsets.only(top: 4),
+              child: Text('No tasks have been set for this badge yet.',
+                  style: TextStyle(color: _textSub, fontSize: 12)),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _taskRow({
+    required _BadgeInfo badge,
+    required int index,
+    required bool checked,
+    required bool enabled,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: enabled ? onTap : null,
+      borderRadius: BorderRadius.circular(8),
+      child: Opacity(
+        opacity: enabled || checked ? 1 : 0.5,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 22, height: 22,
+                margin: const EdgeInsets.only(top: 1),
+                decoration: BoxDecoration(
+                  color: checked ? badge.color : Colors.transparent,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                      color: checked ? badge.color : _textSub, width: 1.5),
+                ),
+                child: checked
+                    ? const Icon(Icons.check, color: Colors.white, size: 14)
+                    : null,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  badge.tasks[index],
+                  style: TextStyle(
+                    color: _textDark,
+                    fontSize: 13,
+                    height: 1.4,
+                    decoration:
+                        checked ? TextDecoration.lineThrough : null,
+                    decorationColor: _textSub,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── Small widgets ──────────────────────────────────────────────────────────
+  Widget _countPill(String text) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+        decoration: BoxDecoration(
+          color: _accentTint,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: _accentBorder),
+        ),
+        child: Text(text,
+            style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: _accent)),
+      );
+
+  Widget _infoBox(String text) => Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: const Color(0x1A0077B6),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: _accentBorder),
+        ),
+        child: Text(text,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: _textSub, fontSize: 13)),
+      );
 
   Widget _streakCard(int streak) {
     final isActive = streak > 0;
@@ -1610,8 +2002,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         if (isActive)
           Container(
-            padding: const EdgeInsets.symmetric(
-                horizontal: 10, vertical: 6),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             decoration: BoxDecoration(
               color: Colors.white.withOpacity(0.2),
               borderRadius: BorderRadius.circular(12),
@@ -1644,91 +2036,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
         const SizedBox(height: 6),
         Text(value,
             style: TextStyle(
-                color: color,
-                fontSize: 18,
-                fontWeight: FontWeight.w800)),
+                color: color, fontSize: 18, fontWeight: FontWeight.w800)),
         const SizedBox(height: 2),
         Text(label,
             textAlign: TextAlign.center,
             style: const TextStyle(
                 color: _textSub, fontSize: 10, height: 1.3)),
       ]),
-    );
-  }
-
-  Widget _taskTile(_Task task) {
-    final progress = (task.current / task.goal).clamp(0.0, 1.0);
-    final done     = task.isDone;
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: done ? task.color.withOpacity(0.07) : _cardColor,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-            color:
-                done ? task.color.withOpacity(0.3) : _accentBorder),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 36, height: 36,
-            decoration: BoxDecoration(
-              color: task.color.withOpacity(0.12),
-              borderRadius: BorderRadius.circular(9),
-            ),
-            child: done
-                ? Icon(Icons.check_circle_rounded,
-                    color: task.color, size: 18)
-                : Icon(task.icon, color: task.color, size: 18),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(children: [
-                  Expanded(
-                    child: Text(task.title,
-                        style: TextStyle(
-                            color: _textDark,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            decoration: done
-                                ? TextDecoration.lineThrough
-                                : null,
-                            decorationColor: _textSub)),
-                  ),
-                  Text(
-                    '${task.current.clamp(0, task.goal)}/${task.goal}',
-                    style: TextStyle(
-                        color: done ? task.color : _textSub,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700),
-                  ),
-                ]),
-                const SizedBox(height: 4),
-                Text(task.desc,
-                    style: const TextStyle(
-                        color: _textSub, fontSize: 11, height: 1.4)),
-                const SizedBox(height: 8),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: LinearProgressIndicator(
-                    value:           progress,
-                    minHeight:       5,
-                    backgroundColor: task.color.withOpacity(0.12),
-                    valueColor:
-                        AlwaysStoppedAnimation<Color>(task.color),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
     );
   }
 
@@ -1988,7 +2302,6 @@ class _RateUsScreenState extends State<RateUsScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
 
-          // Star rating label
           const Text('How would you rate your experience?',
               style: TextStyle(
                   color: _textDark,
@@ -1996,7 +2309,6 @@ class _RateUsScreenState extends State<RateUsScreen> {
                   fontWeight: FontWeight.w600)),
           const SizedBox(height: 14),
 
-          // Stars row
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: List.generate(5, (i) {
@@ -2017,7 +2329,6 @@ class _RateUsScreenState extends State<RateUsScreen> {
             }),
           ),
 
-          // Rating label
           if (_rating > 0) ...[
             const SizedBox(height: 8),
             Center(
@@ -2129,25 +2440,4 @@ class _RateUsScreenState extends State<RateUsScreen> {
           ]),
         ),
       );
-}
-
-// ── Task data class ───────────────────────────────────────────────────────────
-class _Task {
-  final IconData icon;
-  final String   title;
-  final String   desc;
-  final int      goal;
-  final int      current;
-  final Color    color;
-
-  const _Task({
-    required this.icon,
-    required this.title,
-    required this.desc,
-    required this.goal,
-    required this.current,
-    required this.color,
-  });
-
-  bool get isDone => current >= goal;
 }
