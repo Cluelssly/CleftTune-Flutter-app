@@ -1336,40 +1336,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   static const _gold         = Color(0xFFF5A623);
   static const _green        = Color(0xFF27AE60);
 
-  bool _saving = false;
-
-  // ── Stats (streak, corrections, etc.) ──────────────────────────────────────
-  Future<Map<String, dynamic>> _loadStats(String uid) async {
-    final userDoc = await FirebaseFirestore.instance
-        .collection('users').doc(uid).get();
-    final userData = userDoc.data() ?? {};
-
-    final streak = (userData['trainingStreak'] as int?) ?? 0;
-
-    final correctionsSnap = await FirebaseFirestore.instance
-        .collection('users').doc(uid)
-        .collection('corrections')
-        .where('source', isEqualTo: 'user')
-        .get();
-    final corrections = correctionsSnap.docs.length;
-
-    final wordsAdded =
-        (userData['wordsAdded'] as int?) ?? (corrections * 2);
-
-    final sentencesSnap = await FirebaseFirestore.instance
-        .collection('translations')
-        .where('userId', isEqualTo: uid)
-        .get();
-    final sentences = sentencesSnap.docs.length;
-
-    return {
-      'streak':      streak,
-      'corrections': corrections,
-      'wordsAdded':  wordsAdded,
-      'sentences':   sentences,
-    };
-  }
-
   // ── Parse admin badges ─────────────────────────────────────────────────────
   List<_BadgeInfo> _parseBadges(QuerySnapshot<Map<String, dynamic>> snap) {
     final list = snap.docs.map((doc) {
@@ -1446,63 +1412,186 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return best;
   }
 
-  // ── Toggle a task + save everything the admin needs ────────────────────────
-  Future<void> _toggleTask({
+  // ══════════════════════════════════════════════════════════════════════════
+  // AUTOMATIC TASKS — no checkboxes. Each admin task text is matched to a
+  // real activity counter, e.g. "Translate 5 sentences" -> sentences >= 5.
+  //   streak      : "streak", "day"
+  //   wordsAdded  : "word", "vocab"
+  //   corrections : "correct", "teach", "train"
+  //   sentences   : "translat", "sentence", "phrase", "history"
+  // The first number in the text is the target (default 1).
+  // ══════════════════════════════════════════════════════════════════════════
+  bool _syncing = false;
+
+  String? _metricFor(String text) {
+    final s = text.toLowerCase();
+    if (s.contains('streak') || s.contains('day')) return 'streak';
+    if (s.contains('word') || s.contains('vocab')) return 'wordsAdded';
+    if (s.contains('correct') || s.contains('teach') || s.contains('train')) {
+      return 'corrections';
+    }
+    if (s.contains('translat') ||
+        s.contains('sentence') ||
+        s.contains('phrase')) {
+      return 'sentences';
+    }
+    return null;
+  }
+
+  int _targetFor(String text) {
+    final m = RegExp(r'\d+').firstMatch(text);
+    final n = m == null ? 1 : int.parse(m.group(0)!);
+    return n < 1 ? 1 : n;
+  }
+
+  bool _taskMet(String text, Map<String, dynamic> stats) {
+    final metric = _metricFor(text);
+    if (metric == null) return false;
+    final value = (stats[metric] as num?)?.toInt() ?? 0;
+    return value >= _targetFor(text);
+  }
+
+  bool _sameSet(Set<int> a, Set<int> b) =>
+      a.length == b.length && a.containsAll(b);
+
+  Map<String, Set<int>> _autoProgress(
+      List<_BadgeInfo> badges, Map<String, dynamic> stats) {
+    final result = <String, Set<int>>{};
+    bool changed = true;
+    int guard = 0;
+    while (changed && guard++ < 20) {
+      changed = false;
+      final level = _levelFrom(badges, result);
+      for (final b in badges) {
+        if (level < b.minLevel) continue; // badge still locked
+        final done = <int>{
+          for (final i in b.activeTaskIndexes)
+            if (_taskMet(b.tasks[i], stats)) i
+        };
+        if (!_sameSet(done, result[b.id] ?? <int>{})) {
+          result[b.id] = done;
+          changed = true;
+        }
+      }
+    }
+    return result;
+  }
+
+  bool _progressChanged(List<_BadgeInfo> badges, Map<String, Set<int>> stored,
+      Map<String, Set<int>> auto) {
+    for (final b in badges) {
+      if (!_sameSet(_validDone(b, stored), auto[b.id] ?? <int>{})) return true;
+    }
+    return false;
+  }
+
+  // ── Save to Firebase automatically ─────────────────────────────────────────
+  //   users/{uid}                        level, streak, badgeProgress, badge...
+  //   users/{uid}/badgeRecords/{badgeId} one record per badge
+  //   users/{uid}/records/progress       streak + level summary
+  Future<void> _syncAuto({
     required String uid,
     required List<_BadgeInfo> badges,
-    required Map<String, Set<int>> progress,
-    required _BadgeInfo badge,
-    required int taskIndex,
+    required Map<String, Set<int>> oldProgress,
+    required Map<String, Set<int>> newProgress,
     required int streak,
-    required int currentLevel,
   }) async {
-    if (_saving) return;
-    setState(() => _saving = true);
-
+    if (_syncing) return;
+    _syncing = true;
     try {
-      final newProgress = <String, Set<int>>{
-        for (final e in progress.entries) e.key: {...e.value},
-      };
-      final set = newProgress.putIfAbsent(badge.id, () => <int>{});
-      if (!set.add(taskIndex)) set.remove(taskIndex);
-
+      final oldLevel = _levelFrom(badges, oldProgress);
       final newLevel = _levelFrom(badges, newProgress);
-      final earned   = _highestEarned(badges, newProgress, newLevel);
-      final wasEarned = _isEarned(badge, progress, currentLevel);
-      final nowEarned = _isEarned(badge, newProgress, newLevel);
+      final top = _highestEarned(badges, newProgress, newLevel);
 
-      await FirebaseFirestore.instance.collection('users').doc(uid).set({
-        'badgeProgress': {
-          badge.id: (set.toList()..sort()),
+      final userRef = FirebaseFirestore.instance.collection('users').doc(uid);
+      final summaryRef = userRef.collection('records').doc('progress');
+      final summarySnap = await summaryRef.get();
+      final oldLongest =
+          (summarySnap.data()?['longestStreak'] as num?)?.toInt() ?? 0;
+      final oldHighest =
+          (summarySnap.data()?['highestLevel'] as num?)?.toInt() ?? 0;
+
+      final batch = FirebaseFirestore.instance.batch();
+      _BadgeInfo? newlyEarned;
+      int totalEarned = 0;
+
+      for (final b in badges) {
+        final done = newProgress[b.id] ?? <int>{};
+        final nowEarned = _isEarned(b, newProgress, newLevel);
+        final wasEarned = _isEarned(b, oldProgress, oldLevel);
+        if (nowEarned) totalEarned++;
+        if (nowEarned && !wasEarned) newlyEarned = b;
+
+        batch.set(
+          userRef.collection('badgeRecords').doc(b.id),
+          {
+            'badgeId':        b.id,
+            'badgeName':      b.label,
+            'emoji':          b.emoji,
+            'minLevel':       b.minLevel,
+            'completedTasks': (done.toList()..sort()),
+            'totalTasks':     b.activeTaskIndexes.length,
+            'isEarned':       nowEarned,
+            'levelAtUpdate':  newLevel,
+            'streakAtUpdate': streak,
+            'updatedAt':      FieldValue.serverTimestamp(),
+            if (nowEarned && !wasEarned)
+              'earnedAt': FieldValue.serverTimestamp(),
+            if (!nowEarned && wasEarned) 'earnedAt': FieldValue.delete(),
+          },
+          SetOptions(merge: true),
+        );
+      }
+
+      batch.set(
+        userRef,
+        {
+          'badgeProgress': {
+            for (final b in badges)
+              b.id: ((newProgress[b.id] ?? <int>{}).toList()..sort()),
+          },
+          'level':      newLevel,
+          'streak':     streak,
+          'badgeId':    top?.id ?? '',
+          'badgeName':  top?.label ?? '',
+          'badgeEmoji': top?.emoji ?? '',
+          'updatedAt':  FieldValue.serverTimestamp(),
         },
-        'level':      newLevel,
-        'streak':     streak,
-        'badgeId':    earned?.id ?? '',
-        'badgeName':  earned?.label ?? '',
-        'badgeEmoji': earned?.emoji ?? '',
-        'updatedAt':  FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+        SetOptions(merge: true),
+      );
 
-      if (mounted && nowEarned && !wasEarned) {
+      batch.set(
+        summaryRef,
+        {
+          'currentStreak': streak,
+          'longestStreak': streak > oldLongest ? streak : oldLongest,
+          'currentLevel':  newLevel,
+          'highestLevel':  newLevel > oldHighest ? newLevel : oldHighest,
+          'badgesEarned':  totalEarned,
+          'updatedAt':     FieldValue.serverTimestamp(),
+          if (!summarySnap.exists) 'createdAt': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+
+      await batch.commit();
+
+      if (mounted && newlyEarned != null) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('${badge.emoji} Badge earned: ${badge.label}!',
+          content: Text('${newlyEarned.emoji} Badge earned: ${newlyEarned.label}!',
               style: const TextStyle(
                   color: Colors.white, fontWeight: FontWeight.w700)),
-          backgroundColor: badge.color,
+          backgroundColor: newlyEarned.color,
           behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
           margin: const EdgeInsets.all(12),
         ));
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not save progress: $e')),
-        );
-      }
+      debugPrint('Auto progress sync failed: $e');
     } finally {
-      if (mounted) setState(() => _saving = false);
+      _syncing = false;
     }
   }
 
@@ -1559,21 +1648,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   if (user == null)
                     _notSignedIn()
                   else
-                    FutureBuilder<Map<String, dynamic>>(
-                      future: _loadStats(user.uid),
-                      builder: (context, statSnap) {
-                        if (statSnap.connectionState ==
-                            ConnectionState.waiting) {
-                          return const Center(
-                            child: Padding(
-                              padding: EdgeInsets.symmetric(vertical: 60),
-                              child: CircularProgressIndicator(
-                                  color: _accent, strokeWidth: 2),
-                            ),
-                          );
-                        }
-                        return _buildContent(
-                            user.uid, statSnap.data ?? {});
+                    StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                      stream: FirebaseFirestore.instance
+                          .collection('translations')
+                          .where('userId', isEqualTo: user.uid)
+                          .snapshots(),
+                      builder: (context, sentSnap) {
+                        return StreamBuilder<
+                            QuerySnapshot<Map<String, dynamic>>>(
+                          stream: FirebaseFirestore.instance
+                              .collection('users')
+                              .doc(user.uid)
+                              .collection('corrections')
+                              .where('source', isEqualTo: 'user')
+                              .snapshots(),
+                          builder: (context, corrSnap) {
+                            if (!sentSnap.hasData && !corrSnap.hasData) {
+                              return const Center(
+                                child: Padding(
+                                  padding: EdgeInsets.symmetric(vertical: 60),
+                                  child: CircularProgressIndicator(
+                                      color: _accent, strokeWidth: 2),
+                                ),
+                              );
+                            }
+                            return _buildContent(
+                              user.uid,
+                              sentSnap.data?.docs.length ?? 0,
+                              corrSnap.data?.docs.length ?? 0,
+                            );
+                          },
+                        );
                       },
                     ),
                 ]),
@@ -1585,11 +1690,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _buildContent(String uid, Map<String, dynamic> stats) {
-    final streak      = stats['streak']      as int? ?? 0;
-    final corrections = stats['corrections'] as int? ?? 0;
-    final wordsAdded  = stats['wordsAdded']  as int? ?? 0;
-    final sentences   = stats['sentences']   as int? ?? 0;
+  Widget _buildContent(String uid, int sentences, int corrections) {
 
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: FirebaseFirestore.instance.collection('badges').snapshots(),
@@ -1615,8 +1716,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ? _parseBadges(badgeSnap.data!)
                 : <_BadgeInfo>[];
             final userData = userSnap.data?.data() ?? {};
-            final progress = _parseProgress(userData);
+            final streak =
+                (userData['trainingStreak'] as num?)?.toInt() ?? 0;
+            final wordsAdded = (userData['wordsAdded'] as num?)?.toInt() ??
+                (corrections * 2);
+            final stats = <String, dynamic>{
+              'streak':      streak,
+              'corrections': corrections,
+              'wordsAdded':  wordsAdded,
+              'sentences':   sentences,
+            };
+            final stored   = _parseProgress(userData);
+            final progress = _autoProgress(badges, stats);
             final level    = _levelFrom(badges, progress);
+
+            if (badges.isNotEmpty &&
+                (_progressChanged(badges, stored, progress) ||
+                    userData['level'] != level ||
+                    userData['streak'] != streak)) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (!mounted) return;
+                _syncAuto(
+                  uid: uid,
+                  badges: badges,
+                  oldProgress: stored,
+                  newProgress: progress,
+                  streak: streak,
+                );
+              });
+            }
             final earned   = _highestEarned(badges, progress, level);
 
             return Column(
@@ -1838,16 +1966,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               badge: badge,
               index: i,
               checked: done.contains(i),
-              enabled: unlocked && !_saving,
-              onTap: () => _toggleTask(
-                uid: uid,
-                badges: badges,
-                progress: progress,
-                badge: badge,
-                taskIndex: i,
-                streak: streak,
-                currentLevel: level,
-              ),
+              enabled: false, // automatic — completed by real activity
+              onTap: () {},
             ),
           if (active.isEmpty)
             const Padding(
