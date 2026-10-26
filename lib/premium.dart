@@ -3,9 +3,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
-import 'dart:ui';
 import 'dart:async';
-import 'main.dart';
 
 class PremiumScreen extends StatefulWidget {
   final VoidCallback onBack;
@@ -49,29 +47,18 @@ class _PremiumScreenState extends State<PremiumScreen>
 
   // ── Theme constants ───────────────────────────────────────────────────────
   static const _bg          = Color(0xFFEAF4FB);
-  static const _surface     = Color(0xFFD6EEFF);
   static const _accent      = Color(0xFF0077B6);
-  static const _accentDim   = Color(0xFF005F8E);
   static const _textDark    = Color(0xFF0D2B4E);
   static const _textSub     = Color(0xFF5A7A96);
   static const _label       = Color(0xFF0077B6);
-  static const _bgMid       = Color(0xFFDAEEFA);
-  static const _bgDark      = Color(0xFFC8E3F5);
 
   static const Color _accentBorder  = Color(0x600077B6);
   static const Color _accentTint    = Color(0xFFD6EEFF);
   static const Color _white30       = Color(0xFF8AAEC8);
-  static const Color _white70       = Color(0xFF2C5B7E);
-  static const Color _white40       = Color(0xFF5A7A96);
   static const Color _fieldBg       = Color(0xFFE8F4FC);
-  static const Color _card          = Color(0x1A0077B6);
 
   static const Color _gold          = Color(0xFFF5A623);
-  static const Color _goldTint      = Color(0xFFFFF3E0);
-  static const Color _goldBorder    = Color(0x60F5A623);
   static const Color _green         = Color(0xFF27AE60);
-  static const Color _greenTint     = Color(0xFFE8F8EF);
-  static const Color _greenBorder   = Color(0x6027AE60);
 
   static const Color _cardBlueBg    = Color(0xFFE0F0FB);
   static const Color _cardGoldBg    = Color(0xFFFFF8E8);
@@ -168,16 +155,13 @@ class _PremiumScreenState extends State<PremiumScreen>
   }
 
   Future<bool> _checkInternet() async {
-    final r = await Connectivity().checkConnectivity();
-    return r.any((x) => x != ConnectivityResult.none);
-  }
-
-  // ── Navigate to AppShell (main.dart) ──────────────────────────────────────
-  void _navigateToAppShell() {
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const AppShell()),
-      (route) => false,
-    );
+    try {
+      final r = await Connectivity().checkConnectivity();
+      return r.any((x) => x != ConnectivityResult.none);
+    } catch (_) {
+      // If the check itself fails, don't block the user — let Firebase decide.
+      return true;
+    }
   }
 
   Future<void> handleAuth() async {
@@ -192,15 +176,14 @@ class _PremiumScreenState extends State<PremiumScreen>
     try {
       if (isLoginMode) {
         await _auth.signInWithEmailAndPassword(email: email, password: password);
+        if (!mounted) return;
         widget.onLogin();
-        _navigateToAppShell();
       } else {
         await _auth.createUserWithEmailAndPassword(email: email, password: password);
-        if (mounted) {
-          await _showSuccessDialog();
-          widget.onLogin();
-          _navigateToAppShell();
-        }
+        if (!mounted) return;
+        await _showSuccessDialog();
+        if (!mounted) return;
+        widget.onLogin();
       }
     } on FirebaseAuthException catch (e) {
       final msgs = {
@@ -242,8 +225,8 @@ class _PremiumScreenState extends State<PremiumScreen>
         final isNewUser = userCredential.additionalUserInfo?.isNewUser ?? false;
         final displayName = userCredential.user?.displayName ?? 'there';
         if (isNewUser) await _showSuccessDialog(name: displayName, isGoogle: true);
+        if (!mounted) return;
         widget.onLogin();
-        _navigateToAppShell();
       }
     } on FirebaseAuthException catch (e) {
       if (e.code == 'popup-closed-by-user' || e.code == 'cancelled-popup-request') return;
@@ -278,8 +261,8 @@ class _PremiumScreenState extends State<PremiumScreen>
       if (mounted) {
         final isNewUser = userCredential.additionalUserInfo?.isNewUser ?? false;
         if (isNewUser) await _showSuccessDialog(name: googleUser.displayName ?? 'there', isGoogle: true);
+        if (!mounted) return;
         widget.onLogin();
-        _navigateToAppShell();
       }
     } on FirebaseAuthException catch (e) {
       final msgs = {
@@ -291,7 +274,7 @@ class _PremiumScreenState extends State<PremiumScreen>
     } catch (e) {
       final errStr = e.toString().toLowerCase();
       if (errStr.contains('cancel') || errStr.contains('sign_in_canceled') ||
-          errStr.contains('sign_in_failed') && errStr.contains('12501')) return;
+          (errStr.contains('sign_in_failed') && errStr.contains('12501'))) return;
       _snack("Google sign-in failed. Please try again", isError: true);
     }
   }
@@ -301,7 +284,7 @@ class _PremiumScreenState extends State<PremiumScreen>
       context: context,
       barrierDismissible: false,
       barrierColor: Colors.black.withOpacity(0.4),
-      builder: (context) => Dialog(
+      builder: (dialogContext) => Dialog(
         backgroundColor: Colors.transparent,
         child: Container(
           padding: const EdgeInsets.all(28),
@@ -334,7 +317,7 @@ class _PremiumScreenState extends State<PremiumScreen>
               width: double.infinity, height: 48,
               child: ElevatedButton(
                 style: ElevatedButton.styleFrom(backgroundColor: _accent, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), elevation: 0),
-                onPressed: () => Navigator.of(context).pop(),
+                onPressed: () => Navigator.of(dialogContext).pop(),
                 child: const Text("Get Started", style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Colors.white, letterSpacing: 0.2)),
               ),
             ),
@@ -378,6 +361,7 @@ class _PremiumScreenState extends State<PremiumScreen>
 
   @override
   void dispose() {
+    passwordController.removeListener(_evaluatePasswordStrength);
     emailController.dispose();
     passwordController.dispose();
     _connectivitySub.cancel();
@@ -389,7 +373,7 @@ class _PremiumScreenState extends State<PremiumScreen>
   Widget _buildBoxShapes() {
     final f = _orbAnim.value;
     return Stack(
-      children: [ 
+      children: [
         // ── Top-right cluster ──
         _box(top: 28  - 10 * f, right: 235, size: 50,  rotate: 0.49,  color: _geoGreen.withOpacity(0.07)),
         _box(top: 78  -  6 * f, right: 172, size: 33,  rotate: -0.31, color: _geoAccent.withOpacity(0.07)),
@@ -434,20 +418,24 @@ class _PremiumScreenState extends State<PremiumScreen>
     required Color color,
     bool outlineOnly = false,
   }) {
+    final double baseOpacity = color.opacity;
+    final double borderOpacity = outlineOnly
+        ? (baseOpacity * 3).clamp(0.0, 1.0).toDouble()
+        : (baseOpacity * 2.2).clamp(0.0, 1.0).toDouble();
     return Positioned(
       top: top, bottom: bottom, left: left, right: right,
-      child: Transform.rotate(
-        angle: rotate,
-        child: Container(
-          width: size, height: size,
-          decoration: BoxDecoration(
-            color: outlineOnly ? Colors.transparent : color,
-            borderRadius: BorderRadius.circular(5),
-            border: Border.all(
-              color: outlineOnly
-                  ? color.withOpacity((color.opacity * 3).clamp(0, 1))
-                  : color.withOpacity((color.opacity * 2.2).clamp(0, 1)),
-              width: outlineOnly ? 0.8 : 0.5,
+      child: IgnorePointer(
+        child: Transform.rotate(
+          angle: rotate,
+          child: Container(
+            width: size, height: size,
+            decoration: BoxDecoration(
+              color: outlineOnly ? Colors.transparent : color,
+              borderRadius: BorderRadius.circular(5),
+              border: Border.all(
+                color: color.withOpacity(borderOpacity),
+                width: outlineOnly ? 0.8 : 0.5,
+              ),
             ),
           ),
         ),
@@ -463,7 +451,7 @@ class _PremiumScreenState extends State<PremiumScreen>
       body: Stack(
         fit: StackFit.expand,
         children: [
-          // 1. Gradient background (matching LandingPage)
+          // 1. Gradient background
           Container(
             decoration: const BoxDecoration(
               gradient: LinearGradient(
@@ -474,10 +462,12 @@ class _PremiumScreenState extends State<PremiumScreen>
             ),
           ),
 
-          // 2. Animated geometric box shapes
-          AnimatedBuilder(
-            animation: _orbAnim,
-            builder: (_, __) => _buildBoxShapes(),
+          // 2. Animated geometric box shapes (never blocks touches)
+          IgnorePointer(
+            child: AnimatedBuilder(
+              animation: _orbAnim,
+              builder: (_, __) => _buildBoxShapes(),
+            ),
           ),
 
           // 3. Content
@@ -515,8 +505,9 @@ class _PremiumScreenState extends State<PremiumScreen>
   }
 
   Widget _buildMobile(BoxConstraints constraints) {
-    final horizontalPadding = (constraints.maxWidth * 0.05).clamp(14.0, 24.0);
+    final horizontalPadding = (constraints.maxWidth * 0.05).clamp(14.0, 24.0).toDouble();
     return SingleChildScrollView(
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       padding: EdgeInsets.symmetric(
         horizontal: horizontalPadding,
         vertical: 16,
@@ -527,7 +518,7 @@ class _PremiumScreenState extends State<PremiumScreen>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _buildAboutSection(compact: true),
+              _buildAboutSection(),
               const SizedBox(height: 28),
               Center(
                 child: ConstrainedBox(
@@ -552,7 +543,7 @@ class _PremiumScreenState extends State<PremiumScreen>
               Expanded(
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.all(32),
-                  child: _buildAboutSection(compact: true),
+                  child: _buildAboutSection(),
                 ),
               ),
               Container(width: 1, color: _accent.withOpacity(0.15)),
@@ -573,7 +564,7 @@ class _PremiumScreenState extends State<PremiumScreen>
       );
 
   // ── ABOUT SECTION ─────────────────────────────────────────────────────────
-  Widget _buildAboutSection({bool compact = false}) => Column(
+  Widget _buildAboutSection() => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(children: [
@@ -601,124 +592,7 @@ class _PremiumScreenState extends State<PremiumScreen>
           const Text('A real-time speech assistant for people with cleft palate. It learns your unique voice and improves every session.',
               style: TextStyle(fontSize: 12, color: _textSub, height: 1.6)),
           const SizedBox(height: 16),
-
-          if (compact)
-            _buildCompactInfoGrid()
-          else
-            Expanded(
-              child: LayoutBuilder(
-              builder: (context, constraints) {
-                return Column(
-                  children: [
-                    Row(
-                      children: [
-                        _squareInfoCard(icon: Icons.mic_rounded,            title: 'Speak',   subtitle: 'Capture speech in real time via mic.',      color: _accent, bgColor: _cardBlueBg, flex: 1),
-                        const SizedBox(width: 10),
-                        _squareInfoCard(icon: Icons.auto_fix_high_rounded,  title: 'Correct', subtitle: 'Teach AI when it mishears you.',              color: _green,  bgColor: _cardGreenBg, flex: 1),
-                        const SizedBox(width: 10),
-                        _squareInfoCard(icon: Icons.trending_up_rounded,    title: 'Improve', subtitle: 'AI learns your patterns every session.',      color: _gold,   bgColor: _cardGoldBg, flex: 1),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: AspectRatio(
-                            aspectRatio: 1,
-                            child: Container(
-                              padding: const EdgeInsets.all(14),
-                              decoration: BoxDecoration(
-                                gradient: const LinearGradient(
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight,
-                                  colors: [Color(0xFF005F8E), Color(0xFF0077B6)],
-                                ),
-                                borderRadius: BorderRadius.circular(16),
-                                boxShadow: [BoxShadow(color: _accent.withOpacity(0.3), blurRadius: 12, spreadRadius: 1)],
-                              ),
-                              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                                Container(
-                                  width: 38, height: 38,
-                                  decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), shape: BoxShape.circle),
-                                  child: const Center(child: Text('🔥', style: TextStyle(fontSize: 18))),
-                                ),
-                                const Spacer(),
-                                const Text('Daily Streak', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w700)),
-                                const SizedBox(height: 3),
-                                const Text('Train daily to keep it alive.', style: TextStyle(color: Colors.white70, fontSize: 10, height: 1.3)),
-                              ]),
-                              ),
-                            ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: AspectRatio(
-                            aspectRatio: 1,
-                            child: Container(
-                              padding: const EdgeInsets.all(14),
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(16),
-                                border: Border.all(color: _accentBorder),
-                                boxShadow: [BoxShadow(color: _accent.withOpacity(0.10), blurRadius: 8, spreadRadius: 0)],
-                              ),
-                              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                                Container(
-                                  width: 32, height: 32,
-                                  decoration: BoxDecoration(color: _cardBlueBg, borderRadius: BorderRadius.circular(8)),
-                                  child: const Icon(Icons.task_alt_rounded, color: _accent, size: 16),
-                                ),
-                                const Spacer(),
-                                const Text('Daily Tasks', style: TextStyle(color: _textDark, fontSize: 12, fontWeight: FontWeight.w700)),
-                                const SizedBox(height: 6),
-                                _miniTaskRow(Icons.spellcheck_rounded,        '5 corrections', _accent),
-                                const SizedBox(height: 4),
-                                _miniTaskRow(Icons.record_voice_over_rounded, '3 sentences',   _green),
-                                const SizedBox(height: 4),
-                                _miniTaskRow(Icons.library_add_rounded,       '10 words',      _gold),
-                              ]),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: AspectRatio(
-                            aspectRatio: 1,
-                            child: Container(
-                              padding: const EdgeInsets.all(14),
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(16),
-                                border: Border.all(color: _greenBorder),
-                                boxShadow: [BoxShadow(color: _green.withOpacity(0.10), blurRadius: 8, spreadRadius: 0)],
-                              ),
-                              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                                Container(
-                                  width: 32, height: 32,
-                                  decoration: BoxDecoration(color: _cardGreenBg, borderRadius: BorderRadius.circular(8)),
-                                  child: const Icon(Icons.shield_outlined, color: _green, size: 16),
-                                ),
-                                const Spacer(),
-                                const Text('Private & Safe', style: TextStyle(color: _textDark, fontSize: 12, fontWeight: FontWeight.w700)),
-                                const SizedBox(height: 4),
-                                const Text('Speech data is private and tied only to your account.',
-                                    style: TextStyle(color: _green, fontSize: 10, height: 1.4, fontWeight: FontWeight.w500)),
-                                const SizedBox(height: 8),
-                                Row(children: [
-                                  _feedbackStar(true), _feedbackStar(true), _feedbackStar(true), _feedbackStar(true), _feedbackStar(false),
-                                ]),
-                              ]),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                );
-              },
-            ),
-          ),
+          _buildCompactInfoGrid(),
         ],
       );
 
@@ -841,54 +715,6 @@ class _PremiumScreenState extends State<PremiumScreen>
         ),
       );
 
-  Widget _squareInfoCard({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required Color color,
-    required Color bgColor,
-    required int flex,
-  }) =>
-      Expanded(
-        flex: flex,
-        child: AspectRatio(
-          aspectRatio: 1,
-          child: Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: bgColor,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: color.withOpacity(0.35)),
-              boxShadow: [BoxShadow(color: color.withOpacity(0.12), blurRadius: 8, spreadRadius: 0)],
-            ),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Container(
-                width: 34, height: 34,
-                decoration: BoxDecoration(color: color.withOpacity(0.15), borderRadius: BorderRadius.circular(9)),
-                child: Icon(icon, color: color, size: 17),
-              ),
-              const Spacer(),
-              Text(title, style: const TextStyle(color: _textDark, fontSize: 12, fontWeight: FontWeight.w700)),
-              const SizedBox(height: 3),
-              Text(subtitle, style: const TextStyle(color: _textSub, fontSize: 10, height: 1.3)),
-            ]),
-          ),
-        ),
-      );
-
-  Widget _miniTaskRow(IconData icon, String label, Color color) =>
-      Row(children: [
-        Icon(icon, color: color, size: 11),
-        const SizedBox(width: 5),
-        Text(label, style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w600)),
-      ]);
-
-  Widget _feedbackStar(bool filled) => Icon(
-        filled ? Icons.star_rounded : Icons.star_outline_rounded,
-        color: filled ? _gold : _white30,
-        size: 15,
-      );
-
   // ── LOGIN CARD ─────────────────────────────────────────────────────────────
   Widget _buildLoginCard() {
     return Container(
@@ -924,7 +750,7 @@ class _PremiumScreenState extends State<PremiumScreen>
             ),
             onPressed: isGoogleLoading ? null : handleGoogleSignIn,
             child: isGoogleLoading
-                ? SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: _accent, strokeWidth: 2))
+                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: _accent, strokeWidth: 2))
                 : Row(mainAxisAlignment: MainAxisAlignment.center, children: [
                     _buildGoogleLogo(),
                     const SizedBox(width: 10),
@@ -937,9 +763,9 @@ class _PremiumScreenState extends State<PremiumScreen>
 
         Row(children: [
           Expanded(child: Divider(color: _accent.withOpacity(0.2))),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Text("or use email", style: const TextStyle(fontSize: 11, color: _textSub)),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 12),
+            child: Text("or use email", style: TextStyle(fontSize: 11, color: _textSub)),
           ),
           Expanded(child: Divider(color: _accent.withOpacity(0.2))),
         ]),
@@ -973,9 +799,13 @@ class _PremiumScreenState extends State<PremiumScreen>
           Align(
             alignment: Alignment.centerRight,
             child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
               onTap: _openForgotPassword,
-              child: const Text("Forgot password?",
-                  style: TextStyle(fontSize: 12, color: _accent, fontWeight: FontWeight.w600)),
+              child: const Padding(
+                padding: EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+                child: Text("Forgot password?",
+                    style: TextStyle(fontSize: 12, color: _accent, fontWeight: FontWeight.w600)),
+              ),
             ),
           ),
         ],
@@ -1044,10 +874,10 @@ class _PremiumScreenState extends State<PremiumScreen>
         ),
         const SizedBox(height: 20),
 
-        Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+        const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
           Icon(Icons.shield_outlined, size: 13, color: _textSub),
-          const SizedBox(width: 5),
-          const Text("Your data is safe and private.", style: TextStyle(fontSize: 11, color: _textSub)),
+          SizedBox(width: 5),
+          Text("Your data is safe and private.", style: TextStyle(fontSize: 11, color: _textSub)),
         ]),
       ]),
     );
@@ -1146,8 +976,10 @@ class _ForgotPasswordScreen extends StatefulWidget {
   State<_ForgotPasswordScreen> createState() => _ForgotPasswordScreenState();
 }
 
+// FIX: this screen creates TWO AnimationControllers, so it must use
+// TickerProviderStateMixin (not SingleTickerProviderStateMixin).
 class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   late final TextEditingController _emailCtrl;
   late final AnimationController   _anim;
   late final Animation<double>     _fadeIn;
@@ -1204,14 +1036,22 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
     if (email.isEmpty) { setState(() => _errorText = "Please enter your email address."); return; }
     if (!_isValidEmail(email)) { setState(() => _errorText = "Enter a valid email address."); return; }
     setState(() { _errorText = null; _stage = 'loading'; });
-    final connected = (await Connectivity().checkConnectivity()).any((r) => r != ConnectivityResult.none);
+
+    bool connected = true;
+    try {
+      connected = (await Connectivity().checkConnectivity()).any((r) => r != ConnectivityResult.none);
+    } catch (_) {
+      connected = true;
+    }
+    if (!mounted) return;
     if (!connected) {
       setState(() { _stage = 'input'; _errorText = "No internet connection. Please check your network."; });
       return;
     }
     try {
       await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
-      if (mounted) setState(() => _stage = 'success');
+      if (!mounted) return;
+      setState(() => _stage = 'success');
       _startCooldown();
     } on FirebaseAuthException catch (e) {
       final msgs = {
@@ -1227,6 +1067,7 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
   }
 
   void _startCooldown() {
+    _cooldownTimer?.cancel();
     setState(() { _resendCooldown = true; _cooldownSecs = 60; });
     _cooldownTimer = Timer.periodic(const Duration(seconds: 1), (t) {
       if (!mounted) { t.cancel(); return; }
@@ -1266,20 +1107,24 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
     required Color color,
     bool outlineOnly = false,
   }) {
+    final double baseOpacity = color.opacity;
+    final double borderOpacity = outlineOnly
+        ? (baseOpacity * 3).clamp(0.0, 1.0).toDouble()
+        : (baseOpacity * 2.2).clamp(0.0, 1.0).toDouble();
     return Positioned(
       top: top, bottom: bottom, left: left, right: right,
-      child: Transform.rotate(
-        angle: rotate,
-        child: Container(
-          width: size, height: size,
-          decoration: BoxDecoration(
-            color: outlineOnly ? Colors.transparent : color,
-            borderRadius: BorderRadius.circular(5),
-            border: Border.all(
-              color: outlineOnly
-                  ? color.withOpacity((color.opacity * 3).clamp(0, 1))
-                  : color.withOpacity((color.opacity * 2.2).clamp(0, 1)),
-              width: outlineOnly ? 0.8 : 0.5,
+      child: IgnorePointer(
+        child: Transform.rotate(
+          angle: rotate,
+          child: Container(
+            width: size, height: size,
+            decoration: BoxDecoration(
+              color: outlineOnly ? Colors.transparent : color,
+              borderRadius: BorderRadius.circular(5),
+              border: Border.all(
+                color: color.withOpacity(borderOpacity),
+                width: outlineOnly ? 0.8 : 0.5,
+              ),
             ),
           ),
         ),
@@ -1304,10 +1149,12 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
               ),
             ),
           ),
-          // Animated geometric shapes
-          AnimatedBuilder(
-            animation: _orbAnim,
-            builder: (_, __) => _buildBoxShapes(),
+          // Animated geometric shapes (never blocks touches)
+          IgnorePointer(
+            child: AnimatedBuilder(
+              animation: _orbAnim,
+              builder: (_, __) => _buildBoxShapes(),
+            ),
           ),
           SafeArea(
             child: FadeTransition(
@@ -1317,6 +1164,7 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
                 Expanded(
                   child: Center(
                     child: SingleChildScrollView(
+                      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
                       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
                       child: ConstrainedBox(
                         constraints: const BoxConstraints(maxWidth: 420),
@@ -1400,6 +1248,7 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
           autofocus: widget.prefillEmail.isEmpty,
           style: const TextStyle(color: _textDark, fontSize: 14),
           onChanged: (_) { if (_errorText != null) setState(() => _errorText = null); },
+          onSubmitted: (_) { if (_stage != 'loading') _sendReset(); },
           decoration: InputDecoration(
             hintText: "you@example.com",
             hintStyle: const TextStyle(color: _textSub, fontSize: 14),
@@ -1445,12 +1294,16 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
         const SizedBox(height: 20),
         Center(
           child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
             onTap: () => Navigator.of(context).pop(),
-            child: const Row(mainAxisSize: MainAxisSize.min, children: [
-              Icon(Icons.arrow_back, color: _textSub, size: 14),
-              SizedBox(width: 5),
-              Text("Back to Sign In", style: TextStyle(fontSize: 13, color: _textSub, fontWeight: FontWeight.w500)),
-            ]),
+            child: const Padding(
+              padding: EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.arrow_back, color: _textSub, size: 14),
+                SizedBox(width: 5),
+                Text("Back to Sign In", style: TextStyle(fontSize: 13, color: _textSub, fontWeight: FontWeight.w500)),
+              ]),
+            ),
           ),
         ),
         const SizedBox(height: 24),
@@ -1513,7 +1366,7 @@ class _ForgotPasswordScreenState extends State<_ForgotPasswordScreen>
           child: Row(mainAxisSize: MainAxisSize.min, children: [
             const Icon(Icons.email_rounded, color: _accent, size: 15),
             const SizedBox(width: 8),
-            Text(email, style: const TextStyle(fontSize: 13, color: _accent, fontWeight: FontWeight.w600)),
+            Flexible(child: Text(email, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, color: _accent, fontWeight: FontWeight.w600))),
           ]),
         ),
         const SizedBox(height: 32),

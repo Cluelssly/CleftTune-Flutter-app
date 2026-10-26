@@ -14,6 +14,7 @@ import 'landing_page.dart';
 import 'premium.dart';
 import 'package:intl/intl.dart';
 
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -289,7 +290,7 @@ class _AppShellState extends State<AppShell> {
               ),
             ),
             child: constraints.maxWidth < 600
-                ? _buildCompactNavigation()
+                ? _buildCompactNavigation(_bottomScale(constraints.maxWidth))
                 : BottomNavigationBar(
               backgroundColor: Colors.transparent,
               elevation: 0,
@@ -298,9 +299,12 @@ class _AppShellState extends State<AppShell> {
               currentIndex: _currentIndex,
               onTap: _switchPage,
               type: BottomNavigationBarType.fixed,
-              selectedLabelStyle: const TextStyle(
-                  fontSize: 10, fontWeight: FontWeight.w600),
-              unselectedLabelStyle: const TextStyle(fontSize: 10),
+              iconSize: 24 * _bottomScale(constraints.maxWidth),
+              selectedLabelStyle: TextStyle(
+                  fontSize: 10 * _bottomScale(constraints.maxWidth),
+                  fontWeight: FontWeight.w600),
+              unselectedLabelStyle: TextStyle(
+                  fontSize: 10 * _bottomScale(constraints.maxWidth)),
               items: _items
                   .asMap()
                   .entries
@@ -309,12 +313,14 @@ class _AppShellState extends State<AppShell> {
                             ? _BadgeIcon(
                                 icon: e.value.icon,
                                 selected: e.key == _currentIndex,
+                                size: 24 * _bottomScale(constraints.maxWidth),
                               )
                             : Icon(e.value.icon),
                         activeIcon: e.value.showBadge
                             ? _BadgeIcon(
                                 icon: e.value.selectedIcon,
                                 selected: true,
+                                size: 24 * _bottomScale(constraints.maxWidth),
                               )
                             : Icon(e.value.selectedIcon),
                         label: e.value.label,
@@ -327,7 +333,10 @@ class _AppShellState extends State<AppShell> {
     );
   }
 
-  Widget _buildCompactNavigation() {
+  // Scales bottom-bar icons/labels with screen width (1.0 at ≤400px, up to 1.6).
+  double _bottomScale(double width) => (width / 400).clamp(1.0, 1.6);
+
+  Widget _buildCompactNavigation(double scale) {
     const visibleIndices = [0, 1, 3, 5];
     final selectedIndex = switch (_currentIndex) {
       0 => 0,
@@ -354,18 +363,25 @@ class _AppShellState extends State<AppShell> {
         }
       },
       type: BottomNavigationBarType.fixed,
-      selectedLabelStyle:
-          const TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
-      unselectedLabelStyle: const TextStyle(fontSize: 10),
+      iconSize: 24 * scale,
+      selectedLabelStyle: TextStyle(
+          fontSize: 10 * scale, fontWeight: FontWeight.w600),
+      unselectedLabelStyle: TextStyle(fontSize: 10 * scale),
       items: [
         ...visibleItems.map((item) => BottomNavigationBarItem(
               icon: Icon(item.icon),
               activeIcon: Icon(item.selectedIcon),
               label: item.label,
             )),
-        const BottomNavigationBarItem(
-          icon: _BadgeIcon(icon: Icons.more_horiz_rounded, selected: false),
-          activeIcon: _BadgeIcon(icon: Icons.more_horiz_rounded, selected: true),
+        BottomNavigationBarItem(
+          icon: _BadgeIcon(
+              icon: Icons.more_horiz_rounded,
+              selected: false,
+              size: 24 * scale),
+          activeIcon: _BadgeIcon(
+              icon: Icons.more_horiz_rounded,
+              selected: true,
+              size: 24 * scale),
           label: 'More',
         ),
       ],
@@ -1304,6 +1320,10 @@ class _BadgeInfo {
   final Color color;
   final List<String> tasks;
 
+  /// Exact rules saved by the admin form (`task_defs`), one per task slot.
+  /// null = older badge that only has plain text.
+  final List<Map<String, dynamic>?> taskDefs;
+
   const _BadgeInfo({
     required this.id,
     required this.emoji,
@@ -1311,6 +1331,7 @@ class _BadgeInfo {
     required this.minLevel,
     required this.color,
     required this.tasks,
+    this.taskDefs = const [],
   });
 
   /// Indexes of tasks the admin actually filled in.
@@ -1318,6 +1339,13 @@ class _BadgeInfo {
         for (int i = 0; i < tasks.length; i++)
           if (tasks[i].trim().isNotEmpty) i
       ];
+}
+
+/// Which activity counter a task reads, and how many are needed.
+class _TaskRule {
+  final String key;
+  final int target;
+  const _TaskRule(this.key, this.target);
 }
 
 class SettingsScreen extends StatefulWidget {
@@ -1351,6 +1379,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
       while (tasks.length < 5) {
         tasks.add('');
       }
+      final rawDefs = data['task_defs'];
+      final defs = <Map<String, dynamic>?>[
+        if (rawDefs is List)
+          for (final d in rawDefs)
+            d is Map ? Map<String, dynamic>.from(d) : null,
+      ];
+      while (defs.length < 5) {
+        defs.add(null);
+      }
       final rawColor = data['color'];
       final colorValue = rawColor is num ? rawColor.toInt() : _accent.value;
       return _BadgeInfo(
@@ -1360,6 +1397,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         minLevel: (data['min_level'] as num?)?.toInt() ?? 0,
         color:    Color(colorValue),
         tasks:    tasks.take(5).toList(),
+        taskDefs: defs.take(5).toList(),
       );
     }).toList();
     list.sort((a, b) => a.minLevel.compareTo(b.minLevel));
@@ -1413,68 +1451,128 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // AUTOMATIC TASKS — no checkboxes. Each admin task text is matched to a
-  // real activity counter, e.g. "Translate 5 sentences" -> sentences >= 5.
-  //   streak      : "streak", "day"
-  //   wordsAdded  : "word", "vocab"
-  //   corrections : "correct", "teach", "train"
-  //   sentences   : "translat", "sentence", "phrase", "history"
-  // The first number in the text is the target (default 1).
+  // AUTOMATIC TASKS — no checkboxes. Every task is tied to a real activity
+  // counter and ticks itself once the counter reaches the target.
+  //
+  //   Admin form (task_defs)      counter read from Firestore
+  //   ─────────────────────────   ───────────────────────────────────────
+  //   Maintain a streak (days)    longest of trainingStreak / longestStreak
+  //   Add new words               wordsAdded (BadgeTracker.wordAdded)
+  //   Training sessions           trainingSessions (BadgeTracker...)
+  //   Phoneme drill score %       phonemeGe{50..100} (BadgeTracker...)
+  //
+  // Older badges that only have plain text are matched by keywords instead.
+  //
+  // Badges unlock in order: a badge is locked until the previous tier is
+  // earned (see _autoProgress). The min level is also needed to EARN a badge
+  // (see _isEarned) — level rises by +1 for every completed task.
   // ══════════════════════════════════════════════════════════════════════════
   bool _syncing = false;
 
-  String? _metricFor(String text) {
+  _TaskRule? _ruleFor(_BadgeInfo b, int i) {
+    final def = i < b.taskDefs.length ? b.taskDefs[i] : null;
+    if (def != null) {
+      int target = (def['target'] as num?)?.toInt() ?? 1;
+      if (target < 1) target = 1;
+      switch (def['type']) {
+        case 'streak':
+          return _TaskRule('streak', target);
+        case 'newWord':
+          return _TaskRule('wordsAdded', target);
+        case 'trainingSession':
+          return _TaskRule('trainingSessions', target);
+        case 'phonemeDrill':
+          final min = (def['min_score'] as num?)?.toInt() ?? 70;
+          return _TaskRule('phonemeGe$min', target);
+      }
+    }
+    return _ruleFromText(b.tasks[i]);
+  }
+
+  /// Fallback for old badges: guess the counter from the task wording.
+  _TaskRule? _ruleFromText(String text) {
     final s = text.toLowerCase();
-    if (s.contains('streak') || s.contains('day')) return 'streak';
-    if (s.contains('word') || s.contains('vocab')) return 'wordsAdded';
-    if (s.contains('correct') || s.contains('teach') || s.contains('train')) {
-      return 'corrections';
+    // numbers that are NOT percentages ("80%" is a score, not a count)
+    final counts = RegExp(r'\d+(?!\s*%|\d)')
+        .allMatches(s)
+        .map((m) => int.parse(m.group(0)!))
+        .toList();
+    int target = counts.isEmpty ? 1 : counts.first;
+    if (counts.isEmpty) {
+      // number written as a word: "train ten times"
+      const numberWords = {
+        'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5, 'six': 6,
+        'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10, 'fifteen': 15,
+        'twenty': 20, 'thirty': 30, 'fifty': 50, 'hundred': 100,
+      };
+      final w = RegExp('\\b(${numberWords.keys.join('|')})\\b').firstMatch(s);
+      if (w != null) target = numberWords[w.group(1)!]!;
+    }
+    if (target < 1) target = 1;
+
+    if (s.contains('phoneme') || s.contains('drill')) {
+      final pct = RegExp(r'(\d+)\s*%').firstMatch(s);
+      int min = pct == null ? 70 : int.parse(pct.group(1)!);
+      min = BadgeTracker.phonemeThresholds
+          .firstWhere((t) => t >= min, orElse: () => 100);
+      return _TaskRule('phonemeGe$min', target);
+    }
+    if (s.contains('session')) return _TaskRule('trainingSessions', target);
+    if (s.contains('streak') || s.contains('day')) {
+      return _TaskRule('streak', target);
+    }
+    if (s.contains('word') || s.contains('vocab')) {
+      return _TaskRule('wordsAdded', target);
+    }
+    if (s.contains('correct') || s.contains('teach')) {
+      return _TaskRule('corrections', target);
     }
     if (s.contains('translat') ||
         s.contains('sentence') ||
         s.contains('phrase')) {
-      return 'sentences';
+      return _TaskRule('sentences', target);
     }
+    // "Train 10 times" = 10 finished training sessions
+    if (s.contains('train')) return _TaskRule('trainingSessions', target);
     return null;
   }
 
-  int _targetFor(String text) {
-    final m = RegExp(r'\d+').firstMatch(text);
-    final n = m == null ? 1 : int.parse(m.group(0)!);
-    return n < 1 ? 1 : n;
-  }
-
-  bool _taskMet(String text, Map<String, dynamic> stats) {
-    final metric = _metricFor(text);
-    if (metric == null) return false;
-    final value = (stats[metric] as num?)?.toInt() ?? 0;
-    return value >= _targetFor(text);
+  bool _taskMet(_BadgeInfo b, int i, Map<String, dynamic> stats) {
+    final rule = _ruleFor(b, i);
+    if (rule == null) return false;
+    final value = (stats[rule.key] as num?)?.toInt() ?? 0;
+    return value >= rule.target;
   }
 
   bool _sameSet(Set<int> a, Set<int> b) =>
       a.length == b.length && a.containsAll(b);
 
+  /// Badges unlock one after another (lowest tier first). A badge stays
+  /// LOCKED — none of its tasks tick — until the badge before it is earned.
   Map<String, Set<int>> _autoProgress(
       List<_BadgeInfo> badges, Map<String, dynamic> stats) {
     final result = <String, Set<int>>{};
-    bool changed = true;
-    int guard = 0;
-    while (changed && guard++ < 20) {
-      changed = false;
-      final level = _levelFrom(badges, result);
-      for (final b in badges) {
-        if (level < b.minLevel) continue; // badge still locked
-        final done = <int>{
-          for (final i in b.activeTaskIndexes)
-            if (_taskMet(b.tasks[i], stats)) i
-        };
-        if (!_sameSet(done, result[b.id] ?? <int>{})) {
-          result[b.id] = done;
-          changed = true;
-        }
+    bool previousEarned = true; // the first tier is always open
+    for (final b in badges) {
+      if (!previousEarned) {
+        result[b.id] = <int>{}; // locked
+        continue;
       }
+      result[b.id] = <int>{
+        for (final i in b.activeTaskIndexes)
+          if (_taskMet(b, i, stats)) i
+      };
+      previousEarned = _isEarned(b, result, _levelFrom(badges, result));
     }
     return result;
+  }
+
+  /// Is this badge open? (first tier, or the previous tier is earned)
+  bool _isUnlocked(List<_BadgeInfo> badges, _BadgeInfo b,
+      Map<String, Set<int>> progress, int level) {
+    final idx = badges.indexWhere((x) => x.id == b.id);
+    if (idx <= 0) return true;
+    return _isEarned(badges[idx - 1], progress, level);
   }
 
   bool _progressChanged(List<_BadgeInfo> badges, Map<String, Set<int>> stored,
@@ -1552,6 +1650,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           },
           'level':      newLevel,
           'streak':     streak,
+          'longestStreak': streak > oldLongest ? streak : oldLongest,
           'badgeId':    top?.id ?? '',
           'badgeName':  top?.label ?? '',
           'badgeEmoji': top?.emoji ?? '',
@@ -1718,13 +1817,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
             final userData = userSnap.data?.data() ?? {};
             final streak =
                 (userData['trainingStreak'] as num?)?.toInt() ?? 0;
-            final wordsAdded = (userData['wordsAdded'] as num?)?.toInt() ??
-                (corrections * 2);
+            int n(String k) => (userData[k] as num?)?.toInt() ?? 0;
+            final longest = n('longestStreak');
+            // words taught: tracked counter, or at least one per correction
+            final wordsField = n('wordsAdded');
+            final wordsAdded =
+                wordsField > corrections ? wordsField : corrections;
             final stats = <String, dynamic>{
-              'streak':      streak,
-              'corrections': corrections,
-              'wordsAdded':  wordsAdded,
-              'sentences':   sentences,
+              // best streak ever, so a finished streak task stays ticked
+              'streak':           streak > longest ? streak : longest,
+              'corrections':      corrections,
+              'wordsAdded':       wordsAdded,
+              'sentences':        sentences,
+              'trainingSessions': n('trainingSessions'),
+              'phonemeDrills':    n('phonemeDrills'),
+              for (final t in BadgeTracker.phonemeThresholds)
+                'phonemeGe$t': n('phonemeGe$t'),
             };
             final stored   = _parseProgress(userData);
             final progress = _autoProgress(badges, stats);
@@ -1733,7 +1841,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             if (badges.isNotEmpty &&
                 (_progressChanged(badges, stored, progress) ||
                     userData['level'] != level ||
-                    userData['streak'] != streak)) {
+                    userData['streak'] != streak ||
+                    ((userData['longestStreak'] as num?)?.toInt() ?? 0) <
+                        streak)) {
               WidgetsBinding.instance.addPostFrameCallback((_) {
                 if (!mounted) return;
                 _syncAuto(
@@ -1876,11 +1986,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }) {
     final active    = badge.activeTaskIndexes;
     final done      = _validDone(badge, progress);
-    final unlocked  = level >= badge.minLevel;
+    final unlocked  = _isUnlocked(badges, badge, progress, level);
+    final bIndex    = badges.indexWhere((x) => x.id == badge.id);
+    final prevBadge = bIndex > 0 ? badges[bIndex - 1] : null;
     final earned    = _isEarned(badge, progress, level);
     final ratio     = active.isEmpty ? 0.0 : done.length / active.length;
 
-    return Container(
+    final card = Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -1926,7 +2038,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   Text(
                     unlocked
                         ? 'Min. level ${badge.minLevel}'
-                        : '🔒 Reach level ${badge.minLevel} to unlock',
+                        : '🔒 Earn ${prevBadge?.emoji ?? ''} ${prevBadge?.label ?? 'the previous'} badge first',
                     style: const TextStyle(color: _textSub, fontSize: 11),
                   ),
                 ],
@@ -1978,6 +2090,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ],
       ),
     );
+    return unlocked ? card : Opacity(opacity: 0.6, child: card);
   }
 
   Widget _taskRow({

@@ -6,6 +6,99 @@ import 'nlp_service.dart';
 import 'notifications.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
+// BADGE TRACKER — records the activity that the Progress screen turns into
+// automatically-ticked badge tasks. Counters live on users/{uid}:
+//   trainingStreak / lastTrainingDay / longestStreak  (daily streak)
+//   wordsAdded       words the user taught the AI
+//   trainingSessions finished training sessions
+//   phonemeDrills    scored phoneme drills, phonemeGe50..100 = drills >= N %
+// ─────────────────────────────────────────────────────────────────────────────
+class BadgeTracker {
+  BadgeTracker._();
+
+  /// Must match the thresholds in the admin form.
+  static const List<int> phonemeThresholds = [50, 60, 70, 80, 90, 100];
+
+  static DocumentReference<Map<String, dynamic>>? _me() {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return null;
+    return FirebaseFirestore.instance.collection('users').doc(user.uid);
+  }
+
+  static Future<void> _write(Map<String, dynamic> data) async {
+    final ref = _me();
+    if (ref == null) return;
+    try {
+      await ref.set(data, SetOptions(merge: true));
+    } catch (e) {
+      debugPrint('BadgeTracker write failed: $e');
+    }
+  }
+
+  static String _dayKey(DateTime d) =>
+      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+  /// Counts today as a training day (once per day) and keeps the streak.
+  static Future<void> _touchStreak() async {
+    final ref = _me();
+    if (ref == null) return;
+    try {
+      await FirebaseFirestore.instance.runTransaction((tx) async {
+        final data = (await tx.get(ref)).data() ?? <String, dynamic>{};
+        final now = DateTime.now();
+        final today = _dayKey(now);
+        final last = data['lastTrainingDay'] as String?;
+        if (last == today) return;
+
+        final yesterday = _dayKey(DateTime(now.year, now.month, now.day)
+            .subtract(const Duration(days: 1)));
+        final current = (data['trainingStreak'] as num?)?.toInt() ?? 0;
+        final int next;
+        if (last == yesterday) {
+          next = current + 1;
+        } else if (last == null && current > 0) {
+          next = current; // streak from before day-tracking existed
+        } else {
+          next = 1;
+        }
+        final longest = (data['longestStreak'] as num?)?.toInt() ?? 0;
+
+        tx.set(
+          ref,
+          {
+            'trainingStreak':  next,
+            'lastTrainingDay': today,
+            'longestStreak':   next > longest ? next : longest,
+          },
+          SetOptions(merge: true),
+        );
+      });
+    } catch (e) {
+      debugPrint('BadgeTracker streak failed: $e');
+    }
+  }
+
+  /// User taught the AI a new word.
+  static Future<void> wordAdded([int count = 1]) async {
+    await _write({'wordsAdded': FieldValue.increment(count)});
+    await _touchStreak();
+  }
+
+  /// User finished a training session.
+  static Future<void> trainingSessionCompleted() async {
+    await _write({'trainingSessions': FieldValue.increment(1)});
+    await _touchStreak();
+  }
+
+  /// A phoneme drill was scored (0–100 %).
+  static Future<void> phonemeDrillScored(num scorePercent) => _write({
+        'phonemeDrills': FieldValue.increment(1),
+        for (final t in phonemeThresholds)
+          if (scorePercent >= t) 'phonemeGe$t': FieldValue.increment(1),
+      });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Phoneme Analysis Engine
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -594,6 +687,9 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
       trainingLevel: trainingLevel,
       accuracyLevel: sessionAccuracyLevel,
     );
+    // Badge tasks: one finished session + one scored phoneme drill
+    await BadgeTracker.trainingSessionCompleted();
+    await BadgeTracker.phonemeDrillScored(phoneme.clarityScore);
     await NotificationHelper.trainingCompleted(accuracy: _trainingProgress * 100);
   }
 
@@ -705,6 +801,7 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
                   });
                   await _saveTrainingProgress();
                   await NotificationHelper.wordAdded(correctWord);
+                  await BadgeTracker.wordAdded(); // badge task: new word
                 }
                 if (mounted) Navigator.pop(context);
               },
@@ -1800,4 +1897,4 @@ class _TrainedVoiceScreenState extends State<TrainedVoiceScreen>
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ));
-} 
+}
