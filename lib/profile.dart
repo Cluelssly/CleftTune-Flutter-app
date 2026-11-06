@@ -127,10 +127,40 @@ class _ProfileScreenState extends State<ProfileScreen>
     super.dispose();
   }
 
+  // ── HELPERS ────────────────────────────────────────────────────────────────
+
+  /// Safe initials: never indexes into an empty string.
+  String _initials(String name) {
+    final parts = name
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((w) => w.isNotEmpty)
+        .toList();
+    if (parts.isEmpty) return 'U';
+    return parts.take(2).map((w) => w.substring(0, 1)).join().toUpperCase();
+  }
+
+  String _monthName(int month) {
+    const months = [
+      '', 'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December',
+    ];
+    if (month < 1 || month > 12) return '';
+    return months[month];
+  }
+
   // ── DATA ───────────────────────────────────────────────────────────────────
   Future<void> _loadProfile() async {
     final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
+    if (user == null) {
+      if (mounted) {
+        setState(() {
+          _name = 'User';
+          _isLoading = false;
+        });
+      }
+      return;
+    }
 
     try {
       final doc = await FirebaseFirestore.instance
@@ -140,25 +170,36 @@ class _ProfileScreenState extends State<ProfileScreen>
       final data = doc.data();
 
       String memberSince = '';
-      if (data?['createdAt'] != null) {
-        final ts = (data!['createdAt'] as Timestamp).toDate();
+      final createdAt = data?['createdAt'];
+      if (createdAt is Timestamp) {
+        final ts = createdAt.toDate();
         memberSince = '${_monthName(ts.month)} ${ts.year}';
       } else if (user.metadata.creationTime != null) {
         final ts = user.metadata.creationTime!;
         memberSince = '${_monthName(ts.month)} ${ts.year}';
       }
 
-      final sc = (data?['sessionCount']     ?? 0)   as int;
-      final tp = (data?['trainingProgress'] ?? 0.0).toDouble().clamp(0.0, 1.0);
-      final th = (data?['trainedHours']     ?? 0.0).toDouble();
+      final sc = ((data?['sessionCount'] ?? 0) as num).toInt();
+      final tp = ((data?['trainingProgress'] ?? 0.0) as num)
+          .toDouble()
+          .clamp(0.0, 1.0);
+      final th = ((data?['trainedHours'] ?? 0.0) as num).toDouble();
 
       final xp   = _GamificationHelper.computeXp(
           sessionCount: sc, trainedHours: th, trainingProgress: tp);
       final prog = _GamificationHelper.levelProgress(xp);
 
+      String name = (data?['name'] ?? '').toString().trim();
+      if (name.isEmpty) name = (user.displayName ?? '').trim();
+      if (name.isEmpty) name = 'User';
+
+      String email = (data?['email'] ?? '').toString().trim();
+      if (email.isEmpty) email = user.email ?? '';
+
+      if (!mounted) return;
       setState(() {
-        _name             = data?['name']  ?? user.displayName ?? 'User';
-        _email            = data?['email'] ?? user.email       ?? '';
+        _name             = name;
+        _email            = email;
         _memberSince      = memberSince;
         _sessionCount     = sc;
         _trainingProgress = tp;
@@ -172,52 +213,58 @@ class _ProfileScreenState extends State<ProfileScreen>
         if (mounted) _xpCtrl.forward();
       });
     } catch (e) {
+      if (!mounted) return;
+      final fallbackName = (user.displayName ?? '').trim();
       setState(() {
-        _name      = user.displayName ?? 'User';
-        _email     = user.email       ?? '';
+        _name      = fallbackName.isEmpty ? 'User' : fallbackName;
+        _email     = user.email ?? '';
         _isLoading = false;
       });
     }
   }
 
-  String _monthName(int month) {
-    const months = [
-      '', 'January', 'February', 'March', 'April', 'May', 'June',
-      'July', 'August', 'September', 'October', 'November', 'December',
-    ];
-    return months[month];
-  }
-
   Future<void> _saveProfile(String name, String email) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
+    final safeName = name.trim().isEmpty ? 'User' : name.trim();
     await FirebaseFirestore.instance
         .collection('users')
         .doc(user.uid)
-        .set({'name': name, 'email': email, 'updatedAt': FieldValue.serverTimestamp()},
+        .set({'name': safeName, 'email': email, 'updatedAt': FieldValue.serverTimestamp()},
             SetOptions(merge: true));
-    await user.updateDisplayName(name);
+    await user.updateDisplayName(safeName);
     if (email != user.email && email.isNotEmpty) {
       await user.verifyBeforeUpdateEmail(email);
     }
-    setState(() { _name = name; _email = email; });
+    if (!mounted) return;
+    setState(() { _name = safeName; _email = email; });
   }
 
   // ── LOGOUT / DELETE ────────────────────────────────────────────────────────
+  // After logout / delete account: show the login screen ON TOP of the root
+  // screen instead of wiping the whole stack. RootRouter must stay at the
+  // bottom of the stack, otherwise nothing is left to show the main app when
+  // the user signs in again.
+  void _goToLogin() {
+    final navigator = Navigator.of(context);
+    navigator.popUntil((route) => route.isFirst);
+    navigator.push(
+      MaterialPageRoute(
+        builder: (_) => PremiumScreen(
+          onBack: () {
+            if (navigator.canPop()) navigator.pop();
+          },
+          onLogin: () {},
+        ),
+      ),
+    );
+  }
+
   Future<void> _logout() async {
     Navigator.of(context).pop(); // close dialog
     await FirebaseAuth.instance.signOut();
     if (!mounted) return;
-    // Navigate to PremiumScreen and clear the entire stack
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(
-        builder: (_) => PremiumScreen(
-          onBack: () => Navigator.of(context).pop(),
-          onLogin: () {},
-        ),
-      ),
-      (route) => false,
-    );
+    _goToLogin();
   }
 
   void _confirmLogout() {
@@ -257,16 +304,7 @@ class _ProfileScreenState extends State<ProfileScreen>
       await FirebaseFirestore.instance.collection('users').doc(user.uid).delete();
       await user.delete();
       if (!mounted) return;
-      // Navigate to PremiumScreen and clear the entire stack
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(
-          builder: (_) => PremiumScreen(
-            onBack: () => Navigator.of(context).pop(),
-            onLogin: () {},
-          ),
-        ),
-        (route) => false,
-      );
+      _goToLogin();
     } on FirebaseAuthException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -429,7 +467,9 @@ class _ProfileScreenState extends State<ProfileScreen>
                                           backgroundColor: Colors.red));
                                 }
                               } finally {
-                                setSheetState(() => isSaving = false);
+                                if (ctx.mounted) {
+                                  setSheetState(() => isSaving = false);
+                                }
                               }
                             },
                       child: isSaving
@@ -610,20 +650,23 @@ class _ProfileScreenState extends State<ProfileScreen>
                             fontWeight: FontWeight.w800,
                             color: _textDark)),
                     const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: rankColor.withOpacity(0.12),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: rankColor.withOpacity(0.3)),
+                    Flexible(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: rankColor.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: rankColor.withOpacity(0.3)),
+                        ),
+                        child: Text(title,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                                color: rankColor,
+                                letterSpacing: 0.3)),
                       ),
-                      child: Text(title,
-                          style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.w700,
-                              color: rankColor,
-                              letterSpacing: 0.3)),
                     ),
                   ]),
                   const SizedBox(height: 3),
@@ -649,7 +692,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                 animation: _xpAnim,
                 builder: (_, __) => FractionallySizedBox(
                   alignment: Alignment.centerLeft,
-                  widthFactor: isMax ? 1.0 : _xpAnim.value,
+                  widthFactor: isMax ? 1.0 : _xpAnim.value.clamp(0.0, 1.0),
                   child: Container(
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(8),
@@ -742,9 +785,7 @@ class _ProfileScreenState extends State<ProfileScreen>
   }
 
   Widget _buildAvatarSection() {
-    final initials = _name.isNotEmpty
-        ? _name.trim().split(' ').map((w) => w[0]).take(2).join().toUpperCase()
-        : 'U';
+    final initials = _initials(_name);
     final isConsistent = _GamificationHelper.isConsistentUser(_sessionCount);
 
     return Column(children: [
@@ -773,16 +814,17 @@ class _ProfileScreenState extends State<ProfileScreen>
       ),
       const SizedBox(height: 14),
 
-      // Name + optional "Consistent User" badge on the same row
-      Row(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.center,
+      // Name + optional "Consistent User" badge
+      Wrap(
+        alignment: WrapAlignment.center,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 8,
+        runSpacing: 6,
         children: [
           Text(_name,
               style: const TextStyle(
                   fontSize: 20, fontWeight: FontWeight.w800, color: _textDark)),
-          if (isConsistent) ...[
-            const SizedBox(width: 8),
+          if (isConsistent)
             Tooltip(
               message: 'Consistent User — completed 5+ sessions',
               child: Container(
@@ -806,7 +848,6 @@ class _ProfileScreenState extends State<ProfileScreen>
                 ]),
               ),
             ),
-          ],
         ],
       ),
 
@@ -868,10 +909,10 @@ class _ProfileScreenState extends State<ProfileScreen>
       child: Column(children: [
         _infoRow(Icons.person_outline_rounded, 'Full Name', _name),
         Divider(color: _accent.withOpacity(0.1), height: 20),
-        _infoRow(Icons.email_outlined, 'Email', _email),
+        _infoRow(Icons.email_outlined, 'Email', _email.isEmpty ? '—' : _email),
         Divider(color: _accent.withOpacity(0.1), height: 20),
         _infoRow(Icons.calendar_today_outlined, 'Member Since',
-            _memberSince.isEmpty ? '—' : _memberSince),
+            _memberSince.trim().isEmpty ? '—' : _memberSince),
       ]),
     );
   }

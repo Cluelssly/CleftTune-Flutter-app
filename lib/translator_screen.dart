@@ -37,6 +37,15 @@ class _TranslatorScreenState extends State<TranslatorScreen>
 
   Timer? _partialNlpDebounce;
 
+  // ── Subtitle state ─────────────────────────────────────────────────────────
+  // The subtitle shows the sentence being heard right now (or the last finished
+  // sentence) and disappears after _captionHold of silence. The full transcript
+  // is still kept in _committedText / _displayText for Copy and Correct.
+  String _lastFinal      = '';
+  bool   _captionVisible = false;
+  Timer? _captionHideTimer;
+  static const Duration _captionHold = Duration(seconds: 5);
+
   // ── Single restart timer — replaces all previous keep-alive / always-on ────
   Timer? _restartTimer;
   bool   _isRestarting = false;
@@ -169,6 +178,15 @@ class _TranslatorScreenState extends State<TranslatorScreen>
     _isRestarting = false;
   }
 
+  // Hides the subtitle after a few seconds of silence. Called every time new
+  // speech arrives, so while you keep talking the subtitle never disappears.
+  void _restartCaptionTimer() {
+    _captionHideTimer?.cancel();
+    _captionHideTimer = Timer(_captionHold, () {
+      if (mounted) setState(() => _captionVisible = false);
+    });
+  }
+
   // ══════════════════════════════════════════════════════════════════════════
   // FIRESTORE SAVE
   // ══════════════════════════════════════════════════════════════════════════
@@ -248,8 +266,15 @@ class _TranslatorScreenState extends State<TranslatorScreen>
               _buildDisplay(_committedText, syncCorrected).trim();
           _currentSegment = '';
 
+          _lastFinal = syncCorrected;
           dev.log('✔ Final: "$syncCorrected"');
-          if (mounted) setState(() => _displayText = _committedText);
+          if (mounted) {
+            setState(() {
+              _displayText    = _committedText;
+              _captionVisible = true;
+            });
+          }
+          _restartCaptionTimer();
 
           // ✅ Save every sentence to Firestore
           _saveToFirestore(syncCorrected, words, mode: 'realtime');
@@ -262,7 +287,13 @@ class _TranslatorScreenState extends State<TranslatorScreen>
         } else {
           _currentSegment = syncCorrected;
           final preview   = _buildDisplay(_committedText, _currentSegment);
-          if (mounted) setState(() => _displayText = preview);
+          if (mounted) {
+            setState(() {
+              _displayText    = preview;
+              _captionVisible = true;
+            });
+          }
+          _restartCaptionTimer();
         }
       },
     );
@@ -286,6 +317,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
 
       if (mounted && _committedText.contains(syncResult)) {
         setState(() {
+          if (_lastFinal == syncResult) _lastFinal = finalText;
           _committedText =
               _committedText.replaceFirst(syncResult, finalText);
           _displayText =
@@ -339,6 +371,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
       _userStopped = true;
       _cancelRestart();
       _partialNlpDebounce?.cancel();
+      _captionHideTimer?.cancel();
       _stopSessionTimer();
 
       if (_currentSegment.trim().isNotEmpty) {
@@ -348,8 +381,14 @@ class _TranslatorScreenState extends State<TranslatorScreen>
             _buildDisplay(_committedText, syncCorrected).trim();
         _saveToFirestore(syncCorrected, _currentSegment,
             mode: 'realtime');
+        _lastFinal      = syncCorrected;
         _currentSegment = '';
-        if (mounted) setState(() => _displayText = _committedText);
+        if (mounted) {
+          setState(() {
+            _displayText    = _committedText;
+            _captionVisible = true;
+          });
+        }
       }
 
       try { await _speech.stop(); } catch (_) {}
@@ -378,6 +417,9 @@ class _TranslatorScreenState extends State<TranslatorScreen>
       _displayText    = '';
       _committedText  = '';
       _currentSegment = '';
+      _lastFinal      = '';
+      _captionVisible = false;
+      _captionHideTimer?.cancel();
       _sessionSeconds = 0;
 
       if (mounted) setState(() => _isListening = true);
@@ -462,10 +504,9 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   // ══════════════════════════════════════════════════════════════════════════
 
   String get _subtitleHint {
-    if (!_isListening && _displayText.isEmpty)
-      return 'Tap the mic to start speaking...';
-    if (_isListening && _displayText.isEmpty) return 'Listening… speak now';
-    return '';
+    if (_captionVisible) return '';
+    if (_isListening) return 'Listening… speak now';
+    return 'Tap the mic to start speaking...';
   }
 
   int get _wordCount => _displayText.trim().isEmpty
@@ -477,6 +518,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
     _sessionTimer?.cancel();
     _partialNlpDebounce?.cancel();
     _restartTimer?.cancel();
+    _captionHideTimer?.cancel();
     _nlp.onRealtimeCorrection = null;
     _speech.stop();
     _pulseController.dispose();
@@ -524,37 +566,42 @@ class _TranslatorScreenState extends State<TranslatorScreen>
     return Padding(
       padding:
           const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           RichText(
             text: const TextSpan(children: [
               TextSpan(
-                  text: 'Cleft',
+                  text: 'Voice',
                   style: TextStyle(
                       color: _textDark,
                       fontWeight: FontWeight.bold,
                       fontSize: 18)),
               TextSpan(
-                  text: 'Tune',
+                  text: 'Mate',
                   style: TextStyle(
                       color: _accent,
                       fontWeight: FontWeight.bold,
                       fontSize: 18)),
             ]),
           ),
-          const Spacer(),
-          _appBarBtn(
-            icon: _showCorrections
-                ? Icons.close_rounded
-                : Icons.format_list_bulleted_rounded,
-            onTap: () =>
-                setState(() => _showCorrections = !_showCorrections),
-            active: _showCorrections,
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              _appBarBtn(
+                icon: _showCorrections
+                    ? Icons.close_rounded
+                    : Icons.format_list_bulleted_rounded,
+                onTap: () =>
+                    setState(() => _showCorrections = !_showCorrections),
+                active: _showCorrections,
+              ),
+              const SizedBox(width: 8),
+              _appBarBtn(
+                  icon: Icons.add_rounded,
+                  onTap: _showAddCorrectionDialog),
+            ],
           ),
-          const SizedBox(width: 8),
-          _appBarBtn(
-              icon: Icons.add_rounded,
-              onTap: _showAddCorrectionDialog),
         ],
       ),
     );
@@ -581,61 +628,22 @@ class _TranslatorScreenState extends State<TranslatorScreen>
     );
   }
 
-  // ── SUBTITLE-STYLE LIVE CAPTION ──────────────────────────────────────────
-  // Confirmed speech (_committedText) renders solid and fades/slides in like
-  // a settled subtitle line each time a new final phrase lands. The part
-  // still being recognized (_currentSegment) renders dimmed + italic right
-  // after it and updates instantly, same convention as YouTube/Netflix live
-  // captions (confirmed vs. interim text).
+  // ── PLAIN LIVE SUBTITLE (no animation) ────────────────────────────────────
+  // Shows the sentence being heard right now. While you are speaking it updates
+  // word by word; once a sentence is finished it stays on screen until the next
+  // speech starts (which replaces it) or until _captionHold of silence passes.
   Widget _buildLiveCaption() {
-    final hasCommitted = _committedText.trim().isNotEmpty;
-    final hasSegment   = _currentSegment.trim().isNotEmpty;
+    final live = _currentSegment.trim();
+    final text = live.isNotEmpty ? live : _lastFinal;
 
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 260),
-      switchInCurve: Curves.easeOut,
-      switchOutCurve: Curves.easeIn,
-      transitionBuilder: (child, animation) => FadeTransition(
-        opacity: animation,
-        child: SlideTransition(
-          position: Tween<Offset>(
-            begin: const Offset(0, 0.12),
-            end: Offset.zero,
-          ).animate(animation),
-          child: child,
-        ),
-      ),
-      // Keying on _committedText means the fade/slide only triggers when a
-      // new phrase is confirmed — the live partial segment below still
-      // updates immediately without re-triggering the whole animation,
-      // exactly like real subtitles settling into place.
-      child: RichText(
-        key: ValueKey(_committedText),
-        textAlign: TextAlign.center,
-        text: TextSpan(
-          children: [
-            TextSpan(
-              text: _committedText,
-              style: const TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.w600,
-                color: _textDark,
-                height: 1.5,
-              ),
-            ),
-            if (hasSegment)
-              TextSpan(
-                text: (hasCommitted ? ' ' : '') + _currentSegment,
-                style: TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w500,
-                  color: _textDark.withOpacity(0.5),
-                  fontStyle: FontStyle.italic,
-                  height: 1.5,
-                ),
-              ),
-          ],
-        ),
+    return Text(
+      text,
+      textAlign: TextAlign.center,
+      style: const TextStyle(
+        fontSize: 22,
+        fontWeight: FontWeight.w600,
+        color: _textDark,
+        height: 1.5,
       ),
     );
   }
@@ -643,6 +651,8 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   Widget _buildTranslatorBody() {
     final hint    = _subtitleHint;
     final hasText = _displayText.isNotEmpty;
+    final showCaption = _captionVisible &&
+        (_currentSegment.trim().isNotEmpty || _lastFinal.isNotEmpty);
 
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
@@ -698,8 +708,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
 
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 150),
+          child: Container(
             padding: const EdgeInsets.all(24),
             constraints: const BoxConstraints(
                 minHeight: 140, maxHeight: 320),
@@ -730,9 +739,10 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                           fontSize: 16,
                           color: _textSub,
                           height: 1.5)),
-                if (hasText)
+                if (showCaption)
                   Flexible(
                     child: SingleChildScrollView(
+                      reverse: true,
                       physics: const BouncingScrollPhysics(),
                       child: _buildLiveCaption(),
                     ),
@@ -761,6 +771,8 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                           _displayText    = '';
                           _committedText  = '';
                           _currentSegment = '';
+                          _lastFinal      = '';
+                          _captionVisible = false;
                         });
                       }),
                     ],

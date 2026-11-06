@@ -782,7 +782,7 @@ class _LandingPageState extends State<LandingPage>
                         ),
                         const SizedBox(height: 5),
                         Text(
-                          'CLEFTTUNE',
+                          'VOICEMATE',
                           style: TextStyle(
                             fontFamily: 'Syne',
                             fontSize: (size * 0.075).clamp(6, 9),

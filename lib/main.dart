@@ -23,6 +23,30 @@ void main() async {
   }
 
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+
+  // Keep users signed in between visits. Phones do this automatically; on the
+  // web it is set explicitly (setPersistence only exists on web, so guard it).
+  if (kIsWeb) {
+    try {
+      await FirebaseAuth.instance.setPersistence(Persistence.LOCAL);
+    } catch (e) {
+      debugPrint('Could not set auth persistence: $e');
+    }
+  }
+
+  // Wait for Firebase to restore a saved session BEFORE showing any screen, so
+  // a returning user is taken straight to the main app and never sees the
+  // landing / login page first.
+  try {
+    await FirebaseAuth.instance
+        .authStateChanges()
+        .first
+        .timeout(const Duration(seconds: 6));
+  } catch (e) {
+    debugPrint('Auth restore wait ended: $e');
+  }
+  debugPrint('Startup user: ${FirebaseAuth.instance.currentUser?.uid ?? "none"}');
+
   runApp(const CleftTuneApp());
 }
 
@@ -47,15 +71,55 @@ class CleftTuneApp extends StatelessWidget {
 // ROOT ROUTER — uses authStateChanges() as single source of truth.
 // ─────────────────────────────────────────────────────────────────────────────
 
-class RootRouter extends StatelessWidget {
+class RootRouter extends StatefulWidget {
   const RootRouter({super.key});
+
+  @override
+  State<RootRouter> createState() => _RootRouterState();
+}
+
+class _RootRouterState extends State<RootRouter> {
+  // True while the login / sign-up screen is showing. The login screen is shown
+  // INSIDE this widget (not pushed as a separate route), so there is no
+  // Navigator push/pop to go wrong when authStateChanges() fires.
+  bool _showLogin = false;
+
+  // Created ONCE. If this were created inside build(), every setState() would
+  // make a new stream, StreamBuilder would resubscribe and flash the loading
+  // state, and the app would not move on to AppShell after login.
+  late final Stream<User?> _authStream =
+      FirebaseAuth.instance.authStateChanges();
+
+  @override
+  void initState() {
+    super.initState();
+    loginSuccessNotifier.addListener(_onLoginSuccess);
+  }
+
+  @override
+  void dispose() {
+    loginSuccessNotifier.removeListener(_onLoginSuccess);
+    super.dispose();
+  }
+
+  // PremiumScreen bumps this after a successful login: rebuild right away.
+  void _onLoginSuccess() {
+    if (mounted) setState(() => _showLogin = false);
+  }
+
+  void _openLogin() => setState(() => _showLogin = true);
+
+  void _closeLogin() {
+    if (mounted) setState(() => _showLogin = false);
+  }
 
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<User?>(
-      stream: FirebaseAuth.instance.authStateChanges(),
+      stream: _authStream,
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
+        if (snapshot.connectionState == ConnectionState.waiting &&
+            FirebaseAuth.instance.currentUser == null) {
           return const Scaffold(
             backgroundColor: Color(0xFFEAF4FB),
             body: Center(
@@ -64,24 +128,27 @@ class RootRouter extends StatelessWidget {
           );
         }
 
-        if (snapshot.hasData && snapshot.data != null) {
+        // currentUser is updated the instant sign-in succeeds, even if the
+        // stream has not delivered the event yet, so login moves on right away.
+        final signedIn =
+            snapshot.data != null || FirebaseAuth.instance.currentUser != null;
+
+        // Signed in and the login screen is done (or was never opened,
+        // e.g. the user was already signed in when the app started).
+        if (signedIn && !_showLogin) {
           return const AppShell();
         }
 
-        return LandingPage(
-          onContinue: () {
-            Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => PremiumScreen(
-                  onBack: () => Navigator.of(context).pop(),
-                  onLogin: () {
-                    Navigator.of(context).pop();
-                  },
-                ),
-              ),
-            );
-          },
-        );
+        // Not signed in, or just signed in and the login screen is still
+        // finishing (e.g. showing the "Account Created!" dialog).
+        if (_showLogin) {
+          return PremiumScreen(
+            onBack: _closeLogin,
+            onLogin: _closeLogin, // PremiumScreen calls this after a successful login
+          );
+        }
+
+        return LandingPage(onContinue: _openLogin);
       },
     );
   }

@@ -1,9 +1,15 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, kDebugMode, debugPrint;
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'dart:async';
+
+/// Bumped after every successful sign-in / sign-up. RootRouter listens to this
+/// and rebuilds immediately, so the app moves on to the main screen without
+/// waiting for Firebase's auth stream event (which can arrive late on some phones).
+final ValueNotifier<int> loginSuccessNotifier = ValueNotifier<int>(0);
 
 class PremiumScreen extends StatefulWidget {
   final VoidCallback onBack;
@@ -31,6 +37,10 @@ class _PremiumScreenState extends State<PremiumScreen>
   String _passwordStrengthLabel = '';
 
   final FirebaseAuth _auth = FirebaseAuth.instance;
+
+  // If Firebase doesn't answer within this time (weak connection), show a
+  // message instead of leaving the button spinning forever.
+  static const Duration _authTimeout = Duration(seconds: 25);
 
   late final GoogleSignIn _googleSignIn = kIsWeb
       ? GoogleSignIn(
@@ -173,18 +183,18 @@ class _PremiumScreenState extends State<PremiumScreen>
     if (password.length < 6) { _snack("Password must be at least 6 characters", isError: true); return; }
     if (!isLoginMode && _passwordStrength < 2) { _snack("Please use a stronger password", isError: true); return; }
     setState(() => isLoading = true);
+    bool authSucceeded = false;
     try {
       if (isLoginMode) {
-        await _auth.signInWithEmailAndPassword(email: email, password: password);
-        if (!mounted) return;
-        widget.onLogin();
+        await _auth
+            .signInWithEmailAndPassword(email: email, password: password)
+            .timeout(_authTimeout);
       } else {
-        await _auth.createUserWithEmailAndPassword(email: email, password: password);
-        if (!mounted) return;
-        await _showSuccessDialog();
-        if (!mounted) return;
-        widget.onLogin();
+        await _auth
+            .createUserWithEmailAndPassword(email: email, password: password)
+            .timeout(_authTimeout);
       }
+      authSucceeded = true;
     } on FirebaseAuthException catch (e) {
       final msgs = {
         'user-not-found': "No account found for this email",
@@ -198,11 +208,95 @@ class _PremiumScreenState extends State<PremiumScreen>
         'user-disabled': "This account has been disabled",
       };
       _snack(msgs[e.code] ?? "Authentication failed: ${e.message}", isError: true);
-    } catch (_) {
-      _snack("Something went wrong. Please try again", isError: true);
+    } on TimeoutException {
+      _snack("Connection is too slow. Please check your network and try again", isError: true);
+    } catch (e, st) {
+      // Log the real error so it can be diagnosed, and show it while testing.
+      debugPrint('LOGIN ERROR: $e\n$st');
+      _snack(
+        kDebugMode
+            ? "Something went wrong: $e"
+            : "Something went wrong. Please try again",
+        isError: true,
+      );
     } finally {
       if (mounted) setState(() => isLoading = false);
     }
+
+    // Post-login steps run OUTSIDE the auth try/catch so a crash in the
+    // parent's onLogin handler is reported separately from a Firebase error.
+    if (!authSucceeded || !mounted) return;
+
+    // New account: Firebase has already signed the user in, so go straight to
+    // the main screen (no blocking dialog) with a short welcome message.
+    await _ensureUserDoc();
+    if (!mounted) return;
+    if (!isLoginMode) {
+      _snack("Account created! Welcome to VoiceMate.", isError: false);
+    }
+    _finishLogin();
+  }
+
+  // Makes sure the signed-in user has a profile document in Firestore
+  // (users/{uid}). Creates it only if it is missing, so it never overwrites a
+  // name the user edited later. Never blocks or breaks login if it fails.
+  Future<void> _ensureUserDoc({String? name}) async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+    try {
+      final ref = FirebaseFirestore.instance.collection('users').doc(user.uid);
+      final snap = await ref.get().timeout(const Duration(seconds: 8));
+      if (snap.exists) return;
+
+      final email = user.email ?? '';
+      var displayName = (name ?? user.displayName ?? '').trim();
+      if (displayName.isEmpty && email.contains('@')) {
+        displayName = email.split('@').first;
+      }
+      if (displayName.isEmpty) displayName = 'User';
+
+      await ref.set({
+        'name': displayName,
+        'email': email,
+        'createdAt': FieldValue.serverTimestamp(),
+        'sessionCount': 0,
+        'trainingProgress': 0.0,
+        'trainedHours': 0.0,
+      }, SetOptions(merge: true)).timeout(const Duration(seconds: 8));
+    } catch (e, st) {
+      debugPrint('SAVE USER ERROR: $e\n$st');
+      if (mounted) {
+        _snack(
+          kDebugMode
+              ? "Signed in, but saving your profile failed: $e"
+              : "Signed in, but your profile could not be saved.",
+          isError: true,
+        );
+      }
+    }
+  }
+
+  // Called after ANY successful sign-in / sign-up (email or Google).
+  // Closes this screen using ITS OWN navigator, captured while still mounted,
+  // so it does not depend on the parent's onLogin (the landing page's version
+  // looks up a Navigator from a screen that is already gone and crashes).
+  void _finishLogin() {
+    if (!mounted) return;
+    final navigator = Navigator.of(context);
+    final onLogin = widget.onLogin;
+    try {
+      onLogin();
+    } catch (e, st) {
+      // The parent callback is best-effort; signing in has already succeeded.
+      debugPrint('onLogin callback failed (ignored): $e\n$st');
+    }
+    try {
+      navigator.popUntil((route) => route.isFirst);
+    } catch (e, st) {
+      debugPrint('Closing login screen failed (ignored): $e\n$st');
+    }
+    // Tell RootRouter to rebuild right now so the main screen shows up.
+    loginSuccessNotifier.value++;
   }
 
   Future<void> handleGoogleSignIn() async {
@@ -224,9 +318,10 @@ class _PremiumScreenState extends State<PremiumScreen>
       if (mounted) {
         final isNewUser = userCredential.additionalUserInfo?.isNewUser ?? false;
         final displayName = userCredential.user?.displayName ?? 'there';
-        if (isNewUser) await _showSuccessDialog(name: displayName, isGoogle: true);
+        await _ensureUserDoc(name: userCredential.user?.displayName);
         if (!mounted) return;
-        widget.onLogin();
+        if (isNewUser) _snack("Welcome, $displayName!", isError: false);
+        _finishLogin();
       }
     } on FirebaseAuthException catch (e) {
       if (e.code == 'popup-closed-by-user' || e.code == 'cancelled-popup-request') return;
@@ -260,9 +355,10 @@ class _PremiumScreenState extends State<PremiumScreen>
       final UserCredential userCredential = await _auth.signInWithCredential(credential);
       if (mounted) {
         final isNewUser = userCredential.additionalUserInfo?.isNewUser ?? false;
-        if (isNewUser) await _showSuccessDialog(name: googleUser.displayName ?? 'there', isGoogle: true);
+        await _ensureUserDoc(name: googleUser.displayName);
         if (!mounted) return;
-        widget.onLogin();
+        if (isNewUser) _snack("Welcome, ${googleUser.displayName ?? 'there'}!", isError: false);
+        _finishLogin();
       }
     } on FirebaseAuthException catch (e) {
       final msgs = {
@@ -275,7 +371,13 @@ class _PremiumScreenState extends State<PremiumScreen>
       final errStr = e.toString().toLowerCase();
       if (errStr.contains('cancel') || errStr.contains('sign_in_canceled') ||
           (errStr.contains('sign_in_failed') && errStr.contains('12501'))) return;
-      _snack("Google sign-in failed. Please try again", isError: true);
+      debugPrint('GOOGLE SIGN-IN ERROR: $e');
+      _snack(
+        kDebugMode
+            ? "Google sign-in failed: $e"
+            : "Google sign-in failed. Please try again",
+        isError: true,
+      );
     }
   }
 
@@ -580,8 +682,8 @@ class _PremiumScreenState extends State<PremiumScreen>
             const SizedBox(width: 10),
             RichText(
               text: const TextSpan(children: [
-                TextSpan(text: 'Cleft', style: TextStyle(color: _textDark, fontWeight: FontWeight.bold, fontSize: 20, letterSpacing: -0.5)),
-                TextSpan(text: 'Tune', style: TextStyle(color: _accent, fontWeight: FontWeight.bold, fontSize: 20, letterSpacing: -0.5)),
+                TextSpan(text: 'Voice', style: TextStyle(color: _textDark, fontWeight: FontWeight.bold, fontSize: 20, letterSpacing: -0.5)),
+                TextSpan(text: 'Mate', style: TextStyle(color: _accent, fontWeight: FontWeight.bold, fontSize: 20, letterSpacing: -0.5)),
               ]),
             ),
           ]),
