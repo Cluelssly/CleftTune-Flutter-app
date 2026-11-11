@@ -34,16 +34,21 @@ void main() async {
     }
   }
 
-  // Wait for Firebase to restore a saved session BEFORE showing any screen, so
-  // a returning user is taken straight to the main app and never sees the
-  // landing / login page first.
-  try {
-    await FirebaseAuth.instance
-        .authStateChanges()
-        .first
-        .timeout(const Duration(seconds: 6));
-  } catch (e) {
-    debugPrint('Auth restore wait ended: $e');
+  // Wait for Firebase to restore the saved session BEFORE showing any screen,
+  // so a returning user goes straight into the app and never sees the landing /
+  // login page. On Android / iOS the session is saved on the device after
+  // login and survives closing the app and restarting the phone, until the
+  // user taps Log out. currentUser can be null for a moment at launch while the
+  // saved session loads, so we wait for the first auth event.
+  if (FirebaseAuth.instance.currentUser == null) {
+    try {
+      await FirebaseAuth.instance
+          .authStateChanges()
+          .first
+          .timeout(const Duration(seconds: 10));
+    } catch (e) {
+      debugPrint('Auth restore wait ended: $e');
+    }
   }
   debugPrint('Startup user: ${FirebaseAuth.instance.currentUser?.uid ?? "none"}');
 
@@ -130,8 +135,10 @@ class _RootRouterState extends State<RootRouter> {
 
         // currentUser is updated the instant sign-in succeeds, even if the
         // stream has not delivered the event yet, so login moves on right away.
+        // On mobile the saved session keeps the user signed in across app
+        // restarts; only an explicit Log out (signOut) sends them back to login.
         final signedIn =
-            snapshot.data != null || FirebaseAuth.instance.currentUser != null;
+            FirebaseAuth.instance.currentUser != null || snapshot.data != null;
 
         // Signed in and the login screen is done (or was never opened,
         // e.g. the user was already signed in when the app started).
@@ -203,7 +210,16 @@ class _AppShellState extends State<AppShell> {
   static const double _minRailScale = 1.0;
   static const double _maxRailScale = 2.6;
 
-  void _switchPage(int index) => setState(() => _currentIndex = index);
+  // Remembers the tab the user came from, so a back arrow can return to it.
+  int _previousIndex = 0;
+
+  void _switchPage(int index) {
+    if (index == _currentIndex) return;
+    setState(() {
+      _previousIndex = _currentIndex;
+      _currentIndex = index;
+    });
+  }
 
   Widget get _currentScreen {
     switch (_currentIndex) {
@@ -211,7 +227,9 @@ class _AppShellState extends State<AppShell> {
       case 1:  return const HistoryScreen();
       case 2:  return const TrainedVoiceScreen();
       case 3:  return const Cloud();
-      case 4:  return const NotificationsScreen();
+      case 4:  return NotificationsScreen(
+                 onBack: () => _switchPage(_previousIndex == 4 ? 0 : _previousIndex),
+               );
       case 5:  return const SettingsScreen();
       case 6:  return const RateUsScreen();
       default: return const TranslatorScreen();

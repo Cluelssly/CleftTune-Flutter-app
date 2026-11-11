@@ -16,14 +16,15 @@ class TranslatorScreen extends StatefulWidget {
 }
 
 class _TranslatorScreenState extends State<TranslatorScreen>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   late stt.SpeechToText _speech;
   final NlpService _nlp = NlpService();
 
   bool _isListening     = false;
   bool _isInitialized   = false;
-  bool _userStopped     = false;
+  bool _userStopped     = false; // only true while the screen is closing
   bool _showCorrections = false;
+  bool _micBlocked      = false; // browser/phone refused microphone access
 
   String? _activeUserId;
   Stream<QuerySnapshot>? _correctionsStream;
@@ -39,15 +40,19 @@ class _TranslatorScreenState extends State<TranslatorScreen>
 
   // ── Subtitle state ─────────────────────────────────────────────────────────
   // The subtitle shows the sentence being heard right now (or the last finished
-  // sentence) and disappears after _captionHold of silence. The full transcript
-  // is still kept in _committedText / _displayText for Copy and Correct.
+  // sentence) and disappears after _captionHold of silence. It comes back by
+  // itself the moment the user speaks again.
   String _lastFinal      = '';
   bool   _captionVisible = false;
   Timer? _captionHideTimer;
   static const Duration _captionHold = Duration(seconds: 5);
 
-  // ── Single restart timer — replaces all previous keep-alive / always-on ────
+  // Keep the on-screen transcript from growing forever while always-on.
+  static const int _maxTranscriptChars = 3000;
+
+  // ── Restart + watchdog (keeps the mic on nonstop) ──────────────────────────
   Timer? _restartTimer;
+  Timer? _watchdog;
   bool   _isRestarting = false;
 
   // ── Theme ──────────────────────────────────────────────────────────────────
@@ -70,6 +75,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _speech = stt.SpeechToText();
 
     _pulseController = AnimationController(
@@ -82,13 +88,23 @@ class _TranslatorScreenState extends State<TranslatorScreen>
 
     _dotController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 500),
+      duration: const Duration(milliseconds: 700),
     )..repeat(reverse: true);
-    _dotAnim = Tween<double>(begin: 0.3, end: 1.0).animate(
+    _dotAnim = Tween<double>(begin: 0.35, end: 1.0).animate(
       CurvedAnimation(parent: _dotController, curve: Curves.easeInOut),
     );
 
     _initServices();
+  }
+
+  // When the app/tab comes back to the foreground, make sure the mic is on.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed &&
+        _isListening &&
+        !_speech.isListening) {
+      _scheduleRestart();
+    }
   }
 
   Future<void> _initServices() async {
@@ -97,6 +113,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
     dev.log('NLP ready — ${_nlp.patternCount} pattern(s) loaded');
     _nlp.onRealtimeCorrection = null;
     await _initSpeech();
+    // The mic starts only when the user taps the Start button.
   }
 
   void _initCorrectionsStream() {
@@ -110,43 +127,67 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   }
 
   Future<void> _initSpeech() async {
-    _isInitialized = await _speech.initialize(
-      onStatus: (status) {
-        dev.log('STT STATUS: $status');
-        // FIX: on web, Chrome fires 'done' after every utterance.
-        // We must restart immediately so the next sentence is captured.
-        if (!_userStopped && _isListening) {
-          if (status == 'done' ||
-              status == 'notListening' ||
-              status == 'doneNoResult') {
-            dev.log('STT stopped ($status) — scheduling restart');
+    try {
+      _isInitialized = await _speech.initialize(
+        onStatus: (status) {
+          dev.log('STT STATUS: $status');
+          // Chrome fires 'done' after every utterance. Restart right away so
+          // the next sentence is captured and the mic never goes quiet.
+          if (!_userStopped && _isListening) {
+            if (status == 'done' ||
+                status == 'notListening' ||
+                status == 'doneNoResult') {
+              dev.log('STT stopped ($status) — scheduling restart');
+              _scheduleRestart();
+            }
+          }
+        },
+        onError: (error) {
+          dev.log('STT ERROR: ${error.errorMsg}');
+          final msg = error.errorMsg.toLowerCase();
+          if (msg.contains('permission') ||
+              msg.contains('not-allowed') ||
+              msg.contains('not_allowed') ||
+              msg.contains('denied')) {
+            _handleMicBlocked();
+            return;
+          }
+          // no-speech, timeouts, network blips, etc. are normal: just continue.
+          if (!_userStopped && _isListening) {
             _scheduleRestart();
           }
-        }
-      },
-      onError: (error) {
-        dev.log('STT ERROR: ${error.errorMsg}');
-        if (!_userStopped && _isListening) {
-          _scheduleRestart();
-        }
-      },
-    );
+        },
+      );
+    } catch (e) {
+      dev.log('STT initialize failed: $e');
+      _isInitialized = false;
+    }
     if (mounted) setState(() {});
+  }
+
+  void _handleMicBlocked() {
+    _cancelRestart();
+    _watchdog?.cancel();
+    _stopSessionTimer();
+    if (mounted) {
+      setState(() {
+        _isListening = false;
+        _micBlocked  = true;
+      });
+    }
   }
 
   // ══════════════════════════════════════════════════════════════════════════
   // RESTART — debounced, single-path, guarded
-  // 500 ms debounce + 400 ms stop gap = 900 ms total.
-  // Chrome needs ~800–900 ms to fully release the mic between sessions.
+  // 150 ms debounce + 200 ms stop gap = 350 ms total (was 900 ms).
+  // If your browser fails to re-open the mic, raise these two values.
   // ══════════════════════════════════════════════════════════════════════════
 
   void _scheduleRestart() {
     if (_userStopped || !_isListening || _isRestarting) return;
 
-    // Debounce: if multiple status events fire in quick succession,
-    // only the last one triggers the restart.
     _restartTimer?.cancel();
-    _restartTimer = Timer(const Duration(milliseconds: 500), () async {
+    _restartTimer = Timer(const Duration(milliseconds: 150), () async {
       if (_userStopped || !_isListening || !mounted) return;
       if (_isRestarting) return;
       if (_speech.isListening) {
@@ -158,8 +199,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
       dev.log('Restart: stopping...');
       try { await _speech.stop(); } catch (_) {}
 
-      // Give Chrome time to release the mic fully
-      await Future.delayed(const Duration(milliseconds: 400));
+      await Future.delayed(const Duration(milliseconds: 200));
 
       if (_userStopped || !_isListening || !mounted) {
         _isRestarting = false;
@@ -176,6 +216,19 @@ class _TranslatorScreenState extends State<TranslatorScreen>
     _restartTimer?.cancel();
     _restartTimer = null;
     _isRestarting = false;
+  }
+
+  // Safety net: if the mic ever stops without an event reaching us, bring it
+  // back within a couple of seconds. This is what makes it truly nonstop.
+  void _startWatchdog() {
+    _watchdog?.cancel();
+    _watchdog = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted || _userStopped || !_isListening) return;
+      if (!_speech.isListening && !_isRestarting) {
+        dev.log('Watchdog: mic was not listening — restarting');
+        _scheduleRestart();
+      }
+    });
   }
 
   // Hides the subtitle after a few seconds of silence. Called every time new
@@ -217,86 +270,107 @@ class _TranslatorScreenState extends State<TranslatorScreen>
     });
   }
 
+  // If a session ended before the engine sent a final result, keep the words
+  // that were already on screen instead of throwing them away.
+  void _commitPendingSegment() {
+    final pending = _currentSegment.trim();
+    _currentSegment = '';
+    if (pending.isEmpty) return;
+    _committedText = _capText(_buildDisplay(_committedText, pending).trim());
+    _lastFinal = pending;
+    _displayText = _committedText;
+    _saveToFirestore(pending, pending, mode: 'realtime');
+  }
+
   // ══════════════════════════════════════════════════════════════════════════
   // STT — start one listening session
   // ══════════════════════════════════════════════════════════════════════════
 
-  Future<void> _startListening() async {
+  Future<bool> _startListening() async {
     if (!_isInitialized) {
       await _initSpeech();
       if (!_isInitialized) {
         dev.log('STT not initialized — aborting');
-        return;
+        return false;
       }
     }
 
     // Hard guard: never call listen() twice on web
     if (_speech.isListening) {
       dev.log('Already listening — skipping');
-      return;
+      return true;
     }
 
-    _currentSegment = '';
+    _commitPendingSegment();
 
-    await _speech.listen(
-      localeId:       'en_US',
-      listenFor:      const Duration(minutes: 30),
-      pauseFor:       const Duration(seconds: 3),
-      partialResults: true,
-      listenMode:     stt.ListenMode.dictation,
+    try {
+      await _speech.listen(
+        localeId:       'en_US',
+        listenFor:      const Duration(minutes: 30),
+        pauseFor:       const Duration(seconds: 2),
+        partialResults: true,
+        listenMode:     stt.ListenMode.dictation,
 
-      onResult: (result) {
-        if (_userStopped) return;
+        onResult: (result) {
+          if (_userStopped) return;
 
-        final words = result.recognizedWords.trim();
-        if (words.isEmpty) return;
+          final words = result.recognizedWords.trim();
+          if (words.isEmpty) return;
 
-        final confidence =
-            result.confidence > 0 ? result.confidence.toDouble() : 0.6;
+          final confidence =
+              result.confidence > 0 ? result.confidence.toDouble() : 0.6;
 
-        if (words.split(' ').length < 2 && confidence < 0.35) {
-          dev.log('Noise filtered: "$words" (conf=$confidence)');
-          return;
-        }
-
-        final syncCorrected = _nlp.correctPartialSync(words);
-
-        if (result.finalResult) {
-          _committedText  =
-              _buildDisplay(_committedText, syncCorrected).trim();
-          _currentSegment = '';
-
-          _lastFinal = syncCorrected;
-          dev.log('✔ Final: "$syncCorrected"');
-          if (mounted) {
-            setState(() {
-              _displayText    = _committedText;
-              _captionVisible = true;
-            });
+          if (result.finalResult &&
+              words.split(' ').length < 2 &&
+              confidence < 0.35) {
+            dev.log('Noise filtered: "$words" (conf=$confidence)');
+            return;
           }
-          _restartCaptionTimer();
 
-          // ✅ Save every sentence to Firestore
-          _saveToFirestore(syncCorrected, words, mode: 'realtime');
+          final syncCorrected = _nlp.correctPartialSync(words);
 
-          _partialNlpDebounce?.cancel();
-          _partialNlpDebounce = Timer(
-            const Duration(milliseconds: 800),
-            () => _runNlpRefinement(words, syncCorrected),
-          );
-        } else {
-          _currentSegment = syncCorrected;
-          final preview   = _buildDisplay(_committedText, _currentSegment);
-          if (mounted) {
-            setState(() {
-              _displayText    = preview;
-              _captionVisible = true;
-            });
+          if (result.finalResult) {
+            _committedText = _capText(
+                _buildDisplay(_committedText, syncCorrected).trim());
+            _currentSegment = '';
+
+            _lastFinal = syncCorrected;
+            dev.log('✔ Final: "$syncCorrected"');
+            if (mounted) {
+              setState(() {
+                _displayText    = _committedText;
+                _captionVisible = true;
+              });
+            }
+            _restartCaptionTimer();
+
+            // Save every sentence to Firestore
+            _saveToFirestore(syncCorrected, words, mode: 'realtime');
+
+            _partialNlpDebounce?.cancel();
+            _partialNlpDebounce = Timer(
+              const Duration(milliseconds: 300),
+              () => _runNlpRefinement(words, syncCorrected),
+            );
+          } else {
+            // Live words appear immediately as the user speaks.
+            _currentSegment = syncCorrected;
+            final preview = _buildDisplay(_committedText, _currentSegment);
+            if (mounted) {
+              setState(() {
+                _displayText    = preview;
+                _captionVisible = true;
+              });
+            }
+            _restartCaptionTimer();
           }
-          _restartCaptionTimer();
-        }
-      },
-    );
+        },
+      );
+      return true;
+    } catch (e) {
+      dev.log('listen() failed: $e');
+      return false;
+    }
   }
 
   void _runNlpRefinement(String rawWords, String syncResult) {
@@ -335,9 +409,18 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   String _buildDisplay(String committed, String segment) {
     if (committed.isEmpty) return segment;
     if (segment.isEmpty)   return committed;
-    if (RegExp(r'^[.,!?;:]').hasMatch(segment))
+    if (RegExp(r'^[.,!?;:]').hasMatch(segment)) {
       return '$committed$segment';
+    }
     return '$committed $segment';
+  }
+
+  // Keep only the most recent text so an all-day session stays fast.
+  String _capText(String text) {
+    if (text.length <= _maxTranscriptChars) return text;
+    final cut = text.substring(text.length - _maxTranscriptChars);
+    final space = cut.indexOf(' ');
+    return space == -1 ? cut : cut.substring(space + 1);
   }
 
   void _startSessionTimer() {
@@ -356,77 +439,95 @@ class _TranslatorScreenState extends State<TranslatorScreen>
   }
 
   String get _sessionLabel {
-    final m = _sessionSeconds ~/ 60;
+    final h = _sessionSeconds ~/ 3600;
+    final m = (_sessionSeconds % 3600) ~/ 60;
     final s = _sessionSeconds % 60;
+    if (h > 0) return '${h}h ${m}m';
     if (m == 0) return '${s}s';
     return '${m}m ${s}s';
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // MIC TOGGLE
+  // ALWAYS-ON MIC
+  // Starts by itself when the screen opens and then never stops. If the
+  // browser blocked auto-start, the mic button appears; one tap starts it
+  // and from then on it stays on.
   // ══════════════════════════════════════════════════════════════════════════
 
-  Future<void> _toggleMic() async {
-    if (_isListening) {
-      _userStopped = true;
-      _cancelRestart();
-      _partialNlpDebounce?.cancel();
-      _captionHideTimer?.cancel();
-      _stopSessionTimer();
+  Future<void> _startAlwaysOn({bool fromUser = false}) async {
+    if (_isListening) return;
 
-      if (_currentSegment.trim().isNotEmpty) {
-        final syncCorrected =
-            _nlp.correctPartialSync(_currentSegment);
-        _committedText =
-            _buildDisplay(_committedText, syncCorrected).trim();
-        _saveToFirestore(syncCorrected, _currentSegment,
-            mode: 'realtime');
-        _lastFinal      = syncCorrected;
-        _currentSegment = '';
-        if (mounted) {
-          setState(() {
-            _displayText    = _committedText;
-            _captionVisible = true;
-          });
-        }
+    _activeUserId = FirebaseAuth.instance.currentUser?.uid;
+    dev.log('=== MIC START — cached uid=$_activeUserId');
+
+    if (_activeUserId == null) {
+      if (fromUser && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please sign in before recording.'),
+            backgroundColor: Colors.redAccent,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
       }
-
-      try { await _speech.stop(); } catch (_) {}
-      if (mounted) setState(() => _isListening = false);
-    } else {
-      _activeUserId = FirebaseAuth.instance.currentUser?.uid;
-      dev.log('=== MIC START — cached uid=$_activeUserId');
-
-      if (_activeUserId == null) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Please sign in before recording.'),
-              backgroundColor: Colors.redAccent,
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
-        }
-        return;
-      }
-
-      _initCorrectionsStream();
-
-      _userStopped    = false;
-      _isRestarting   = false;
-      _displayText    = '';
-      _committedText  = '';
-      _currentSegment = '';
-      _lastFinal      = '';
-      _captionVisible = false;
-      _captionHideTimer?.cancel();
-      _sessionSeconds = 0;
-
-      if (mounted) setState(() => _isListening = true);
-      _nlp.beginSession();
-      _startSessionTimer();
-      await _startListening();
+      return;
     }
+
+    _initCorrectionsStream();
+
+    _userStopped    = false;
+    _isRestarting   = false;
+    _displayText    = '';
+    _committedText  = '';
+    _currentSegment = '';
+    _lastFinal      = '';
+    _captionVisible = false;
+    _captionHideTimer?.cancel();
+    _sessionSeconds = 0;
+
+    if (mounted) {
+      setState(() {
+        _isListening = true;
+        _micBlocked  = false;
+      });
+    }
+    _nlp.beginSession();
+    _startSessionTimer();
+    _startWatchdog();
+
+    final ok = await _startListening();
+    if (!ok && !_isInitialized) {
+      // Microphone could not be opened (permission not given).
+      _handleMicBlocked();
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // STOP — user taps the Stop button
+  // ══════════════════════════════════════════════════════════════════════════
+
+  Future<void> _stopListening() async {
+    if (!_isListening) return;
+
+    _userStopped = true; // blocks restarts and ignores late STT callbacks
+    _cancelRestart();
+    _watchdog?.cancel();
+    _stopSessionTimer();
+
+    // Keep whatever was being said when Stop was pressed.
+    _commitPendingSegment();
+
+    if (mounted) {
+      setState(() {
+        _isListening = false;
+        _isRestarting = false;
+        _captionVisible = _displayText.isNotEmpty;
+      });
+    }
+    _restartCaptionTimer();
+
+    try { await _speech.stop(); } catch (_) {}
+    dev.log('=== MIC STOPPED by user');
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -505,8 +606,11 @@ class _TranslatorScreenState extends State<TranslatorScreen>
 
   String get _subtitleHint {
     if (_captionVisible) return '';
-    if (_isListening) return 'Listening… speak now';
-    return 'Tap the mic to start speaking...';
+    if (_isListening) return 'Listening… just start speaking';
+    if (_micBlocked) {
+      return 'Tap Start and allow microphone access.\nAfter that it stays on by itself.';
+    }
+    return 'Tap Start to begin.\nTap Stop whenever you are done.';
   }
 
   int get _wordCount => _displayText.trim().isEmpty
@@ -515,9 +619,12 @@ class _TranslatorScreenState extends State<TranslatorScreen>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _userStopped = true;
     _sessionTimer?.cancel();
     _partialNlpDebounce?.cancel();
     _restartTimer?.cancel();
+    _watchdog?.cancel();
     _captionHideTimer?.cancel();
     _nlp.onRealtimeCorrection = null;
     _speech.stop();
@@ -532,6 +639,9 @@ class _TranslatorScreenState extends State<TranslatorScreen>
 
   @override
   Widget build(BuildContext context) {
+    // One button: Start when the mic is off, Stop when it is on.
+    final showMicButton = !_showCorrections;
+
     return Scaffold(
       backgroundColor: _bg,
       body: Container(
@@ -557,8 +667,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
       ),
       floatingActionButtonLocation:
           FloatingActionButtonLocation.centerFloat,
-      floatingActionButton:
-          _showCorrections ? null : _buildMicFab(),
+      floatingActionButton: showMicButton ? _buildMicFab() : null,
     );
   }
 
@@ -628,7 +737,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
     );
   }
 
-  // ── PLAIN LIVE SUBTITLE (no animation) ────────────────────────────────────
+  // ── LIVE SUBTITLE ──────────────────────────────────────────────────────────
   // Shows the sentence being heard right now. While you are speaking it updates
   // word by word; once a sentence is finished it stays on screen until the next
   // speech starts (which replaces it) or until _captionHold of silence passes.
@@ -640,7 +749,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
       text,
       textAlign: TextAlign.center,
       style: const TextStyle(
-        fontSize: 22,
+        fontSize: 24,
         fontWeight: FontWeight.w600,
         color: _textDark,
         height: 1.5,
@@ -664,11 +773,16 @@ class _TranslatorScreenState extends State<TranslatorScreen>
               opacity:  _isListening ? 1.0 : 0.3,
               duration: const Duration(milliseconds: 300),
               child: Row(children: [
-                Container(
-                  width: 8, height: 8,
-                  decoration: const BoxDecoration(
-                      color: Colors.redAccent,
-                      shape: BoxShape.circle),
+                FadeTransition(
+                  opacity: _isListening
+                      ? _dotAnim
+                      : const AlwaysStoppedAnimation<double>(1.0),
+                  child: Container(
+                    width: 8, height: 8,
+                    decoration: const BoxDecoration(
+                        color: Colors.redAccent,
+                        shape: BoxShape.circle),
+                  ),
                 ),
                 const SizedBox(width: 6),
                 const Text('LIVE',
@@ -709,6 +823,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
           child: Container(
+            width: double.infinity,
             padding: const EdgeInsets.all(24),
             constraints: const BoxConstraints(
                 minHeight: 140, maxHeight: 320),
@@ -731,6 +846,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 if (hint.isNotEmpty)
                   Text(hint,
@@ -936,7 +1052,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                                     fontSize: 15)),
                             const SizedBox(height: 6),
                             const Text(
-                              'Use the mic, then tap "Correct"\nto teach VoiceMate your patterns.',
+                              'Speak, then tap "Correct"\nto teach VoiceMate your patterns.',
                               textAlign: TextAlign.center,
                               style: TextStyle(
                                   color: _textSub,
@@ -959,8 +1075,9 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                         final bIsUser =
                             (bData['source'] as String? ?? '') ==
                                 'user';
-                        if (aIsUser != bIsUser)
+                        if (aIsUser != bIsUser) {
                           return aIsUser ? -1 : 1;
+                        }
                         return (aData['wrong'] as String? ?? '')
                             .compareTo(
                                 bData['wrong'] as String? ?? '');
@@ -1038,9 +1155,8 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                       fontWeight: FontWeight.w500),
                   overflow: TextOverflow.ellipsis),
             ),
-            Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 8),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 8),
               child: Icon(Icons.arrow_forward_rounded,
                   color: _textSub, size: 14),
             ),
@@ -1084,38 +1200,54 @@ class _TranslatorScreenState extends State<TranslatorScreen>
     );
   }
 
+  // Start / Stop button. Shows Start when the mic is off and Stop (pulsing,
+  // red) while it is listening.
   Widget _buildMicFab() {
+    final listening = _isListening;
+    final color = listening ? Colors.redAccent : _accent;
+
     return AnimatedBuilder(
       animation: _pulseAnim,
       builder: (context, child) => Transform.scale(
-        scale: _isListening ? _pulseAnim.value : 1.0,
+        scale: listening ? _pulseAnim.value : 1.0,
         child: child,
       ),
       child: GestureDetector(
-        onTap: _toggleMic,
+        onTap: listening
+            ? _stopListening
+            : () => _startAlwaysOn(fromUser: true),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 250),
-          width: 72, height: 72,
+          padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 16),
           decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: _isListening ? Colors.redAccent : _accent,
+            color: color,
+            borderRadius: BorderRadius.circular(40),
             boxShadow: [
               BoxShadow(
-                color: (_isListening
-                        ? Colors.redAccent
-                        : _accent)
-                    .withOpacity(0.40),
-                blurRadius: 24,
-                spreadRadius: 4,
+                color: color.withOpacity(0.40),
+                blurRadius: 20,
+                spreadRadius: 2,
               ),
             ],
           ),
-          child: Icon(
-            _isListening
-                ? Icons.stop_rounded
-                : Icons.mic_rounded,
-            color: Colors.white,
-            size: 34,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                listening ? Icons.stop_rounded : Icons.mic_rounded,
+                color: Colors.white,
+                size: 26,
+              ),
+              const SizedBox(width: 10),
+              Text(
+                listening ? 'Stop' : 'Start',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
           ),
         ),
       ),

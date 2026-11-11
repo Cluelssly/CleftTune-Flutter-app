@@ -148,7 +148,10 @@ class NotificationHelper {
 
 // ── Screen ────────────────────────────────────────────────────────────────────
 class NotificationsScreen extends StatefulWidget {
-  const NotificationsScreen({super.key});
+  /// Called when the back arrow is tapped. The app shell passes this so the
+  /// arrow returns to the previous tab instead of popping the whole app.
+  final VoidCallback? onBack;
+  const NotificationsScreen({super.key, this.onBack});
   @override
   State<NotificationsScreen> createState() => _NotificationsScreenState();
 }
@@ -394,7 +397,13 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               child: Row(
                 children: [
                   GestureDetector(
-                    onTap: () => Navigator.pop(context),
+                    onTap: () {
+                      if (widget.onBack != null) {
+                        widget.onBack!();
+                      } else if (Navigator.of(context).canPop()) {
+                        Navigator.of(context).pop();
+                      }
+                    },
                     child: Container(
                       width: 38, height: 38,
                       decoration: BoxDecoration(

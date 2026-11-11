@@ -254,7 +254,11 @@ class _ProfileScreenState extends State<ProfileScreen>
           onBack: () {
             if (navigator.canPop()) navigator.pop();
           },
-          onLogin: () {},
+          // Close this pushed login route after a successful login so the
+          // user lands on AppShell (RootRouter) instead of a stuck login screen.
+          onLogin: () {
+            if (navigator.canPop()) navigator.pop();
+          },
         ),
       ),
     );
